@@ -1,0 +1,193 @@
+//
+//  BrowserRootViewController+Tabs.swift
+//  OuterView
+//
+
+import UIKit
+
+extension BrowserRootViewController {
+    // MARK: - Tabs
+
+    func loadInitialTabs() {
+        if let argIndex = ProcessInfo.processInfo.arguments.firstIndex(of: "-openURL"),
+           argIndex + 1 < ProcessInfo.processInfo.arguments.count,
+           let url = URL(string: ProcessInfo.processInfo.arguments[argIndex + 1]),
+           URLNormalizer.isLoadable(url)
+        {
+            let record = TabRecord(url: url, isPrivate: false)
+            tabs = [record]
+            tabPool.create(record)
+            selectTab(id: record.id)
+            return
+        }
+        if let coordinator = restoreCoordinator, bootstrap(from: coordinator.restore()) {
+            return
+        } else if restoreCoordinator == nil, let tabStore, bootstrap(from: tabStore.loadSession()) {
+            return
+        }
+        createNewTab()
+    }
+
+    func bootstrap(from session: (tabs: [TabRecord], selected: UUID?)) -> Bool {
+        guard !session.tabs.isEmpty else { return false }
+        tabs = session.tabs
+        for record in tabs {
+            tabPool.reserve(record)
+        }
+        guard let fallbackID = tabs.first?.id else { return false }
+        let selected = session.selected.flatMap { id in tabs.first { $0.id == id }?.id }
+        selectTab(id: selected ?? fallbackID)
+        return true
+    }
+
+    func createNewTab(isPrivate: Bool = false) {
+        let record = TabRecord(isPrivate: isPrivate)
+        tabs.append(record)
+        tabPool.create(record)
+        do {
+            try tabStore?.saveSession(tabs: tabs, selected: record.id)
+        } catch {
+            logPersistenceError(error, operation: "saveSession")
+        }
+        let commands = chromeController.handle(.browsingResumed)
+        selectTab(id: record.id)
+        applyCommands(commands, animated: true)
+        if isOverviewVisible {
+            overviewController.setItems(overviewItems(), selectedID: selectedTabID)
+        } else {
+            setOverviewVisible(false)
+        }
+    }
+
+    func openNewTab(with url: URL) {
+        createNewTab()
+        loadActivePage(url)
+    }
+
+    func displaySelectedTab() {
+        for subview in contentContainer.subviews where subview !== startPageContainer {
+            subview.removeFromSuperview()
+        }
+        guard let id = selectedTabID, let page = tabPool.page(for: id) else {
+            startPageContainer.isHidden = false
+            return
+        }
+        if let record = tabs.first(where: { $0.id == id }),
+           page.snapshot.url == nil, let url = record.url
+        {
+            if URLNormalizer.isLoadable(url) {
+                page.load(url)
+            } else {
+                // Scrub a persisted rejected scheme so it never reloads and
+                // never resurfaces in the overview.
+                record.url = nil
+                record.title = nil
+            }
+        }
+        attachScrollProxy(for: id, page: page)
+        ensureSnapshotListener(for: id, page: page)
+        let webView = page.webView
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        contentContainer.insertSubview(webView, at: 0)
+        NSLayoutConstraint.activate([
+            webView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            webView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            webView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor)
+        ])
+        applyContentInsets()
+        refreshForSnapshot(page.snapshot)
+    }
+
+    func shouldShowStartPage(for id: UUID, snapshot: WebPageSnapshot) -> Bool {
+        if forcedStartPageTabs.contains(id) {
+            return true
+        }
+        return snapshot.url == nil
+    }
+
+    func showStartPageForActiveTab() {
+        guard let id = selectedTabID else { return }
+        forcedStartPageTabs.insert(id)
+        refreshForActiveSnapshot()
+    }
+
+    /// Bumps the selected page's recency without disturbing chrome. A live
+    /// page is touched in place; an evicted page is redisplayed so its web
+    /// view is recreated and its URL reloaded.
+    func markActivePageActivated() {
+        guard let id = selectedTabID else { return }
+        let isLive = tabPool.pages.first(where: { $0.id == id })?.page != nil
+        if isLive {
+            _ = tabPool.page(for: id)
+        } else {
+            displaySelectedTab()
+        }
+        if let index = tabs.firstIndex(where: { $0.id == id }) {
+            tabs[index].lastActiveAt = Date()
+        }
+    }
+
+    func selectTab(id: UUID) {
+        guard tabs.contains(where: { $0.id == id }) else { return }
+        selectedTabID = id
+        if let index = tabs.firstIndex(where: { $0.id == id }) {
+            tabs[index].lastActiveAt = Date()
+        }
+        do {
+            try tabStore?.saveSession(tabs: tabs, selected: id)
+        } catch {
+            logPersistenceError(error, operation: "saveSession")
+        }
+        displaySelectedTab()
+    }
+
+    func activePage() -> WebPageController? {
+        guard let id = selectedTabID else { return nil }
+        return tabPool.page(for: id)
+    }
+
+    /// Read-only view of the active page that leaves the pool's recency alone,
+    /// so snapshot-driven refreshes never disturb eviction order.
+    func peekActivePage() -> WebPageController? {
+        guard let id = selectedTabID else { return nil }
+        return tabPool.pages.first(where: { $0.id == id })?.page
+    }
+
+    /// Adopts the single fresh tab Settings already persisted: drops every
+    /// live page and per-tab entry so a background save cannot resurrect
+    /// closed tabs, then displays the fresh empty tab.
+    func resetAllTabsToSingleEmptyTab() {
+        for id in tabs.map(\.id) {
+            prunePerTabState(id: id)
+            tabPool.delete(id: id)
+        }
+        tabs.removeAll()
+        forcedStartPageTabs.removeAll()
+        let session = tabStore?.loadSession() ?? (tabs: [], selected: nil)
+        if !session.tabs.isEmpty {
+            tabs = session.tabs
+            for record in tabs {
+                tabPool.reserve(record)
+            }
+            let fallback = tabs.first?.id
+            let selected = session.selected.flatMap { id in tabs.first(where: { $0.id == id })?.id }
+            selectedTabID = selected ?? fallback
+        } else {
+            let record = TabRecord(isPrivate: false)
+            tabs = [record]
+            tabPool.create(record)
+            do {
+                try tabStore?.saveSession(tabs: tabs, selected: record.id)
+            } catch {
+                logPersistenceError(error, operation: "saveSession")
+            }
+            selectedTabID = record.id
+        }
+        displaySelectedTab()
+        if isOverviewVisible {
+            overviewController.setItems(overviewItems(), selectedID: selectedTabID)
+        }
+        updateStartPageContent()
+    }
+}
