@@ -7,7 +7,7 @@
 import os
 import UIKit
 
-/// Full-screen overlay for Bookmarks, Favorites, and Browsing History library (matching Safari).
+/// Full-screen overlay for Bookmarks, Favorites, History, and Reading List library (matching Safari).
 @MainActor
 final class BookmarksLibraryView: UIView {
     var onOpenURL: ((URL) -> Void)?
@@ -23,6 +23,7 @@ final class BookmarksLibraryView: UIView {
     private var bookmarksBrowserView: BookmarksBrowserView?
     private var favoritesGridView: FavoritesGridView?
     private var historyListView: HistoryListView?
+    private var readingListView: ReadingListView?
 
     private var activeTab: LibraryTab = .bookmarks
 
@@ -38,6 +39,16 @@ final class BookmarksLibraryView: UIView {
         historyListView?.canClearHistory ?? false
     }
 
+    var isReadingListInSelectionMode: Bool {
+        readingListView?.isSelectionMode ?? false
+    }
+
+    var canDeleteReadingListSelection: Bool {
+        readingListView?.hasSelectedItems ?? false
+    }
+
+    var onReadingListStateChanged: (() -> Void)?
+
     init() {
         super.init(frame: .zero)
         setup()
@@ -50,7 +61,8 @@ final class BookmarksLibraryView: UIView {
 
     func configureStores(
         bookmarkStore: BookmarkStore,
-        historyStore: HistoryStore
+        historyStore: HistoryStore,
+        readingListStore: ReadingListStore
     ) {
         let bookView = BookmarksBrowserView(bookmarkStore: bookmarkStore)
         bookView.onOpenURL = { [weak self] url in
@@ -85,6 +97,18 @@ final class BookmarksLibraryView: UIView {
         }
         self.historyListView = histView
 
+        let readingView = ReadingListView(store: readingListStore)
+        readingView.onOpenURL = { [weak self] url in
+            self?.onOpenURL?(url)
+        }
+        readingView.onStateChanged = { [weak self] in
+            self?.onReadingListStateChanged?()
+        }
+        readingView.onSelectionModeChanged = { [weak self] _ in
+            self?.onReadingListStateChanged?()
+        }
+        self.readingListView = readingView
+
         setupContentSubviews()
         updateVisibleTab()
     }
@@ -101,6 +125,7 @@ final class BookmarksLibraryView: UIView {
         bookmarksBrowserView?.reload()
         favoritesGridView?.reload()
         historyListView?.reload()
+        readingListView?.reload()
     }
 
     func promptNewFolder() {
@@ -113,6 +138,18 @@ final class BookmarksLibraryView: UIView {
 
     func promptClearHistory() {
         historyListView?.promptClearHistory()
+    }
+
+    func makeReadingListMenu() -> UIMenu? {
+        readingListView?.makeMenu()
+    }
+
+    func exitReadingListSelectionMode() {
+        readingListView?.exitSelectionMode()
+    }
+
+    func deleteReadingListSelectedItems() {
+        readingListView?.deleteSelectedItems()
     }
 
     // MARK: - Private
@@ -170,6 +207,11 @@ final class BookmarksLibraryView: UIView {
             contentContainer.addSubview(hist)
             pin(hist, inside: contentContainer)
         }
+        if let reading = readingListView {
+            reading.translatesAutoresizingMaskIntoConstraints = false
+            contentContainer.addSubview(reading)
+            pin(reading, inside: contentContainer)
+        }
     }
 
     private func pin(_ view: UIView, inside parent: UIView) {
@@ -185,5 +227,6 @@ final class BookmarksLibraryView: UIView {
         bookmarksBrowserView?.isHidden = (activeTab != .bookmarks)
         favoritesGridView?.isHidden = (activeTab != .favorites)
         historyListView?.isHidden = (activeTab != .history)
+        readingListView?.isHidden = (activeTab != .readingList)
     }
 }

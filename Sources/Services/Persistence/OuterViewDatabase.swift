@@ -18,7 +18,7 @@ final class OuterViewDatabase {
         let configuration = ModelConfiguration(isStoredInMemoryOnly: inMemory)
         container = try ModelContainer(
             for: Bookmark.self, BookmarkFolder.self, RecentSearch.self, HistoryEntry.self,
-            TabRecord.self, TabGroup.self, TabSession.self,
+            TabRecord.self, TabGroup.self, TabSession.self, ReadingListItem.self,
             configurations: configuration
         )
         context = container.mainContext

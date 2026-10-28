@@ -199,4 +199,69 @@ final class ChromeGeometryTests: XCTestCase {
         XCTAssertTrue(palette.options.contains(.displayInline))
         XCTAssertTrue(palette.options.contains(.displayAsPalette))
     }
+
+    func testFindBarFrameEqualsExpandedPillFrame() {
+        let bounds = CGRect(x: 0, y: 0, width: 466, height: 678)
+        let systemBottom: CGFloat = 34
+        let safeRight: CGFloat = 84
+        XCTAssertEqual(FindInPageView.barHeight, AddressBarView.heightForState(.expanded))
+        let findFrame = FindInPageView.barFrame(
+            for: bounds,
+            safeAreaRight: safeRight,
+            systemBottomInset: systemBottom
+        )
+        let pillBottom = BrowserRootViewController.pillBottomOffset(for: .expanded, systemBottomInset: systemBottom)
+        let pillHeight = AddressBarView.heightForState(.expanded)
+        let expected = CGRect(
+            x: 16,
+            y: bounds.height - pillBottom - pillHeight,
+            width: bounds.width - safeRight - 32,
+            height: pillHeight
+        )
+        XCTAssertEqual(findFrame, expected)
+    }
+
+    @MainActor
+    func testFindCounterText() {
+        XCTAssertEqual(FindInPageView.counterText(total: 0, index: 0), "No Results")
+        XCTAssertEqual(FindInPageView.counterText(total: 1, index: 1), "1 match")
+        XCTAssertEqual(FindInPageView.counterText(total: 5, index: 2), "2/5")
+    }
+
+    @MainActor
+    func testFindBarOverlayLifecycle() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let rootVC = BrowserRootViewController(database: database)
+        TestWindow.attach(rootVC)
+
+        XCTAssertFalse(rootVC.isFindActive)
+
+        rootVC.beginFind()
+        XCTAssertTrue(rootVC.isFindActive)
+        XCTAssertTrue(rootVC.pillView.isHidden)
+        XCTAssertFalse(rootVC.findView.isHidden)
+
+        rootVC.handleScrollDelta(60)
+        XCTAssertFalse(rootVC.findView.isHidden)
+        XCTAssertTrue(rootVC.pillView.isHidden)
+
+        rootVC.endFind()
+        XCTAssertFalse(rootVC.isFindActive)
+        XCTAssertTrue(rootVC.findView.isHidden)
+        XCTAssertFalse(rootVC.pillView.isHidden)
+    }
+
+    @MainActor
+    func testSwitchingTabsEndsFind() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let rootVC = BrowserRootViewController(database: database)
+        TestWindow.attach(rootVC)
+
+        rootVC.beginFind()
+        XCTAssertTrue(rootVC.isFindActive)
+
+        rootVC.createNewTab()
+        XCTAssertFalse(rootVC.isFindActive)
+        XCTAssertTrue(rootVC.findView.isHidden)
+    }
 }

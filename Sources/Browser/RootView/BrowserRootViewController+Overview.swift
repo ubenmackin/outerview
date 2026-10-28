@@ -16,7 +16,17 @@ extension BrowserRootViewController {
         isOverviewVisible = visible
         overviewView.isHidden = !visible
         if visible {
-            overviewController.configure(tabs: overviewItems(), selectedID: selectedTabID, mode: overviewMode)
+            let groups = overviewGroups()
+            let validFilter = overviewController.selectedGroupID.flatMap { id in
+                groups.contains(where: { $0.id == id }) ? id : nil
+            }
+            overviewController.configure(
+                tabs: overviewItems(groups: groups),
+                selectedID: selectedTabID,
+                mode: overviewMode,
+                groups: groups,
+                selectedGroupID: validFilter
+            )
             overviewController.applyRailItems(to: railView)
             bringChromeToFront()
         } else {
@@ -24,17 +34,30 @@ extension BrowserRootViewController {
         }
     }
 
-    func overviewItems() -> [TabOverviewItem] {
-        tabs.map { record in
+    func overviewGroups() -> [TabGroup] {
+        tabStore?.fetchGroups() ?? []
+    }
+
+    func overviewItems(groups: [TabGroup]? = nil) -> [TabOverviewItem] {
+        let resolved = groups ?? overviewGroups()
+        let names = Dictionary(uniqueKeysWithValues: resolved.map { ($0.id, $0.name) })
+        return tabs.map { record in
             let host = HostFormatter.host(of: record.url)
             return TabOverviewItem(
                 id: record.id,
                 title: record.title,
                 host: host.isEmpty ? nil : host,
                 url: record.url,
-                isPrivate: record.isPrivate
+                isPrivate: record.isPrivate,
+                groupId: record.groupId,
+                groupName: record.groupId.flatMap { names[$0] }
             )
         }
+    }
+
+    func refreshOverview(groups: [TabGroup], selectedGroupID: UUID?) {
+        overviewController.setGroups(groups, selectedGroupID: selectedGroupID)
+        overviewController.setItems(overviewItems(groups: groups), selectedID: selectedTabID)
     }
 
     func closeTab(id: UUID, replacementIfEmpty replacement: TabOverviewItem?) {
@@ -48,7 +71,8 @@ extension BrowserRootViewController {
                 id: replacement.id,
                 url: replacement.url,
                 title: replacement.title,
-                isPrivate: replacement.isPrivate
+                isPrivate: replacement.isPrivate,
+                groupId: replacement.groupId
             )
             tabs.append(record)
             tabPool.create(record)
@@ -90,6 +114,9 @@ extension BrowserRootViewController {
     }
 
     private func persistStripAndRefresh(closedSelected: Bool, fallbackIsPrivate: Bool) {
+        if closedSelected, isFindActive {
+            endFind()
+        }
         if tabs.isEmpty {
             let record = TabRecord(isPrivate: fallbackIsPrivate)
             tabs.append(record)
@@ -187,5 +214,63 @@ extension BrowserRootViewController: TabOverviewViewControllerDelegate {
     func tabOverviewDidFinish(_ overview: TabOverviewViewController) {
         setOverviewMode(overview.mode)
         setOverviewVisible(false)
+    }
+
+    func tabOverview(_: TabOverviewViewController, didCreateGroup name: String, forTab id: UUID?) {
+        guard let store = tabStore else { return }
+        do {
+            let group = try store.createGroup(name: name)
+            if let id, let index = tabs.firstIndex(where: { $0.id == id }) {
+                tabs[index].groupId = group.id
+                try store.assignTab(id: id, toGroup: group.id)
+            }
+            try store.saveSession(tabs: tabs, selected: selectedTabID)
+            refreshOverview(groups: store.fetchGroups(), selectedGroupID: group.id)
+        } catch {
+            logPersistenceError(error, operation: "createGroup")
+        }
+    }
+
+    func tabOverview(_ overview: TabOverviewViewController, didAssignTab id: UUID, toGroup groupId: UUID?) {
+        guard let store = tabStore else { return }
+        do {
+            if let index = tabs.firstIndex(where: { $0.id == id }) {
+                tabs[index].groupId = groupId
+            }
+            try store.assignTab(id: id, toGroup: groupId)
+            try store.saveSession(tabs: tabs, selected: selectedTabID)
+            let groups = store.fetchGroups()
+            refreshOverview(groups: groups, selectedGroupID: overview.selectedGroupID)
+        } catch {
+            logPersistenceError(error, operation: "assignTab")
+        }
+    }
+
+    func tabOverview(_ overview: TabOverviewViewController, didRenameGroup id: UUID, toName name: String) {
+        guard let store = tabStore else { return }
+        do {
+            try store.renameGroup(id: id, name: name)
+            try store.saveSession(tabs: tabs, selected: selectedTabID)
+            let groups = store.fetchGroups()
+            refreshOverview(groups: groups, selectedGroupID: overview.selectedGroupID)
+        } catch {
+            logPersistenceError(error, operation: "renameGroup")
+        }
+    }
+
+    func tabOverview(_ overview: TabOverviewViewController, didDeleteGroup id: UUID) {
+        guard let store = tabStore else { return }
+        do {
+            try store.deleteGroup(id: id)
+            for record in tabs where record.groupId == id {
+                record.groupId = nil
+            }
+            try store.saveSession(tabs: tabs, selected: selectedTabID)
+            let groups = store.fetchGroups()
+            let valid = overview.selectedGroupID == id ? nil : overview.selectedGroupID
+            refreshOverview(groups: groups, selectedGroupID: valid)
+        } catch {
+            logPersistenceError(error, operation: "deleteGroup")
+        }
     }
 }

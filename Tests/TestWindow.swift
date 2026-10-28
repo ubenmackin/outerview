@@ -17,7 +17,7 @@ enum TestWindow {
 
     @discardableResult
     static func attach(_ view: UIView, frame: CGRect = defaultFrame) -> UIWindow {
-        let window = UIWindow(frame: frame)
+        let window = makeWindow(frame: frame)
         window.addSubview(view)
         view.layoutIfNeeded()
         retained.append(window)
@@ -27,10 +27,19 @@ enum TestWindow {
     @discardableResult
     static func attach(_ viewController: UIViewController, frame: CGRect = defaultFrame) -> UIWindow {
         viewController.loadViewIfNeeded()
-        let window = UIWindow(frame: frame)
+        let window = makeWindow(frame: frame)
         window.addSubview(viewController.view)
         viewController.view.layoutIfNeeded()
         retained.append(window)
+        return window
+    }
+
+    private static func makeWindow(frame: CGRect) -> UIWindow {
+        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else {
+            preconditionFailure("TestWindow requires a connected UIWindowScene from the test host.")
+        }
+        let window = UIWindow(windowScene: scene)
+        window.frame = frame
         return window
     }
 }

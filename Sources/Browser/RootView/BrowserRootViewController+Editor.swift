@@ -119,70 +119,7 @@ extension BrowserRootViewController {
     }
 
     func findInPage(_ term: String) {
-        guard let webView = activePage()?.webView else { return }
-        let escaped = term
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "'", with: "\\'")
-            .replacingOccurrences(of: "\n", with: "\\n")
-            .replacingOccurrences(of: "\r", with: "\\r")
-        // Highlights every case-insensitive match and scrolls the first one
-        // into view so the row visibly lands on the page.
-        let script = """
-        (function() {
-            var term='\(escaped)';
-            if (!term) { return 0; }
-            var prev=document.querySelectorAll('.outerView-find-highlight');
-            for (var p=0;p<prev.length;p++) {
-                var el=prev[p];
-                var parent=el.parentNode;
-                if (!parent) { continue; }
-                parent.replaceChild(document.createTextNode(el.textContent),el);
-                parent.normalize();
-            }
-            var lower=term.toLowerCase();
-            var walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,null);
-            var nodes=[];
-            while (walker.nextNode()) { nodes.push(walker.currentNode); }
-            var count=0;
-            var first=null;
-            for (var i=0;i<nodes.length;i++) {
-                var node=nodes[i];
-                var text=node.nodeValue;
-                if (!text) { continue; }
-                var tag=node.parentNode&&node.parentNode.tagName;
-                if (tag==='SCRIPT'||tag==='STYLE'||tag==='NOSCRIPT') { continue; }
-                if (text.toLowerCase().indexOf(lower)===-1) { continue; }
-                var frag=document.createDocumentFragment();
-                var remaining=text;
-                var lowerRemaining=remaining.toLowerCase();
-                var matched=false;
-                while (true) {
-                    var j=lowerRemaining.indexOf(lower);
-                    if (j===-1) {
-                        frag.appendChild(document.createTextNode(remaining));
-                        break;
-                    }
-                    matched=true;
-                    frag.appendChild(document.createTextNode(remaining.slice(0,j)));
-                    var mark=document.createElement('mark');
-                    mark.className='outerView-find-highlight';
-                    mark.style.backgroundColor='#FFEB3B';
-                    mark.style.color='#000';
-                    mark.textContent=remaining.substr(j,term.length);
-                    frag.appendChild(mark);
-                    if (!first) { first=mark; }
-                    count++;
-                    remaining=remaining.slice(j+term.length);
-                    lowerRemaining=remaining.toLowerCase();
-                    if (!remaining) { break; }
-                }
-                if (matched) { node.parentNode.replaceChild(frag,node); }
-            }
-            if (first&&first.scrollIntoView) { first.scrollIntoView({block:'center'}); }
-            return count;
-        })()
-        """
-        webView.evaluateJavaScript(script, completionHandler: nil)
+        beginFind(initialQuery: term)
     }
 
     // MARK: - Editor bridges

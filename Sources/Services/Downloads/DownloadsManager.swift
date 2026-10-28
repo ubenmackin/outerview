@@ -1,0 +1,326 @@
+//
+//  DownloadsManager.swift
+//  OuterView
+//
+
+import Combine
+import Foundation
+import os
+import UIKit
+import WebKit
+
+/// Discrete lifecycle of one download row.
+enum DownloadState: Equatable, Sendable {
+    case inProgress
+    case finished
+    case failed(String?)
+}
+
+/// One row in the downloads list.
+struct DownloadRow: Identifiable, Equatable, Sendable {
+    let id: UUID
+    var name: String
+    var progress: Double
+    var state: DownloadState
+    var sizeLabel: String
+    var fileURL: URL?
+}
+
+/// WKDownloadDelegate pipeline writing to Documents/Downloads.
+@MainActor
+final class DownloadsManager: NSObject, ObservableObject {
+    @Published private(set) var rows: [DownloadRow] = []
+
+    let directoryURL: URL
+    private let fileManager: FileManager
+
+    private var downloads: [UUID: WKDownload] = [:]
+    private var destinations: [UUID: URL] = [:]
+    private var downloadIDs: [ObjectIdentifier: UUID] = [:]
+    private var observations: [UUID: NSKeyValueObservation] = [:]
+
+    init(directoryURL: URL? = nil, fileManager: FileManager = .default) {
+        let resolved: URL = if let directoryURL {
+            directoryURL
+        } else if let documents = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first {
+            documents.appendingPathComponent("Downloads", isDirectory: true)
+        } else {
+            fileManager.temporaryDirectory.appendingPathComponent("Downloads", isDirectory: true)
+        }
+        self.directoryURL = resolved
+        self.fileManager = fileManager
+        super.init()
+        do {
+            try fileManager.createDirectory(at: resolved, withIntermediateDirectories: true)
+        } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "Downloads")
+                .error("createDirectory failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    // MARK: - File naming
+
+    /// Strips directory components and unsafe separators; blanks become "download".
+    nonisolated static func sanitizedFileName(_ raw: String) -> String {
+        var candidate = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        candidate = (candidate as NSString).lastPathComponent
+        if candidate.contains("\\") {
+            candidate = candidate.split(separator: "\\").last.map(String.init) ?? ""
+        }
+        // All-separator input collapses to "/" as the last component.
+        if candidate == "/" {
+            return "download"
+        }
+        candidate = candidate
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: .controlCharacters)
+        if candidate.isEmpty || candidate == "." || candidate == ".." {
+            return "download"
+        }
+        if candidate.count > 255 {
+            candidate = String(candidate.prefix(255))
+        }
+        return candidate
+    }
+
+    /// First non-colliding destination, appending " (2)", " (3)", … before the extension.
+    static func uniqueDestinationURL(
+        for fileName: String,
+        in directory: URL,
+        fileManager: FileManager = .default,
+        reservedNames: Set<String> = []
+    ) -> URL {
+        let sanitized = sanitizedFileName(fileName)
+        let ext = (sanitized as NSString).pathExtension
+        let base = (sanitized as NSString).deletingPathExtension
+        var candidate = sanitized
+        var counter = 1
+        while fileManager.fileExists(atPath: directory.appendingPathComponent(candidate).path)
+            || reservedNames.contains(candidate)
+        {
+            counter += 1
+            if ext.isEmpty {
+                candidate = "\(base) (\(counter))"
+            } else {
+                candidate = "\(base) (\(counter)).\(ext)"
+            }
+        }
+        return directory.appendingPathComponent(candidate)
+    }
+
+    nonisolated static func formattedSize(byteCount: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file)
+    }
+
+    nonisolated static func isAttachmentResponse(_ response: URLResponse) -> Bool {
+        guard let http = response as? HTTPURLResponse,
+              let disposition = http.value(forHTTPHeaderField: "Content-Disposition")
+        else {
+            return false
+        }
+        return disposition.lowercased().contains("attachment")
+    }
+
+    /// A response that cannot render inline or carries an attachment disposition downloads.
+    static func shouldDownload(navigationResponse: WKNavigationResponse) -> Bool {
+        !navigationResponse.canShowMIMEType || isAttachmentResponse(navigationResponse.response)
+    }
+
+    private func reservedFileNames(excluding excludedID: UUID? = nil) -> Set<String> {
+        Set(destinations.compactMap { id, url in
+            guard id != excludedID else { return nil }
+            return url.lastPathComponent
+        })
+    }
+
+    private func uniqueDestination(for fileName: String, excluding excludedID: UUID? = nil) -> URL {
+        Self.uniqueDestinationURL(
+            for: fileName,
+            in: directoryURL,
+            fileManager: fileManager,
+            reservedNames: reservedFileNames(excluding: excludedID)
+        )
+    }
+
+    // MARK: - Tracking
+
+    @discardableResult
+    func begin(download: WKDownload, suggestedName: String) -> Progress? {
+        let destination = uniqueDestination(for: Self.sanitizedFileName(suggestedName))
+        let id = UUID()
+        rows.append(DownloadRow(
+            id: id,
+            name: destination.lastPathComponent,
+            progress: 0,
+            state: .inProgress,
+            sizeLabel: "",
+            fileURL: destination
+        ))
+        downloads[id] = download
+        destinations[id] = destination
+        downloadIDs[ObjectIdentifier(download)] = id
+        download.delegate = self
+        observations[id] = download.progress.observe(\.fractionCompleted, options: [.new]) { [weak self] progress, _ in
+            Task { @MainActor [weak self] in
+                self?.applyProgress(progress.fractionCompleted, for: id)
+            }
+        }
+        return download.progress
+    }
+
+    /// Test and delegate seam: creates an in-progress row without a live WKDownload.
+    func registerRow(name: String, fileURL: URL?) -> UUID {
+        let id = UUID()
+        rows.append(DownloadRow(
+            id: id,
+            name: name,
+            progress: 0,
+            state: .inProgress,
+            sizeLabel: "",
+            fileURL: fileURL
+        ))
+        if let fileURL {
+            destinations[id] = fileURL
+        }
+        return id
+    }
+
+    func applyProgress(_ fraction: Double, for id: UUID) {
+        guard let index = rows.firstIndex(where: { $0.id == id }),
+              rows[index].state == .inProgress
+        else {
+            return
+        }
+        rows[index].progress = min(max(fraction, 0), 1)
+    }
+
+    func completeDownload(id: UUID) {
+        guard let index = rows.firstIndex(where: { $0.id == id }) else { return }
+        rows[index].progress = 1
+        rows[index].state = .finished
+        let url = destinations[id] ?? rows[index].fileURL
+        let resolvedSize: Int? = {
+            guard let url else { return nil }
+            do {
+                return try fileManager.attributesOfItem(atPath: url.path)[.size] as? Int
+            } catch {
+                return nil
+            }
+        }()
+        if let resolvedSize {
+            rows[index].sizeLabel = Self.formattedSize(byteCount: resolvedSize)
+        } else {
+            rows[index].sizeLabel = ""
+        }
+    }
+
+    func failDownload(id: UUID, reason: String?) {
+        guard let index = rows.firstIndex(where: { $0.id == id }) else { return }
+        rows[index].state = .failed(reason)
+    }
+
+    func cancel(id: UUID) {
+        guard let download = downloads[id] else { return }
+        download.cancel { _ in }
+        observations[id]?.invalidate()
+        observations[id] = nil
+        if let index = rows.firstIndex(where: { $0.id == id }),
+           rows[index].state == .inProgress
+        {
+            rows[index].state = .failed("Cancelled")
+        }
+    }
+
+    func delete(id: UUID) {
+        observations[id]?.invalidate()
+        observations[id] = nil
+        if let download = downloads[id] {
+            download.cancel { _ in }
+        }
+        downloads[id] = nil
+        let fileURL = destinations[id] ?? rows.first(where: { $0.id == id })?.fileURL
+        if let fileURL {
+            do {
+                try fileManager.removeItem(at: fileURL)
+            } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "Downloads")
+                    .error("removeItem failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        destinations[id] = nil
+        for (key, value) in downloadIDs where value == id {
+            downloadIDs.removeValue(forKey: key)
+        }
+        rows.removeAll(where: { $0.id == id })
+    }
+
+    // MARK: - Files app
+
+    func makeFilesPicker() -> UIDocumentPickerViewController {
+        UIDocumentPickerViewController(forExporting: [directoryURL], asCopy: true)
+    }
+}
+
+// MARK: - WKDownloadDelegate
+
+extension DownloadsManager: WKDownloadDelegate {
+    func download(
+        _ download: WKDownload,
+        decideDestinationUsing response: URLResponse,
+        suggestedFilename: String,
+        completionHandler: @escaping @MainActor @Sendable (URL?) -> Void
+    ) {
+        let clean = Self.sanitizedFileName(suggestedFilename.isEmpty ? (response.suggestedFilename ?? "download") : suggestedFilename)
+        if let id = downloadIDs[ObjectIdentifier(download)] {
+            let destination = uniqueDestination(for: clean, excluding: id)
+            destinations[id] = destination
+            if let index = rows.firstIndex(where: { $0.id == id }) {
+                rows[index].name = destination.lastPathComponent
+                rows[index].fileURL = destination
+            }
+            completionHandler(destination)
+            return
+        }
+        let destination = uniqueDestination(for: clean)
+        let id = UUID()
+        rows.append(DownloadRow(
+            id: id,
+            name: destination.lastPathComponent,
+            progress: 0,
+            state: .inProgress,
+            sizeLabel: "",
+            fileURL: destination
+        ))
+        downloads[id] = download
+        destinations[id] = destination
+        downloadIDs[ObjectIdentifier(download)] = id
+        observations[id] = download.progress.observe(\.fractionCompleted, options: [.new]) { [weak self] progress, _ in
+            Task { @MainActor [weak self] in
+                self?.applyProgress(progress.fractionCompleted, for: id)
+            }
+        }
+        completionHandler(destination)
+    }
+
+    func downloadDidFinish(_ download: WKDownload) {
+        guard let id = downloadIDs[ObjectIdentifier(download)] else { return }
+        completeDownload(id: id)
+        observations[id]?.invalidate()
+        observations[id] = nil
+        downloads[id] = nil
+    }
+
+    func download(
+        _ download: WKDownload,
+        didFailWithError error: Error,
+        resumeData _: Data?
+    ) {
+        guard let id = downloadIDs[ObjectIdentifier(download)] else { return }
+        failDownload(id: id, reason: error.localizedDescription)
+        observations[id]?.invalidate()
+        observations[id] = nil
+        downloads[id] = nil
+    }
+}

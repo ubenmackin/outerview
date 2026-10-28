@@ -7,6 +7,23 @@ import Foundation
 import os
 import SwiftData
 
+enum TabStoreError: Error, LocalizedError, Equatable {
+    case invalidGroupName
+    case groupNotFound
+    case tabNotFound
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidGroupName:
+            "Group names must not be empty."
+        case .groupNotFound:
+            "The requested tab group could not be found."
+        case .tabNotFound:
+            "The requested tab could not be found."
+        }
+    }
+}
+
 /// Persists the tab strip for relaunch restore. Private tabs are filtered out
 /// at every write path; a low-level DEBUG assertion trips if one ever slips
 /// past the filter into the persistence write itself.
@@ -122,7 +139,71 @@ final class TabStore {
         return (tabs, selected)
     }
 
+    // MARK: - Groups
+
+    @discardableResult
+    func createGroup(name: String) throws -> TabGroup {
+        let group = try TabGroup(name: Self.normalizedGroupName(name), createdAt: Date())
+        context.insert(group)
+        try context.save()
+        return group
+    }
+
+    func fetchGroups() -> [TabGroup] {
+        let descriptor = FetchDescriptor<TabGroup>(
+            sortBy: [SortDescriptor(\.createdAt, order: .forward)]
+        )
+        do {
+            return try context.fetch(descriptor)
+        } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
+                .error("fetchGroups failed: \(error.localizedDescription, privacy: .public)")
+            return []
+        }
+    }
+
+    func renameGroup(id: UUID, name: String) throws {
+        let clean = try Self.normalizedGroupName(name)
+        guard let group = try group(id: id) else {
+            throw TabStoreError.groupNotFound
+        }
+        group.name = clean
+        try context.save()
+    }
+
+    func deleteGroup(id: UUID) throws {
+        guard let group = try group(id: id) else { return }
+        for record in allRecords() where record.groupId == id {
+            record.groupId = nil
+        }
+        context.delete(group)
+        try context.save()
+    }
+
+    func assignTab(id: UUID, toGroup groupId: UUID?) throws {
+        if let groupId, try group(id: groupId) == nil {
+            throw TabStoreError.groupNotFound
+        }
+        guard let record = try record(id: id) else {
+            throw TabStoreError.tabNotFound
+        }
+        record.groupId = groupId
+        try context.save()
+    }
+
     // MARK: - Private
+
+    private static func normalizedGroupName(_ name: String) throws -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw TabStoreError.invalidGroupName }
+        return String(trimmed.prefix(TabGroup.maxNameLength))
+    }
+
+    private func group(id: UUID) throws -> TabGroup? {
+        var descriptor = FetchDescriptor<TabGroup>(predicate: #Predicate { $0.id == id })
+        descriptor.fetchLimit = 1
+        return try context.fetch(descriptor).first
+    }
 
     private func insertOrUpdate(_ tab: TabRecord) throws {
         assert(!tab.isPrivate, "Private tab reached the persistence write path")
