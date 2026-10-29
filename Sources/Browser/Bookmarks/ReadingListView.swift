@@ -198,6 +198,7 @@ final class ReadingListView: UIView {
     var onSelectionModeChanged: ((Bool) -> Void)?
 
     private let store: ReadingListStore
+    private let defaults: UserDefaults
     private var items: [ReadingListItem] = []
 
     private(set) var displayMode: ReadingListDisplayMode = .compact
@@ -220,9 +221,41 @@ final class ReadingListView: UIView {
 
     private let searchTuck = LibrarySearchTuckController()
 
-    init(store: ReadingListStore) {
+    nonisolated static let displayModeDefaultsKey = "readingList.displayMode"
+    nonisolated static let filterModeDefaultsKey = "readingList.filterMode"
+
+    nonisolated static func storedDisplayMode(defaults: UserDefaults = .standard) -> ReadingListDisplayMode {
+        guard let raw = defaults.string(forKey: displayModeDefaultsKey),
+              let mode = ReadingListDisplayMode(rawValue: raw)
+        else {
+            return .compact
+        }
+        return mode
+    }
+
+    nonisolated static func storedFilterMode(defaults: UserDefaults = .standard) -> ReadingListFilterMode {
+        guard let raw = defaults.string(forKey: filterModeDefaultsKey),
+              let mode = ReadingListFilterMode(rawValue: raw)
+        else {
+            return .all
+        }
+        return mode
+    }
+
+    nonisolated static func persist(displayMode: ReadingListDisplayMode, defaults: UserDefaults = .standard) {
+        defaults.set(displayMode.rawValue, forKey: displayModeDefaultsKey)
+    }
+
+    nonisolated static func persist(filterMode: ReadingListFilterMode, defaults: UserDefaults = .standard) {
+        defaults.set(filterMode.rawValue, forKey: filterModeDefaultsKey)
+    }
+
+    init(store: ReadingListStore, defaults: UserDefaults = .standard) {
         self.store = store
+        self.defaults = defaults
         super.init(frame: .zero)
+        displayMode = Self.storedDisplayMode(defaults: defaults)
+        filterMode = Self.storedFilterMode(defaults: defaults)
         setup()
         reload()
     }
@@ -236,12 +269,12 @@ final class ReadingListView: UIView {
         items = store.fetchAll()
         updateEmptyState()
         tableView.reloadData()
-        searchTuck.enforceTuck(tableView, isEditing: searchHeader.searchBar.isFirstResponder, isFiltering: !searchQuery.isEmpty)
+        reassertSearchTuck()
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        searchTuck.layoutTuckIfNeeded(host: self, tableView: tableView)
+        layoutSearchTuck()
     }
 
     // MARK: - Menu & Display Modes
@@ -249,17 +282,19 @@ final class ReadingListView: UIView {
     func setDisplayMode(_ mode: ReadingListDisplayMode) {
         guard displayMode != mode else { return }
         displayMode = mode
+        Self.persist(displayMode: mode, defaults: defaults)
         tableView.reloadData()
-        searchTuck.enforceTuck(tableView, isEditing: searchHeader.searchBar.isFirstResponder, isFiltering: !searchQuery.isEmpty)
+        reassertSearchTuck()
         onStateChanged?()
     }
 
     func setFilterMode(_ mode: ReadingListFilterMode) {
         guard filterMode != mode else { return }
         filterMode = mode
+        Self.persist(filterMode: mode, defaults: defaults)
         updateEmptyState()
         tableView.reloadData()
-        searchTuck.enforceTuck(tableView, isEditing: searchHeader.searchBar.isFirstResponder, isFiltering: !searchQuery.isEmpty)
+        reassertSearchTuck()
         onStateChanged?()
     }
 
@@ -270,7 +305,7 @@ final class ReadingListView: UIView {
         searchQuery = ""
         updateEmptyState()
         tableView.reloadData()
-        searchTuck.enforceTuck(tableView, isEditing: searchHeader.searchBar.isFirstResponder, isFiltering: !searchQuery.isEmpty)
+        reassertSearchTuck()
         onSelectionModeChanged?(true)
     }
 
@@ -279,7 +314,7 @@ final class ReadingListView: UIView {
         selectedItemIDs.removeAll()
         updateEmptyState()
         tableView.reloadData()
-        searchTuck.enforceTuck(tableView, isEditing: searchHeader.searchBar.isFirstResponder, isFiltering: !searchQuery.isEmpty)
+        reassertSearchTuck()
         onSelectionModeChanged?(false)
     }
 
@@ -416,15 +451,17 @@ final class ReadingListView: UIView {
             tableView: tableView,
             onQueryChanged: { [weak self] query in
                 guard let self else { return }
-                self.searchQuery = query
+                self.searchQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
                 self.updateEmptyState()
                 self.tableView.reloadData()
+                self.reassertSearchTuck()
             },
             onCleared: { [weak self] in
                 guard let self else { return }
                 self.searchQuery = ""
                 self.updateEmptyState()
                 self.tableView.reloadData()
+                self.reassertSearchTuck()
             }
         )
 
@@ -517,7 +554,35 @@ extension ReadingListView: UITableViewDataSource, UITableViewDelegate {
         return UISwipeActionsConfiguration(actions: [deleteAction])
     }
 
-    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate _: Bool) {
-        searchTuck.snapBackIfNeeded(scrollView, searchBar: searchHeader.searchBar, isFiltering: !searchQuery.isEmpty)
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        handleTuckScroll(scrollView)
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate: Bool) {
+        handleTuckEndDragging(scrollView, willDecelerate: willDecelerate)
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        handleTuckEndDecelerating(scrollView)
+    }
+}
+
+// MARK: - LibrarySearchTuckable
+
+extension ReadingListView: LibrarySearchTuckable {
+    var tuckController: LibrarySearchTuckController {
+        searchTuck
+    }
+
+    var tuckTableView: UITableView {
+        tableView
+    }
+
+    var tuckSearchHeader: LibrarySearchHeaderView {
+        searchHeader
+    }
+
+    var isTuckFiltering: Bool {
+        !searchQuery.isEmpty
     }
 }

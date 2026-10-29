@@ -8,6 +8,7 @@ import UIKit
 @MainActor
 final class LibrarySearchHeaderView: UIView, UISearchBarDelegate {
     nonisolated static let defaultHeight: CGFloat = 64
+    nonisolated static let revealThreshold: CGFloat = -28
 
     var onQueryChanged: ((String) -> Void)?
     var onCancel: (() -> Void)?
@@ -103,6 +104,16 @@ final class LibrarySearchTuckController {
         !isEditing && !isFiltering && offsetY < headerHeight
     }
 
+    nonisolated static func requiresCollapse(
+        contentHeight: CGFloat,
+        boundsHeight: CGFloat,
+        headerHeight: CGFloat = LibrarySearchHeaderView.defaultHeight
+    ) -> Bool {
+        // Zero-geometry tables never collapse.
+        guard boundsHeight > 0 else { return false }
+        return contentHeight < boundsHeight + headerHeight
+    }
+
     func tuck(_ tableView: UITableView, animated: Bool) {
         let tuckOffset = CGPoint(x: 0, y: LibrarySearchHeaderView.defaultHeight)
         tableView.setContentOffset(tuckOffset, animated: animated)
@@ -118,11 +129,73 @@ final class LibrarySearchTuckController {
         tuck(tableView, animated: false)
     }
 
-    func layoutTuckIfNeeded(host: UIView, tableView: UITableView) {
-        if !hasTuckedSearch, host.bounds.width > 0 {
-            hasTuckedSearch = true
-            tuck(tableView, animated: false)
+    func reassert(
+        tableView: UITableView,
+        header: LibrarySearchHeaderView,
+        searchBar: UISearchBar,
+        isFiltering: Bool
+    ) {
+        if searchBar.isFirstResponder || isFiltering || tableView.isEditing {
+            if tableView.tableHeaderView == nil {
+                attach(header, to: tableView)
+            }
+            return
         }
+        // contentSize is stale until layout runs after reloadData; force it current.
+        tableView.layoutIfNeeded()
+        let headerHeight = LibrarySearchHeaderView.defaultHeight
+        let rawContentHeight = tableView.contentSize.height
+        // Normalize: a detached header excludes its height from contentSize, so add
+        // it back for a state-independent verdict (attached R+H vs detached R).
+        let effectiveContentHeight = tableView.tableHeaderView == nil
+            ? rawContentHeight + headerHeight
+            : rawContentHeight
+        if Self.requiresCollapse(
+            contentHeight: effectiveContentHeight,
+            boundsHeight: tableView.bounds.height,
+            headerHeight: headerHeight
+        ) {
+            tableView.tableHeaderView = nil
+        } else {
+            if tableView.tableHeaderView == nil {
+                attach(header, to: tableView)
+            }
+            enforceTuck(tableView, isEditing: searchBar.isFirstResponder, isFiltering: isFiltering)
+        }
+    }
+
+    func handleScroll(
+        _ scrollView: UIScrollView,
+        tableView: UITableView,
+        header: LibrarySearchHeaderView,
+        searchBar: UISearchBar,
+        isFiltering: Bool
+    ) {
+        guard tableView.tableHeaderView == nil, !tableView.isEditing, !searchBar.isFirstResponder, !isFiltering else { return }
+        // Pull past the reveal threshold reattaches the header on short lists.
+        if scrollView.contentOffset.y < LibrarySearchHeaderView.revealThreshold {
+            attach(header, to: tableView)
+        }
+    }
+
+    private func attach(_ header: LibrarySearchHeaderView, to tableView: UITableView) {
+        var frame = header.frame
+        frame.size.width = tableView.bounds.width
+        frame.size.height = LibrarySearchHeaderView.defaultHeight
+        header.frame = frame
+        tableView.tableHeaderView = header
+    }
+
+    func layoutTuckIfNeeded(
+        host: UIView,
+        tableView: UITableView,
+        header: LibrarySearchHeaderView,
+        searchBar: UISearchBar,
+        isFiltering: Bool
+    ) {
+        guard !hasTuckedSearch, host.bounds.width > 0, tableView.bounds.height > 0 else { return }
+        hasTuckedSearch = true
+        reassert(tableView: tableView, header: header, searchBar: searchBar, isFiltering: isFiltering)
     }
 
     func snapBackIfNeeded(_ scrollView: UIScrollView, searchBar: UISearchBar, isFiltering: Bool) {
@@ -144,14 +217,77 @@ final class LibrarySearchTuckController {
         header.onQueryChanged = { query in
             onQueryChanged(query)
         }
-        header.onCancel = { [weak self, weak tableView] in
+        header.onCancel = {
             onCleared()
-            guard let tableView else { return }
-            self?.tuck(tableView, animated: true)
         }
         header.onBeginEditing = { [weak tableView] in
             tableView?.setContentOffset(.zero, animated: true)
         }
         tableView.tableHeaderView = header
+    }
+}
+
+/// Shared tuck wiring for the library lists (Bookmarks, History, Reading List).
+/// Each host forwards its table view, search header, and filtering state; the
+/// scroll snap-back, reassert, and first-layout tuck stay identical here so the
+/// three lists never drift.
+@MainActor
+protocol LibrarySearchTuckable: AnyObject {
+    var tuckController: LibrarySearchTuckController { get }
+    var tuckTableView: UITableView { get }
+    var tuckSearchHeader: LibrarySearchHeaderView { get }
+    var isTuckFiltering: Bool { get }
+    func reassertSearchTuck()
+}
+
+@MainActor
+extension LibrarySearchTuckable {
+    func reassertSearchTuck() {
+        tuckController.reassert(
+            tableView: tuckTableView,
+            header: tuckSearchHeader,
+            searchBar: tuckSearchHeader.searchBar,
+            isFiltering: isTuckFiltering
+        )
+    }
+
+    func handleTuckScroll(_ scrollView: UIScrollView) {
+        tuckController.handleScroll(
+            scrollView,
+            tableView: tuckTableView,
+            header: tuckSearchHeader,
+            searchBar: tuckSearchHeader.searchBar,
+            isFiltering: isTuckFiltering
+        )
+    }
+
+    func handleTuckEndDragging(_ scrollView: UIScrollView, willDecelerate: Bool) {
+        guard !willDecelerate else { return }
+        tuckController.snapBackIfNeeded(
+            scrollView,
+            searchBar: tuckSearchHeader.searchBar,
+            isFiltering: isTuckFiltering
+        )
+    }
+
+    func handleTuckEndDecelerating(_ scrollView: UIScrollView) {
+        tuckController.snapBackIfNeeded(
+            scrollView,
+            searchBar: tuckSearchHeader.searchBar,
+            isFiltering: isTuckFiltering
+        )
+    }
+}
+
+@MainActor
+extension LibrarySearchTuckable where Self: UIView {
+    func layoutSearchTuck() {
+        tuckController.layoutTuckIfNeeded(
+            host: self,
+            tableView: tuckTableView,
+            header: tuckSearchHeader,
+            searchBar: tuckSearchHeader.searchBar,
+            isFiltering: isTuckFiltering
+        )
     }
 }

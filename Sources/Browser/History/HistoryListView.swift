@@ -89,12 +89,12 @@ final class HistoryListView: UIView {
         }
         emptyLabel.isHidden = !isEmpty
         tableView.reloadData()
-        searchTuck.enforceTuck(tableView, isEditing: searchHeader.searchBar.isFirstResponder, isFiltering: !searchQuery.isEmpty)
+        reassertSearchTuck()
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        searchTuck.layoutTuckIfNeeded(host: self, tableView: tableView)
+        layoutSearchTuck()
     }
 
     // MARK: - Private
@@ -134,7 +134,7 @@ final class HistoryListView: UIView {
             tableView: tableView,
             onQueryChanged: { [weak self] query in
                 guard let self else { return }
-                self.searchQuery = query
+                self.searchQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
                 self.reload()
             },
             onCleared: { [weak self] in
@@ -246,7 +246,35 @@ extension HistoryListView: UITableViewDataSource, UITableViewDelegate {
         return UISwipeActionsConfiguration(actions: [deleteAction])
     }
 
-    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate _: Bool) {
-        searchTuck.snapBackIfNeeded(scrollView, searchBar: searchHeader.searchBar, isFiltering: !searchQuery.isEmpty)
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        handleTuckScroll(scrollView)
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate: Bool) {
+        handleTuckEndDragging(scrollView, willDecelerate: willDecelerate)
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        handleTuckEndDecelerating(scrollView)
+    }
+}
+
+// MARK: - LibrarySearchTuckable
+
+extension HistoryListView: LibrarySearchTuckable {
+    var tuckController: LibrarySearchTuckController {
+        searchTuck
+    }
+
+    var tuckTableView: UITableView {
+        tableView
+    }
+
+    var tuckSearchHeader: LibrarySearchHeaderView {
+        searchHeader
+    }
+
+    var isTuckFiltering: Bool {
+        !searchQuery.isEmpty
     }
 }
