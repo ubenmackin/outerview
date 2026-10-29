@@ -55,8 +55,12 @@ struct RailAction {
         RailAction(systemImageName: "magnifyingglass", accessibilityLabel: "Search", handler: handler)
     }
 
-    static func pageMenu(handler: @escaping () -> Void) -> RailAction {
-        RailAction(systemImageName: "list.bullet", accessibilityLabel: "Page Menu", handler: handler)
+    static func overviewMenu(menu: UIMenu) -> RailAction {
+        RailAction(
+            systemImageName: "ellipsis",
+            accessibilityLabel: "Overview Menu",
+            menu: menu
+        )
     }
 
     static func done(handler: @escaping () -> Void) -> RailAction {

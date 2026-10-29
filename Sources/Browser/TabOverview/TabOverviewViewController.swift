@@ -5,27 +5,12 @@
 
 import UIKit
 
-/// Browsing mode filter for the tab overview. Raw values match the
-/// segmented control indices so mapping stays total in both directions.
 enum TabOverviewMode: Int, Sendable, CaseIterable {
     case standard = 0
     case privateMode = 1
 
     var isPrivate: Bool {
         self == .privateMode
-    }
-
-    nonisolated static func mode(forSegmentIndex index: Int) -> TabOverviewMode {
-        TabOverviewMode(rawValue: index) ?? .standard
-    }
-
-    nonisolated static func segmentIndex(for mode: TabOverviewMode) -> Int {
-        mode.rawValue
-    }
-
-    nonisolated func segmentTitle(count: Int) -> String {
-        let base = self == .privateMode ? "Private" : "Standard"
-        return "\(base) · \(count)"
     }
 }
 
@@ -76,7 +61,7 @@ protocol TabOverviewViewControllerDelegate: AnyObject {
     func tabOverview(_ overview: TabOverviewViewController, didChangeMode mode: TabOverviewMode)
     func tabOverviewDidRequestCloseAll(_ overview: TabOverviewViewController, in mode: TabOverviewMode)
     func tabOverviewDidFinish(_ overview: TabOverviewViewController)
-    func tabOverview(_ overview: TabOverviewViewController, didCreateGroup name: String, forTab id: UUID?)
+    func tabOverview(_ overview: TabOverviewViewController, didCreateGroup name: String, withTabIDs: [UUID])
     func tabOverview(_ overview: TabOverviewViewController, didAssignTab id: UUID, toGroup groupId: UUID?)
     func tabOverview(_ overview: TabOverviewViewController, didRenameGroup id: UUID, toName name: String)
     func tabOverview(_ overview: TabOverviewViewController, didDeleteGroup id: UUID)
@@ -89,7 +74,7 @@ extension TabOverviewViewControllerDelegate {
     func tabOverview(_: TabOverviewViewController, didChangeMode _: TabOverviewMode) {}
     func tabOverviewDidRequestCloseAll(_: TabOverviewViewController, in _: TabOverviewMode) {}
     func tabOverviewDidFinish(_: TabOverviewViewController) {}
-    func tabOverview(_: TabOverviewViewController, didCreateGroup _: String, forTab _: UUID?) {}
+    func tabOverview(_: TabOverviewViewController, didCreateGroup _: String, withTabIDs _: [UUID]) {}
     func tabOverview(_: TabOverviewViewController, didAssignTab _: UUID, toGroup _: UUID?) {}
     func tabOverview(_: TabOverviewViewController, didRenameGroup _: UUID, toName _: String) {}
     func tabOverview(_: TabOverviewViewController, didDeleteGroup _: UUID) {}
@@ -142,6 +127,14 @@ final class TabOverviewViewController: UIViewController {
             }
         }
         return (standard, privateCount)
+    }
+
+    nonisolated static func tabsCapsuleCountTitle(count: Int) -> String {
+        count == 1 ? "1 Tab" : "\(count) Tabs"
+    }
+
+    nonisolated static func otherModeTitle(for mode: TabOverviewMode) -> String {
+        mode == .standard ? "Private" : "Standard"
     }
 
     nonisolated static func visibleTabs(
@@ -227,10 +220,8 @@ final class TabOverviewViewController: UIViewController {
     private let filterRow = UIView()
     private let filterField = UITextField()
     private var filterHeightConstraint: NSLayoutConstraint!
-    private let segmentCapsule = UIVisualEffectView(effect: GlassEffect.make())
-    private let segmentedControl = UISegmentedControl(items: ["Standard", "Private"])
-    private let groupsCapsule = UIVisualEffectView(effect: GlassEffect.make())
-    private let groupsButton = UIButton(type: .system)
+    private let tabsCapsule = UIVisualEffectView(effect: GlassEffect.make())
+    private let tabsButton = UIButton(type: .system)
     private let emptyLabel = UILabel()
 
     override init(nibName nibNameOrNil: String?, bundle nibBundleOrNil: Bundle?) {
@@ -251,7 +242,7 @@ final class TabOverviewViewController: UIViewController {
         super.viewDidLoad()
         setupHierarchy()
         updateAppearance()
-        updateSegmentTitles()
+        updateTabsCapsuleTitle()
         updateItemSize()
     }
 
@@ -268,10 +259,8 @@ final class TabOverviewViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        segmentCapsule.layer.cornerRadius = segmentCapsule.bounds.height / 2
-        segmentCapsule.clipsToBounds = true
-        groupsCapsule.layer.cornerRadius = groupsCapsule.bounds.height / 2
-        groupsCapsule.clipsToBounds = true
+        tabsCapsule.layer.cornerRadius = tabsCapsule.bounds.height / 2
+        tabsCapsule.clipsToBounds = true
         updateItemSize()
     }
 
@@ -289,15 +278,14 @@ final class TabOverviewViewController: UIViewController {
         allGroups = groups
         self.selectedGroupID = selectedGroupID.flatMap { id in groups.contains(where: { $0.id == id }) ? id : nil }
         applyMode(mode, notify: false)
-        updateGroupsButton()
+        updateTabsCapsuleTitle()
         requestPreviews()
     }
 
     func setItems(_ tabs: [TabOverviewItem], selectedID: UUID?) {
         adoptItems(tabs)
         self.selectedID = selectedID
-        updateSegmentTitles()
-        updateGroupsButton()
+        updateTabsCapsuleTitle()
         collectionView.reloadData()
         updateEmptyState()
     }
@@ -309,7 +297,7 @@ final class TabOverviewViewController: UIViewController {
         } else {
             self.selectedGroupID = nil
         }
-        updateGroupsButton()
+        updateTabsCapsuleTitle()
         collectionView.reloadData()
         updateEmptyState()
     }
@@ -319,7 +307,7 @@ final class TabOverviewViewController: UIViewController {
             return
         }
         selectedGroupID = groupId
-        updateGroupsButton()
+        updateTabsCapsuleTitle()
         collectionView.reloadData()
         updateEmptyState()
     }
@@ -339,9 +327,9 @@ final class TabOverviewViewController: UIViewController {
         view.setNeedsLayout()
     }
 
-    /// Exact overview rail composition: search + page menu up top, new tab
-    /// + done at the bottom. The owner forwards its `SideRailView` here so
-    /// browsing and overview rails can never drift apart.
+    /// Exact overview rail composition: search + command menu up top, new
+    /// tab + done at the bottom. The owner forwards its `SideRailView` here
+    /// so browsing and overview rails can never drift apart.
     func applyRailItems(to railView: SideRailView) {
         railView.setItems(
             prefix: [
@@ -349,7 +337,7 @@ final class TabOverviewViewController: UIViewController {
                     guard let self else { return }
                     self.setFilterVisible(!self.isFilterVisible)
                 },
-                .pageMenu { [weak self] in self?.showCloseAllSheet() }
+                .overviewMenu(menu: makeOverviewMenu(includesCloseAll: true))
             ],
             suffix: [
                 .newTab { [weak self] in
@@ -417,36 +405,19 @@ final class TabOverviewViewController: UIViewController {
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(emptyLabel)
 
-        segmentCapsule.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(segmentCapsule)
-        segmentedControl.selectedSegmentIndex = TabOverviewMode.segmentIndex(for: mode)
-        segmentedControl.accessibilityIdentifier = "TabOverview.ModeSegment"
-        segmentedControl.addTarget(self, action: #selector(handleModeChanged), for: .valueChanged)
-        segmentedControl.translatesAutoresizingMaskIntoConstraints = false
-        segmentCapsule.contentView.addSubview(segmentedControl)
-
-        groupsCapsule.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(groupsCapsule)
-        groupsButton.accessibilityIdentifier = "TabOverview.GroupsButton"
-        groupsButton.accessibilityLabel = "Filter tabs by group"
-        groupsButton.translatesAutoresizingMaskIntoConstraints = false
-        groupsButton.showsMenuAsPrimaryAction = true
-        groupsButton.menu = UIMenu(children: [
-            UIDeferredMenuElement.uncached { [weak self] completion in
-                guard let self else {
-                    completion([])
-                    return
-                }
-                completion(self.makeGroupFilterMenu().children)
-            }
-        ])
-        groupsCapsule.contentView.addSubview(groupsButton)
-        let groupsLongPress = UILongPressGestureRecognizer(
-            target: self,
-            action: #selector(handleGroupsLongPress(_:))
+        tabsCapsule.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tabsCapsule)
+        tabsButton.accessibilityIdentifier = "TabOverview.TabsButton"
+        tabsButton.accessibilityLabel = "Select tab group"
+        tabsButton.showsMenuAsPrimaryAction = false
+        tabsButton.menu = makeOverviewMenu(includesCloseAll: false)
+        tabsButton.addAction(
+            UIAction { [weak self] _ in self?.showGroupsSheet() },
+            for: .touchUpInside
         )
-        groupsCapsule.addGestureRecognizer(groupsLongPress)
-        updateGroupsButton()
+        tabsButton.translatesAutoresizingMaskIntoConstraints = false
+        tabsCapsule.contentView.addSubview(tabsButton)
+        updateTabsCapsuleTitle()
 
         filterHeightConstraint = filterRow.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
@@ -467,23 +438,19 @@ final class TabOverviewViewController: UIViewController {
             emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
 
-            segmentCapsule.leadingAnchor.constraint(
+            tabsCapsule.leadingAnchor.constraint(
                 equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16
             ),
-            segmentCapsule.bottomAnchor.constraint(
+            tabsCapsule.bottomAnchor.constraint(
                 equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12
             ),
-            segmentedControl.leadingAnchor.constraint(equalTo: segmentCapsule.contentView.leadingAnchor, constant: 6),
-            segmentedControl.trailingAnchor.constraint(equalTo: segmentCapsule.contentView.trailingAnchor, constant: -6),
-            segmentedControl.topAnchor.constraint(equalTo: segmentCapsule.contentView.topAnchor, constant: 4),
-            segmentedControl.bottomAnchor.constraint(equalTo: segmentCapsule.contentView.bottomAnchor, constant: -4),
-            groupsCapsule.leadingAnchor.constraint(equalTo: segmentCapsule.trailingAnchor, constant: 8),
-            groupsCapsule.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
-            groupsCapsule.centerYAnchor.constraint(equalTo: segmentCapsule.centerYAnchor),
-            groupsButton.leadingAnchor.constraint(equalTo: groupsCapsule.contentView.leadingAnchor, constant: 12),
-            groupsButton.trailingAnchor.constraint(equalTo: groupsCapsule.contentView.trailingAnchor, constant: -12),
-            groupsButton.topAnchor.constraint(equalTo: groupsCapsule.contentView.topAnchor, constant: 6),
-            groupsButton.bottomAnchor.constraint(equalTo: groupsCapsule.contentView.bottomAnchor, constant: -6)
+            tabsCapsule.trailingAnchor.constraint(
+                lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16
+            ),
+            tabsButton.leadingAnchor.constraint(equalTo: tabsCapsule.contentView.leadingAnchor, constant: 12),
+            tabsButton.trailingAnchor.constraint(equalTo: tabsCapsule.contentView.trailingAnchor, constant: -12),
+            tabsButton.topAnchor.constraint(equalTo: tabsCapsule.contentView.topAnchor, constant: 6),
+            tabsButton.bottomAnchor.constraint(equalTo: tabsCapsule.contentView.bottomAnchor, constant: -6)
         ])
         NSLayoutConstraint.activate([
             filterField.heightAnchor.constraint(equalToConstant: 36)
@@ -504,18 +471,15 @@ final class TabOverviewViewController: UIViewController {
                 previews[id] = nil
             }
         }
-        updateSegmentTitles()
-        updateGroupsButton()
+        updateTabsCapsuleTitle()
         collectionView.reloadData()
         updateEmptyState()
     }
 
     private func applyMode(_ newMode: TabOverviewMode, notify: Bool) {
         mode = newMode
-        segmentedControl.selectedSegmentIndex = TabOverviewMode.segmentIndex(for: newMode)
         updateAppearance()
-        updateSegmentTitles()
-        updateGroupsButton()
+        updateTabsCapsuleTitle()
         collectionView.reloadData()
         updateEmptyState()
         if notify {
@@ -523,43 +487,55 @@ final class TabOverviewViewController: UIViewController {
         }
     }
 
-    private func modeFilteredTabs() -> [TabOverviewItem] {
-        Self.tabs(allTabs, in: mode)
+    private func updateTabsCapsuleTitle() {
+        let totals = Self.counts(allTabs)
+        let count = mode.isPrivate ? totals.privateCount : totals.standard
+        let font = UIFont.systemFont(ofSize: 16, weight: .semibold)
+        let secondaryAttributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: UIColor.secondaryLabel
+        ]
+        let attributed = NSMutableAttributedString(string: Self.otherModeTitle(for: mode), attributes: secondaryAttributes)
+        attributed.append(NSAttributedString(string: " · ", attributes: secondaryAttributes))
+        attributed.append(NSAttributedString(
+            string: Self.tabsCapsuleCountTitle(count: count),
+            attributes: [
+                .font: font,
+                .foregroundColor: UIColor.label
+            ]
+        ))
+        tabsButton.setAttributedTitle(attributed, for: .normal)
+        tabsButton.accessibilityValue = attributed.string
     }
 
-    private func updateGroupsButton() {
-        if let id = selectedGroupID, let group = allGroups.first(where: { $0.id == id }) {
-            let count = modeFilteredTabs().filter { $0.groupId == id }.count
-            let title = "\(group.name) · \(count)"
-            groupsButton.setTitle(title, for: .normal)
-            groupsButton.accessibilityValue = title
-            return
-        }
-        let items = Self.groupCapsuleItems(groups: allGroups, tabs: modeFilteredTabs())
-        let title = items.first.map { "\($0.title) · \($0.count)" } ?? "All · 0"
-        groupsButton.setTitle(title, for: .normal)
-        groupsButton.accessibilityValue = title
-    }
-
-    private func makeGroupFilterMenu() -> UIMenu {
-        let scoped = modeFilteredTabs()
-        let items = Self.groupCapsuleItems(groups: allGroups, tabs: scoped)
-        var children: [UIMenuElement] = []
-        for item in items {
-            let action = UIAction(
-                title: "\(item.title) · \(item.count)",
-                state: item.id == selectedGroupID ? .on : .off
-            ) { [weak self] _ in
-                self?.setGroupFilter(item.id)
+    /// Overview commands shared by the rail ellipsis and the pill's
+    /// long-press menu. The pill drops Close All Tabs: that destructive
+    /// action owns its own confirm sheet and stays rail-only.
+    private func makeOverviewMenu(includesCloseAll: Bool) -> UIMenu {
+        UIMenu(children: [
+            UIDeferredMenuElement.uncached { [weak self] completion in
+                guard let self else {
+                    completion([])
+                    return
+                }
+                var children: [UIMenuElement] = [
+                    UIAction(title: "Manage Tab Groups", image: UIImage(systemName: "list.bullet.rectangle")) { [weak self] _ in
+                        self?.showGroupsSheet()
+                    },
+                    UIAction(title: "New Group…", image: UIImage(systemName: "folder.badge.plus")) { [weak self] _ in
+                        self?.promptNewGroupCreation(withTabIDs: [])
+                    }
+                ]
+                if includesCloseAll {
+                    children.append(
+                        UIAction(title: "Close All Tabs", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
+                            self?.showCloseAllSheet()
+                        }
+                    )
+                }
+                completion(children)
             }
-            children.append(action)
-        }
-        children.append(
-            UIAction(title: "New Group…") { [weak self] _ in
-                self?.promptNewGroup(forTab: nil)
-            }
-        )
-        return UIMenu(title: "Groups", children: children)
+        ])
     }
 
     private func moveToGroupMenu(forTab id: UUID) -> UIMenu {
@@ -577,7 +553,7 @@ final class TabOverviewViewController: UIViewController {
         }
         children.append(
             UIAction(title: "New Group…") { [weak self] _ in
-                self?.promptNewGroup(forTab: id)
+                self?.promptNewGroupCreation(withTabIDs: [id])
             }
         )
         if tab?.groupId != nil {
@@ -591,7 +567,7 @@ final class TabOverviewViewController: UIViewController {
         return UIMenu(title: "Move to Group…", children: children)
     }
 
-    private func promptNewGroup(forTab tabID: UUID?) {
+    private func promptNewGroupCreation(withTabIDs tabIDs: [UUID]) {
         let alert = UIAlertController(title: "New Group", message: "Enter a name for this group.", preferredStyle: .alert)
         alert.addTextField { field in
             field.placeholder = "Group Name"
@@ -603,96 +579,74 @@ final class TabOverviewViewController: UIViewController {
                   let raw = alert?.textFields?.first?.text,
                   !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { return }
-            self.delegate?.tabOverview(self, didCreateGroup: raw, forTab: tabID)
+            let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.delegate?.tabOverview(self, didCreateGroup: name, withTabIDs: tabIDs)
         })
         if let popover = alert.popoverPresentationController {
-            popover.sourceView = groupsButton
-            popover.sourceRect = groupsButton.bounds
+            popover.sourceView = tabsButton
+            popover.sourceRect = tabsButton.bounds
         }
         present(alert, animated: true)
     }
 
-    private func promptRenameGroup(_ group: TabGroup) {
-        let alert = UIAlertController(title: "Rename Group", message: nil, preferredStyle: .alert)
-        alert.addTextField { field in
-            field.text = group.name
-            field.autocapitalizationType = .words
-        }
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Save", style: .default) { [weak self, weak alert] _ in
-            guard let self,
-                  let raw = alert?.textFields?.first?.text,
-                  !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            else { return }
-            self.delegate?.tabOverview(self, didRenameGroup: group.id, toName: raw)
+    /// One Safari-style sheet for mode + group selection. The sheet re-reads
+    /// `stateProvider` itself, so the owner only applies emitted actions.
+    private func showGroupsSheet() {
+        let sheet = TabGroupsSheetController(stateProvider: { [weak self] in
+            guard let self else {
+                return TabGroupsSheetState(
+                    isPrivate: false,
+                    selectedGroupID: nil,
+                    standardCount: 0,
+                    privateCount: 0,
+                    groups: []
+                )
+            }
+            let totals = Self.counts(allTabs)
+            return TabGroupsSheetState(
+                isPrivate: mode.isPrivate,
+                selectedGroupID: selectedGroupID,
+                standardCount: totals.standard,
+                privateCount: totals.privateCount,
+                groups: Self.groupCapsuleItems(groups: allGroups, tabs: allTabs)
+            )
         })
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = groupsButton
-            popover.sourceRect = groupsButton.bounds
-        }
-        present(alert, animated: true)
-    }
-
-    private func confirmDeleteGroup(_ group: TabGroup) {
-        let alert = UIAlertController(
-            title: "Delete Group?",
-            message: "Tabs in “\(group.name)” stay open and move to All.",
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Delete", style: .destructive) { [weak self] _ in
-            guard let self else { return }
-            self.delegate?.tabOverview(self, didDeleteGroup: group.id)
-        })
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = groupsButton
-            popover.sourceRect = groupsButton.bounds
-        }
-        present(alert, animated: true)
-    }
-
-    private func showManageGroupsSheet() {
-        guard !allGroups.isEmpty else { return }
-        let sheet = UIAlertController(title: "Manage Groups", message: nil, preferredStyle: .actionSheet)
-        for group in allGroups {
-            sheet.addAction(UIAlertAction(title: "Rename “\(group.name)”", style: .default) { [weak self] _ in
-                self?.promptRenameGroup(group)
-            })
-            sheet.addAction(UIAlertAction(title: "Delete “\(group.name)”", style: .destructive) { [weak self] _ in
-                guard let self else { return }
-                self.confirmDeleteGroup(group)
-            })
-        }
-        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = groupsButton
-            popover.sourceRect = groupsButton.bounds
+        sheet.onAction = { [weak self] in self?.handleGroupsSheetAction($0) }
+        sheet.modalPresentationStyle = .pageSheet
+        if let presentation = sheet.sheetPresentationController {
+            presentation.detents = [.medium(), .large()]
+            presentation.prefersGrabberVisible = true
         }
         present(sheet, animated: true)
     }
 
-    @objc private func handleGroupsLongPress(_ gesture: UILongPressGestureRecognizer) {
-        guard gesture.state == .began else { return }
-        showManageGroupsSheet()
+    private func handleGroupsSheetAction(_ action: TabGroupsSheetController.Action) {
+        switch action {
+        case .selectStandardAll:
+            applyMode(.standard, notify: true)
+            setGroupFilter(nil)
+        case .selectPrivate:
+            applyMode(.privateMode, notify: true)
+            setGroupFilter(nil)
+        case let .selectGroup(id):
+            applyMode(.standard, notify: true)
+            setGroupFilter(id)
+        case let .createGroup(name, withAllStandardTabs):
+            let tabIDs = withAllStandardTabs ? Self.tabs(allTabs, in: .standard).map(\.id) : []
+            delegate?.tabOverview(self, didCreateGroup: name, withTabIDs: tabIDs)
+        case let .renameGroup(id, name):
+            delegate?.tabOverview(self, didRenameGroup: id, toName: name)
+        case let .deleteGroup(id):
+            delegate?.tabOverview(self, didDeleteGroup: id)
+        }
     }
 
     private func updateAppearance() {
         let isPrivate = mode.isPrivate
         view.backgroundColor = isPrivate ? .black : .systemBackground
         overrideUserInterfaceStyle = isPrivate ? .dark : .unspecified
-        segmentedControl.selectedSegmentTintColor = isPrivate ? .systemPurple : nil
         collectionView.backgroundColor = .clear
         collectionView.reloadData()
-    }
-
-    private func updateSegmentTitles() {
-        let totals = Self.counts(allTabs)
-        segmentedControl.setTitle(
-            TabOverviewMode.standard.segmentTitle(count: totals.standard), forSegmentAt: 0
-        )
-        segmentedControl.setTitle(
-            TabOverviewMode.privateMode.segmentTitle(count: totals.privateCount), forSegmentAt: 1
-        )
     }
 
     private func updateItemSize() {
@@ -738,8 +692,7 @@ final class TabOverviewViewController: UIViewController {
             let replacement = Self.fallbackTab(mode: mode)
             allTabs.append(replacement)
             selectedID = replacement.id
-            updateSegmentTitles()
-            updateGroupsButton()
+            updateTabsCapsuleTitle()
             collectionView.reloadData()
             updateEmptyState()
             delegate?.tabOverview(self, didCloseTab: id, replacementIfEmpty: replacement)
@@ -748,8 +701,7 @@ final class TabOverviewViewController: UIViewController {
         selectedID = Self.selectionAfterClosing(
             closedID: id, remainingTabs: allTabs, selectedID: selectedID
         )
-        updateSegmentTitles()
-        updateGroupsButton()
+        updateTabsCapsuleTitle()
         collectionView.reloadData()
         updateEmptyState()
         delegate?.tabOverview(self, didCloseTab: id, replacementIfEmpty: nil)
@@ -770,10 +722,6 @@ final class TabOverviewViewController: UIViewController {
             popover.permittedArrowDirections = []
         }
         present(sheet, animated: true)
-    }
-
-    @objc private func handleModeChanged() {
-        applyMode(TabOverviewMode.mode(forSegmentIndex: segmentedControl.selectedSegmentIndex), notify: true)
     }
 }
 

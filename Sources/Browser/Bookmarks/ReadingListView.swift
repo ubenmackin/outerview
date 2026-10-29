@@ -236,6 +236,7 @@ final class ReadingListView: UIView {
         items = store.fetchAll()
         updateEmptyState()
         tableView.reloadData()
+        searchTuck.enforceTuck(tableView, isEditing: searchHeader.searchBar.isFirstResponder, isFiltering: !searchQuery.isEmpty)
     }
 
     override func layoutSubviews() {
@@ -249,6 +250,7 @@ final class ReadingListView: UIView {
         guard displayMode != mode else { return }
         displayMode = mode
         tableView.reloadData()
+        searchTuck.enforceTuck(tableView, isEditing: searchHeader.searchBar.isFirstResponder, isFiltering: !searchQuery.isEmpty)
         onStateChanged?()
     }
 
@@ -257,6 +259,7 @@ final class ReadingListView: UIView {
         filterMode = mode
         updateEmptyState()
         tableView.reloadData()
+        searchTuck.enforceTuck(tableView, isEditing: searchHeader.searchBar.isFirstResponder, isFiltering: !searchQuery.isEmpty)
         onStateChanged?()
     }
 
@@ -267,6 +270,7 @@ final class ReadingListView: UIView {
         searchQuery = ""
         updateEmptyState()
         tableView.reloadData()
+        searchTuck.enforceTuck(tableView, isEditing: searchHeader.searchBar.isFirstResponder, isFiltering: !searchQuery.isEmpty)
         onSelectionModeChanged?(true)
     }
 
@@ -275,6 +279,7 @@ final class ReadingListView: UIView {
         selectedItemIDs.removeAll()
         updateEmptyState()
         tableView.reloadData()
+        searchTuck.enforceTuck(tableView, isEditing: searchHeader.searchBar.isFirstResponder, isFiltering: !searchQuery.isEmpty)
         onSelectionModeChanged?(false)
     }
 

@@ -59,7 +59,7 @@ Sources/
 │   ├── Bookmarks/        # Four-tab library container (Favorites/Bookmarks/History/Reading List), browser, editor
 │   ├── Favorites/        # Large Safari-style favicon tiles & grid view
 │   ├── History/          # Chronologically segmented history list & segmentation logic
-│   └── TabOverview/      # Visual tab grid overview, groups, swipe-to-close, search filtering
+│   └── TabOverview/      # Visual tab grid overview, groups sheet, card close/flick dismiss, search filtering
 ├── Services/
 │   ├── Persistence/      # SwiftData database + stores (bookmark, history, tab, recent searches, reading list, site zoom)
 │   ├── URLHandling/      # URL normalizer, search suggestions engine, Google Suggest, favicon service
@@ -72,9 +72,9 @@ Sources/
 - **`SideRailView`**: Floating circular action buttons centered in the right 84 pt column. Context-driven via `RailMode`:
   - `.browsing`: Back button (dynamically enabled based on web view history), Bookmarks library trigger, New Tab, and Tab Overview.
   - `.startPage`: Prominent Blue Checkmark (`Done`) button.
-  - `.library(tab)`: Done button at bottom; contextual actions at top (Add Folder and Edit for Bookmarks; Clear for History; Reading List surfaces display, filter, and select actions through an ellipsis menu, with batch deletion in selection mode).
+  - `.library(tab)`: Done button at bottom; contextual actions at top (Add Folder and Edit for Bookmarks; Clear for History; Reading List surfaces display, filter, and select actions through an ellipsis menu). Reading List selection mode repurposes the prominent blue check to mean "done selecting" (it exits selection mode and restores the normal Reading List rail) and keeps batch deletion as the trash action at the TOP of the rail; the blue check resumes its exit-the-Library role once selection mode ends.
   - `.bookmarkEditor`: Cancel (`xmark`) at top; Save (`checkmark`) at bottom.
-  - Tab overview bypasses `RailMode`: `TabOverviewViewController.applyRailItems(to:)` puts Search and the close-all page menu on top, New Tab and Done at the bottom.
+  - Tab overview bypasses `RailMode`: `TabOverviewViewController.applyRailItems(to:)` puts Search and an ellipsis menu (Manage Tab Groups, New Group…, Close All Tabs behind a confirm sheet) on top, New Tab and Done at the bottom.
   - *Quick Menu*: When collapsed, a compact circular button remains at `(402, 600)` to restore the rail on tap.
 - **`AddressBarView`**: Liquid glass floating capsule displaying security status (lock icon), page domain/title, reload/stop action, and page menu anchor. Morphs between expanded (44 pt height) and minified (30 pt height). While Find in Page is active, the find capsule (`FindInPageView`) occupies the pill's exact frame — the FSM is not involved; the overlay is independent like `errorContainer`.
 - **`AddressEditorView`**: Full-bleed editing overlay docked above `keyboardLayoutGuide`. Features an integrated `UITextField` inside a glass capsule and a suggestions `UITableView` with `automaticDimension` row height to eliminate any text clipping.
@@ -94,11 +94,15 @@ Sources/
 ### 4.3 Web Surface & Tab Management
 - **`WebPageController`**: Wraps `WKWebView`, manages navigation delegates, script injection, progress observation, pull-to-refresh, certificate verification, and snapshot caching. P1 adds: `WKUIDelegate` element context menus (links/images via `ElementContextMenu`), the download policy (downloadable navigation actions and responses return `.download` so WebKit drives the transfer with the original request; `DownloadsManager` completes each `WKDownload` via `didBecome` + `decideDestinationUsing`), find-in-page JS engine (`findText`/`findStep`/`clearFind`), reader-mode DOM transforms (`toggleReader`/`setReaderTheme`/`setReaderFontSize`, guarded by a document generation so stale extractions never touch a new document), and per-site `pageZoom` application (`SiteZoomStore`).
 - **`TabPool`**: Manages the lifecycle of live tab controllers. Enforces a 30-tab live memory cap using an LRU eviction policy (evicting inactive WKWebViews to disk snapshots while preserving tab state and navigation history).
-- **`TabOverviewViewController`**: Visual card grid (cols = `max(2, floor(width / 180))`) featuring snapshot previews, close buttons, private browsing segmentation, real-time title search filtering, and **tab groups** (Groups capsule: All + named groups with counts; card context menu Move to Group; rename/delete via capsule long-press; zero-member groups hidden).
+- **`TabOverviewViewController`**: Visual card grid (cols = `max(2, floor(width / 180))`) featuring snapshot previews, close buttons, real-time title search filtering, and **tab groups** (card context menu Move to Group; zero-member groups hidden). Bottom chrome is ONE Safari-style glass pill (`tabsCapsule` + `tabsButton`) titled "<other mode> · <N> Tabs": tap opens the **`TabGroupsSheetController`** sheet, long-press opens a menu. There is no segmented control or separate groups capsule; Standard/Private switching happens inside the sheet.
+- **`TabGroupsSheetController`**: Standalone UIKit sheet (Sources/Browser/TabOverview/) listing All (Standard), Private, existing groups with counts and active checkmarks, and both create rows ("New Empty Tab Group", "New Tab Group with N Tabs" — the latter hidden at zero standard tabs). Long-press a group row for Rename/Delete; a trailing blue checkmark button dismisses the sheet. It knows nothing of `TabOverviewViewController`'s internals: it consumes a `TabGroupsSheetState` snapshot via `stateProvider` and emits `Action`s. The sheet re-reads state on `viewWillAppear` and after actions that keep it open.
+- **Group delegate protocol**: `TabOverviewViewControllerDelegate.tabOverview(_:didCreateGroup:withTabIDs:)` is the single own-side batch creation method; the owner (`BrowserRootViewController+Overview.swift`) creates the group and assigns every listed standard tab (empty array = empty group). Private tabs are never assigned.
+- **`TabCardCell`**: Card with preview + favicon/title/host strip, a visible 28 pt close button at the preview's top-right, and a velocity-gated vertical flick-to-dismiss (single pan gesture; slow drags scroll the grid instead; thresholds are pure statics unit-tested in `TabCardFlickTests`).
 - **`ElementContextMenu`**: Pure UIMenu builder — the canonical item owner. Links: Open in New Tab, Add to Reading List, Copy Link, Share. Images: Open in New Tab, Save to Photos, Copy Image, Share. Photos saving declares `NSPhotoLibraryAddUsageDescription`.
 
 ### 4.4 Library, Bookmarks, Favorites, History & Reading List
 - **`BookmarksLibraryView`**: Full-screen container with custom `LibraryTabBar` providing full-width navigation across **Favorites**, **Bookmarks**, **History**, and **Reading List** (`LibraryTab.readingList`, systemImage `eyeglasses`).
+- **Library search tuck contract**: In all three searchable lists the search bar is **hidden by default** and revealed only by pulling down from the top. `LibrarySearchTuckController` (Sources/Browser/Bookmarks/LibrarySearchHeaderView.swift) is the SOLE tuck decider: every host list re-asserts the hidden state via `enforceTuck` immediately after every `tableReload`; first-layout tuck stays in `layoutTuckIfNeeded`; re-exposure on reload is a bug. The spacing between the revealed search bar and list content is owned by the header view's internal padding (`defaultHeight` 64 with ~14 pt bottom padding), never by per-list constants.
 - **`BookmarksBrowserView`**: Hierarchical bookmark navigator supporting nested folders, section-bound drag-and-drop reordering, and context-menu operations.
 - **`BookmarkEditorView` + `BookmarkEditorModel`**: Dedicated bookmark editing surface for modifying title, URL, and destination folder using `BookmarkLocationTree`. Directly integrated with side-rail Cancel/Save buttons.
 - **`FavoritesGridView` + `FavoriteTileCell`**: Safari-faithful grid displaying large custom-rendered favicon tiles with rounded corners.
@@ -152,6 +156,11 @@ The page menu accessed from the address capsule adheres strictly to Safari's str
 2. Typing runs `window.__outerviewFind(query)` → live highlights + "n/m" counter; prev/next cycle via `findStep(±1)`.
 3. Done → `endFind()`: `clearFind()` + pill restored in the FSM's current state (rail commands keep animating during find).
 
+### 5.5 Tab Overview Chrome Flow
+1. **Rail**: Search + ellipsis menu (Manage Tab Groups, New Group…, Close All Tabs with confirm sheet) on top; New Tab and Done at the bottom.
+2. **Tabs pill**: One bottom glass capsule; tap opens `TabGroupsSheetController` (medium detent, grabber); long-press shows the same menu minus the close-all item.
+3. **Sheet actions**: Selecting All/Private/a group applies the mode + filter and dismisses; create rows prompt for a name and forward the batch `didCreateGroup:withTabIDs:` delegate call; rename/delete keep the sheet open (owner-refresh re-reads `stateProvider`).
+
 ---
 
 ## 6. Engineering Standards & Test Automation Contracts
@@ -169,3 +178,4 @@ The page menu accessed from the address capsule adheres strictly to Safari's str
 - **No Private APIs**: Safari functionality (bookmarks import, icon rendering, suggestions, find, reader, downloads) is achieved strictly through public iOS SDKs.
 - **Memory Safety & Process Isolation**: Inactive web views must be evicted via `TabPool` to prevent WebContent process bloat on memory-constrained devices.
 - **Single-Owner Menus**: The page menu structure is edited only where the integration task specifies; feature tasks expose capability APIs and never fork the menu builder.
+- **Single-Owner Tuck + Chrome Composition**: Library-list tuck decisions live only in `LibrarySearchTuckController`; library select-mode rail composition lives only in `BrowserRootViewController.updateLibraryRailItems(for:)`; tab-card dismissal lives only in `TabCardCell`; bottom overview chrome lives only in `TabOverviewViewController`. Call sites delegate; they never re-implement.

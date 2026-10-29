@@ -89,6 +89,7 @@ final class HistoryListView: UIView {
         }
         emptyLabel.isHidden = !isEmpty
         tableView.reloadData()
+        searchTuck.enforceTuck(tableView, isEditing: searchHeader.searchBar.isFirstResponder, isFiltering: !searchQuery.isEmpty)
     }
 
     override func layoutSubviews() {

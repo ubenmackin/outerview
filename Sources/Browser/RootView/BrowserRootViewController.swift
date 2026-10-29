@@ -497,23 +497,18 @@ final class BrowserRootViewController: UIViewController {
         case .readingList:
             if bookmarksLibraryView.isReadingListInSelectionMode {
                 let canDelete = bookmarksLibraryView.canDeleteReadingListSelection
+                // No Library-exit action while selecting: the blue check ends
+                // selection mode first; rail exit returns once it ends.
                 prefix = [
-                    RailAction(
-                        systemImageName: "xmark",
-                        accessibilityLabel: "Done",
-                        handler: { [weak self] in
-                            self?.bookmarksLibraryView.exitReadingListSelectionMode()
-                            self?.updateLibraryRailItems(for: .readingList)
-                        }
-                    )
-                ]
-                suffix = [
                     .deleteSelected(isEnabled: canDelete) { [weak self] in
                         self?.bookmarksLibraryView.deleteReadingListSelectedItems()
                         self?.updateLibraryRailItems(for: .readingList)
-                    },
+                    }
+                ]
+                suffix = [
                     .done { [weak self] in
-                        self?.closeBookmarksLibrary()
+                        self?.bookmarksLibraryView.exitReadingListSelectionMode()
+                        self?.updateLibraryRailItems(for: .readingList)
                     }
                 ]
             } else {

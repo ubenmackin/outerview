@@ -216,13 +216,15 @@ extension BrowserRootViewController: TabOverviewViewControllerDelegate {
         setOverviewVisible(false)
     }
 
-    func tabOverview(_: TabOverviewViewController, didCreateGroup name: String, forTab id: UUID?) {
+    func tabOverview(_: TabOverviewViewController, didCreateGroup name: String, withTabIDs tabIDs: [UUID]) {
         guard let store = tabStore else { return }
         do {
             let group = try store.createGroup(name: name)
-            if let id, let index = tabs.firstIndex(where: { $0.id == id }) {
-                tabs[index].groupId = group.id
-                try store.assignTab(id: id, toGroup: group.id)
+            // Private tabs are never assigned; they stay off disk entirely,
+            // so a persisted row for them does not exist to assign.
+            for record in tabs where tabIDs.contains(record.id) && !record.isPrivate {
+                record.groupId = group.id
+                try store.assignTab(id: record.id, toGroup: group.id)
             }
             try store.saveSession(tabs: tabs, selected: selectedTabID)
             refreshOverview(groups: store.fetchGroups(), selectedGroupID: group.id)

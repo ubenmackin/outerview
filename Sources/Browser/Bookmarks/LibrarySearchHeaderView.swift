@@ -7,7 +7,7 @@ import UIKit
 
 @MainActor
 final class LibrarySearchHeaderView: UIView, UISearchBarDelegate {
-    static let defaultHeight: CGFloat = 52
+    nonisolated static let defaultHeight: CGFloat = 64
 
     var onQueryChanged: ((String) -> Void)?
     var onCancel: (() -> Void)?
@@ -42,11 +42,14 @@ final class LibrarySearchHeaderView: UIView, UISearchBarDelegate {
         searchBar.delegate = self
         addSubview(searchBar)
 
+        // 6 pt top + 44 pt bar + 14 pt bottom reveal gap (spacing between the
+        // revealed bar and the list content) = defaultHeight.
         NSLayoutConstraint.activate([
             searchBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             searchBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            searchBar.topAnchor.constraint(equalTo: topAnchor),
-            searchBar.bottomAnchor.constraint(equalTo: bottomAnchor)
+            searchBar.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            searchBar.heightAnchor.constraint(equalToConstant: 44),
+            searchBar.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14)
         ])
     }
 
@@ -88,9 +91,31 @@ final class LibrarySearchHeaderView: UIView, UISearchBarDelegate {
 final class LibrarySearchTuckController {
     private var hasTuckedSearch = false
 
+    /// Re-tuck only when editing ended, no query filters the list, and the
+    /// table sits at or above the hidden offset (including negative pull-down
+    /// bounce), so reloads never re-expose a revealed bar.
+    nonisolated static func shouldRetuck(
+        isEditing: Bool,
+        isFiltering: Bool,
+        offsetY: CGFloat,
+        headerHeight: CGFloat = LibrarySearchHeaderView.defaultHeight
+    ) -> Bool {
+        !isEditing && !isFiltering && offsetY < headerHeight
+    }
+
     func tuck(_ tableView: UITableView, animated: Bool) {
         let tuckOffset = CGPoint(x: 0, y: LibrarySearchHeaderView.defaultHeight)
         tableView.setContentOffset(tuckOffset, animated: animated)
+    }
+
+    /// Re-asserts the hidden bar immediately after a reload without animating.
+    func enforceTuck(_ tableView: UITableView, isEditing: Bool, isFiltering: Bool) {
+        guard Self.shouldRetuck(
+            isEditing: isEditing,
+            isFiltering: isFiltering,
+            offsetY: tableView.contentOffset.y
+        ) else { return }
+        tuck(tableView, animated: false)
     }
 
     func layoutTuckIfNeeded(host: UIView, tableView: UITableView) {

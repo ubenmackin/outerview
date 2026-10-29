@@ -97,6 +97,7 @@ final class BookmarksBrowserView: UIView {
             titleLabel.text = folderStack.last?.title ?? "Bookmarks"
         }
         tableView.reloadData()
+        searchTuck.enforceTuck(tableView, isEditing: searchHeader.searchBar.isFirstResponder, isFiltering: !searchQuery.isEmpty)
     }
 
     override func layoutSubviews() {
