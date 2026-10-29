@@ -65,6 +65,7 @@ protocol TabOverviewViewControllerDelegate: AnyObject {
     func tabOverview(_ overview: TabOverviewViewController, didAssignTab id: UUID, toGroup groupId: UUID?)
     func tabOverview(_ overview: TabOverviewViewController, didRenameGroup id: UUID, toName name: String)
     func tabOverview(_ overview: TabOverviewViewController, didDeleteGroup id: UUID)
+    func tabOverview(_ overview: TabOverviewViewController, didReorderTabs orderedIDs: [UUID])
 }
 
 extension TabOverviewViewControllerDelegate {
@@ -78,6 +79,7 @@ extension TabOverviewViewControllerDelegate {
     func tabOverview(_: TabOverviewViewController, didAssignTab _: UUID, toGroup _: UUID?) {}
     func tabOverview(_: TabOverviewViewController, didRenameGroup _: UUID, toName _: String) {}
     func tabOverview(_: TabOverviewViewController, didDeleteGroup _: UUID) {}
+    func tabOverview(_: TabOverviewViewController, didReorderTabs _: [UUID]) {}
 }
 
 /// Full-screen replacement for the content layer while open. The grid
@@ -189,6 +191,120 @@ final class TabOverviewViewController: UIViewController {
 
     nonisolated static func fallbackTab(mode: TabOverviewMode) -> TabOverviewItem {
         TabOverviewItem(title: nil, host: nil, url: nil, isPrivate: mode.isPrivate)
+    }
+
+    /// Reorder math for drag and drop. `to` is clamped into bounds; an
+    /// out-of-range `from` returns the input unchanged.
+    nonisolated static func moveID(_ ids: [UUID], from: Int, to: Int) -> [UUID] {
+        guard !ids.isEmpty, ids.indices.contains(from) else { return ids }
+        let clampedTo = min(max(to, 0), ids.count - 1)
+        guard from != clampedTo else { return ids }
+        var result = ids
+        let element = result.remove(at: from)
+        result.insert(element, at: clampedTo)
+        return result
+    }
+
+    /// Multi-item drop math. `destinationIndex` is in pre-drop coordinates
+    /// (the caller passes `visible count` when UIKit supplies a nil
+    /// destination, i.e. past the trailing edge). Dragged IDs keep their
+    /// drop order as a single block; unknown or duplicated IDs are ignored.
+    /// A single dragged tab reuses `moveID` so the single-move math stays
+    /// on the production path.
+    nonisolated static func reorderedIDs(
+        currentIDs: [UUID],
+        draggedIDs: [UUID],
+        destinationIndex: Int
+    ) -> [UUID] {
+        guard !currentIDs.isEmpty, !draggedIDs.isEmpty else { return currentIDs }
+        var orderedDragged: [UUID] = []
+        orderedDragged.reserveCapacity(draggedIDs.count)
+        var seen = Set<UUID>()
+        let currentSet = Set(currentIDs)
+        for id in draggedIDs {
+            guard currentSet.contains(id), !seen.contains(id) else { continue }
+            seen.insert(id)
+            orderedDragged.append(id)
+        }
+        guard !orderedDragged.isEmpty else { return currentIDs }
+        if orderedDragged.count == 1, let only = orderedDragged.first,
+           let from = currentIDs.firstIndex(of: only)
+        {
+            let clampedDestination = min(max(destinationIndex, 0), currentIDs.count)
+            let adjusted = clampedDestination - (from < clampedDestination ? 1 : 0)
+            return moveID(currentIDs, from: from, to: min(adjusted, currentIDs.count - 1))
+        }
+        let clamped = min(max(destinationIndex, 0), currentIDs.count)
+        var draggedBefore = 0
+        for (index, id) in currentIDs.enumerated() {
+            if index >= clamped {
+                break
+            }
+
+            if seen.contains(id) {
+                draggedBefore += 1
+            }
+        }
+        let remaining = currentIDs.filter { !seen.contains($0) }
+        let insertion = min(max(clamped - draggedBefore, 0), remaining.count)
+        var result = remaining
+        result.insert(contentsOf: orderedDragged, at: insertion)
+        return result
+    }
+
+    /// Mode-first splice for reorder: grid-ordered mode tabs first (in the
+    /// grid's order), then every untouched tab in strip order. Untouched
+    /// means "not in the reordered mode block", so opposite-mode tabs
+    /// present in the grid order are preserved in strip order. Pure so
+    /// mixed-mode splicing is unit-testable without persistence or the pool.
+    /// IDs in the grid order but missing from the strip are dropped.
+    nonisolated static func spliceTabOrder(
+        currentIDs: [UUID],
+        privacyByID: [UUID: Bool],
+        orderedIDs: [UUID],
+        isPrivate: Bool
+    ) -> [UUID] {
+        let currentSet = Set(currentIDs)
+        var reordered: [UUID] = []
+        reordered.reserveCapacity(orderedIDs.count)
+        var reorderedSet = Set<UUID>()
+        for id in orderedIDs {
+            guard currentSet.contains(id), privacyByID[id] == isPrivate,
+                  !reorderedSet.contains(id)
+            else { continue }
+            reorderedSet.insert(id)
+            reordered.append(id)
+        }
+        var untouched: [UUID] = []
+        untouched.reserveCapacity(currentIDs.count)
+        for id in currentIDs where !reorderedSet.contains(id) {
+            untouched.append(id)
+        }
+        return reordered + untouched
+    }
+
+    /// Item-level mode-first splice sharing `spliceTabOrder` so the grid
+    /// model and the persisted strip resolve to the same order.
+    nonisolated static func spliceTabItems(
+        current: [TabOverviewItem],
+        orderedIDs: [UUID],
+        isPrivate: Bool
+    ) -> [TabOverviewItem] {
+        var privacyByID: [UUID: Bool] = [:]
+        privacyByID.reserveCapacity(current.count)
+        var byID: [UUID: TabOverviewItem] = [:]
+        byID.reserveCapacity(current.count)
+        for item in current {
+            privacyByID[item.id] = item.isPrivate
+            byID[item.id] = item
+        }
+        let splicedIDs = spliceTabOrder(
+            currentIDs: current.map(\.id),
+            privacyByID: privacyByID,
+            orderedIDs: orderedIDs,
+            isPrivate: isPrivate
+        )
+        return splicedIDs.compactMap { byID[$0] }
     }
 
     // MARK: - State
@@ -393,6 +509,9 @@ final class TabOverviewViewController: UIViewController {
         collectionView.accessibilityIdentifier = "TabOverview.Grid"
         collectionView.dataSource = self
         collectionView.delegate = self
+        collectionView.dragInteractionEnabled = true
+        collectionView.dragDelegate = self
+        collectionView.dropDelegate = self
         collectionView.register(TabCardCell.self, forCellWithReuseIdentifier: TabCardCell.reuseIdentifier)
         view.addSubview(collectionView)
 
@@ -684,6 +803,17 @@ final class TabOverviewViewController: UIViewController {
         }
     }
 
+    /// Mirrors the owner's mode-first splice so the grid model already
+    /// matches the persisted order before the drop animation completes.
+    private func applyLocalReorder(orderedIDs: [UUID]) {
+        allTabs = Self.spliceTabItems(
+            current: allTabs,
+            orderedIDs: orderedIDs,
+            isPrivate: mode.isPrivate
+        )
+        updateTabsCapsuleTitle()
+    }
+
     private func closeTab(id: UUID) {
         guard let index = allTabs.firstIndex(where: { $0.id == id }) else { return }
         allTabs.remove(at: index)
@@ -766,5 +896,69 @@ extension TabOverviewViewController: UICollectionViewDataSource, UICollectionVie
             guard let self else { return UIMenu() }
             return UIMenu(children: [self.moveToGroupMenu(forTab: item.id)])
         }
+    }
+}
+
+// MARK: - UICollectionViewDragDelegate, UICollectionViewDropDelegate
+
+extension TabOverviewViewController: UICollectionViewDragDelegate, UICollectionViewDropDelegate {
+    func collectionView(
+        _: UICollectionView,
+        itemsForBeginning _: UIDragSession,
+        at indexPath: IndexPath
+    ) -> [UIDragItem] {
+        guard filterQuery.isEmpty, selectedGroupID == nil, indexPath.item < visibleItems.count else { return [] }
+        let item = UIDragItem(itemProvider: NSItemProvider())
+        item.localObject = visibleItems[indexPath.item].id
+        return [item]
+    }
+
+    func collectionView(
+        _: UICollectionView,
+        dropSessionDidUpdate session: UIDropSession,
+        withDestinationIndexPath _: IndexPath?
+    ) -> UICollectionViewDropProposal {
+        guard filterQuery.isEmpty, selectedGroupID == nil, session.localDragSession != nil else {
+            return UICollectionViewDropProposal(operation: .forbidden)
+        }
+        return UICollectionViewDropProposal(operation: .move, intent: .insertAtDestinationIndexPath)
+    }
+
+    func collectionView(
+        _: UICollectionView,
+        performDropWith coordinator: UICollectionViewDropCoordinator
+    ) {
+        guard filterQuery.isEmpty, selectedGroupID == nil else { return }
+        let localItems = coordinator.items.filter { $0.dragItem.localObject is UUID }
+        guard !localItems.isEmpty else { return }
+        let draggedIDs = localItems.compactMap { $0.dragItem.localObject as? UUID }
+        let ids = visibleItems.map(\.id)
+        guard !ids.isEmpty else { return }
+        // A nil destination means past the trailing edge: append.
+        let rawDestination = coordinator.destinationIndexPath?.item ?? ids.count
+        let orderedIDs = Self.reorderedIDs(
+            currentIDs: ids,
+            draggedIDs: draggedIDs,
+            destinationIndex: rawDestination
+        )
+        if orderedIDs == ids {
+            // Order unchanged: still complete each drop so the lift animates back cleanly.
+            for item in localItems {
+                guard let id = item.dragItem.localObject as? UUID,
+                      let current = ids.firstIndex(of: id) else { continue }
+                coordinator.drop(item.dragItem, toItemAt: IndexPath(item: current, section: 0))
+            }
+            return
+        }
+        // Update the grid model first so drop targets resolve against the
+        // post-drop order, complete each drag animation at its final index,
+        // then notify the owner (whose setItems reloads to the same order).
+        applyLocalReorder(orderedIDs: orderedIDs)
+        for item in localItems {
+            guard let id = item.dragItem.localObject as? UUID,
+                  let final = orderedIDs.firstIndex(of: id) else { continue }
+            coordinator.drop(item.dragItem, toItemAt: IndexPath(item: final, section: 0))
+        }
+        delegate?.tabOverview(self, didReorderTabs: orderedIDs)
     }
 }

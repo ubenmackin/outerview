@@ -97,12 +97,12 @@ final class BookmarksBrowserView: UIView {
             titleLabel.text = folderStack.last?.title ?? "Bookmarks"
         }
         tableView.reloadData()
-        searchTuck.enforceTuck(tableView, isEditing: searchHeader.searchBar.isFirstResponder, isFiltering: !searchQuery.isEmpty)
+        reassertSearchTuck()
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        searchTuck.layoutTuckIfNeeded(host: self, tableView: tableView)
+        layoutSearchTuck()
     }
 
     func sectionType(for section: Int) -> Section {
@@ -180,12 +180,14 @@ final class BookmarksBrowserView: UIView {
                     self.searchResults = []
                 }
                 self.tableView.reloadData()
+                self.reassertSearchTuck()
             },
             onCleared: { [weak self] in
                 guard let self else { return }
                 self.searchQuery = ""
                 self.searchResults = []
                 self.tableView.reloadData()
+                self.reassertSearchTuck()
             }
         )
 
@@ -579,7 +581,35 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
         }
     }
 
-    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate _: Bool) {
-        searchTuck.snapBackIfNeeded(scrollView, searchBar: searchHeader.searchBar, isFiltering: !searchQuery.isEmpty)
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        handleTuckScroll(scrollView)
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate: Bool) {
+        handleTuckEndDragging(scrollView, willDecelerate: willDecelerate)
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        handleTuckEndDecelerating(scrollView)
+    }
+}
+
+// MARK: - LibrarySearchTuckable
+
+extension BookmarksBrowserView: LibrarySearchTuckable {
+    var tuckController: LibrarySearchTuckController {
+        searchTuck
+    }
+
+    var tuckTableView: UITableView {
+        tableView
+    }
+
+    var tuckSearchHeader: LibrarySearchHeaderView {
+        searchHeader
+    }
+
+    var isTuckFiltering: Bool {
+        !searchQuery.isEmpty
     }
 }

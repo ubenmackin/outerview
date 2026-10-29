@@ -103,13 +103,8 @@ final class LibraryTabBar: UIView {
     }
 
     private func updateSegmentAccessibility() {
-        let segments = segmentedControl.subviews.filter {
-            String(describing: type(of: $0)).contains("Segment")
-        }.sorted { $0.frame.minX < $1.frame.minX }
-
-        for (index, tab) in LibraryTab.allCases.enumerated() where index < segments.count {
-            segments[index].accessibilityLabel = tab.title
-            segments[index].accessibilityIdentifier = "LibraryTab.\(tab.title)"
-        }
+        let labels = LibraryTab.allCases.map(\.title)
+        let identifiers = LibraryTab.allCases.map { "LibraryTab.\($0.title)" }
+        SegmentedAccessibility.update(segmentedControl, labels: labels, identifiers: identifiers)
     }
 }

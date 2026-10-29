@@ -228,5 +228,19 @@ final class BookmarksLibraryView: UIView {
         favoritesGridView?.isHidden = (activeTab != .favorites)
         historyListView?.isHidden = (activeTab != .history)
         readingListView?.isHidden = (activeTab != .readingList)
+        reassertVisibleSearchTuck()
+    }
+
+    private func reassertVisibleSearchTuck() {
+        switch activeTab {
+        case .bookmarks:
+            bookmarksBrowserView?.reassertSearchTuck()
+        case .history:
+            historyListView?.reassertSearchTuck()
+        case .readingList:
+            readingListView?.reassertSearchTuck()
+        case .favorites:
+            break
+        }
     }
 }

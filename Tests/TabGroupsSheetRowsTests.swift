@@ -8,6 +8,7 @@ import XCTest
 
 final class TabGroupsSheetRowsTests: XCTestCase {
     private typealias Row = TabGroupsSheetController.Row
+    private typealias Segment = TabGroupsSheetController.Segment
 
     private func state(
         isPrivate: Bool = false,
@@ -157,5 +158,51 @@ final class TabGroupsSheetRowsTests: XCTestCase {
             state(groups: [capsule(id, title: "Work", count: 1)]),
             state(groups: [capsule(id, title: "Work", count: 2)])
         )
+    }
+
+    func testSegmentsPutAllFirstAndPrivateSecond() {
+        let id = UUID()
+        let segments = TabGroupsSheetController.segments(
+            for: state(groups: [capsule(id, title: "Work", count: 3)])
+        )
+        XCTAssertEqual(segments.first, Segment.all(active: true))
+        XCTAssertEqual(segments.dropFirst().first, Segment.private(active: false))
+    }
+
+    func testSegmentsActiveFlagsMirrorPrivacy() {
+        let id = UUID()
+        let segments = TabGroupsSheetController.segments(
+            for: state(isPrivate: true, groups: [capsule(id, title: "Work", count: 3)])
+        )
+        XCTAssertEqual(segments.first, Segment.all(active: false))
+        XCTAssertEqual(segments.dropFirst().first, Segment.private(active: true))
+        XCTAssertEqual(segments.last, Segment.group(id, "Work", active: false))
+    }
+
+    func testSegmentsActiveFlagsMirrorSelectedGroup() {
+        let id = UUID()
+        let segments = TabGroupsSheetController.segments(
+            for: state(selectedGroupID: id, groups: [capsule(id, title: "Work", count: 3)])
+        )
+        XCTAssertEqual(segments.first, Segment.all(active: false))
+        XCTAssertEqual(segments.dropFirst().first, Segment.private(active: false))
+        XCTAssertEqual(segments.last, Segment.group(id, "Work", active: true))
+    }
+
+    func testSegmentsGroupCountMatchesNonNilIdItems() {
+        let first = UUID()
+        let second = UUID()
+        let segments = TabGroupsSheetController.segments(
+            for: state(groups: [
+                capsule(nil, title: "All", count: 4),
+                capsule(first, title: "Work", count: 3),
+                capsule(second, title: "Personal", count: 1)
+            ])
+        )
+        XCTAssertEqual(segments.count, 4)
+        XCTAssertEqual(segments.first, Segment.all(active: true))
+        XCTAssertEqual(segments.dropFirst().first, Segment.private(active: false))
+        XCTAssertEqual(segments.dropFirst(2).first, Segment.group(first, "Work", active: false))
+        XCTAssertEqual(segments.dropFirst(3).first, Segment.group(second, "Personal", active: false))
     }
 }

@@ -71,4 +71,36 @@ final class LibraryTuckRulesTests: XCTestCase {
             offsetY: 64
         ))
     }
+
+    func testRequiresCollapseNeverWhenBoundsIsZero() {
+        XCTAssertFalse(LibrarySearchTuckController.requiresCollapse(
+            contentHeight: 0,
+            boundsHeight: 0
+        ))
+        XCTAssertFalse(LibrarySearchTuckController.requiresCollapse(
+            contentHeight: 200,
+            boundsHeight: 0
+        ))
+    }
+
+    func testRequiresCollapseForShortLists() {
+        XCTAssertTrue(LibrarySearchTuckController.requiresCollapse(
+            contentHeight: 200,
+            boundsHeight: 600
+        ))
+    }
+
+    func testRequiresCollapseFalseForTallLists() {
+        XCTAssertFalse(LibrarySearchTuckController.requiresCollapse(
+            contentHeight: 700,
+            boundsHeight: 600
+        ))
+    }
+
+    func testRequiresCollapseBoundaryIsFalse() {
+        XCTAssertFalse(LibrarySearchTuckController.requiresCollapse(
+            contentHeight: 664,
+            boundsHeight: 600
+        ))
+    }
 }

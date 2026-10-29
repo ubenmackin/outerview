@@ -62,6 +62,29 @@ final class TabGroupsSheetController: UIViewController {
         case createWithTabs(count: Int)
     }
 
+    /// Pill segments mirroring the table's mode/group rows, pinned under the
+    /// header for one-tap switching. Derived from `Row` so the All/Private/
+    /// group mapping lives in exactly one place.
+    enum Segment: Equatable {
+        case all(active: Bool)
+        case `private`(active: Bool)
+        case group(UUID, String, active: Bool)
+
+        /// Create rows have no pill equivalent, so they map to `nil`.
+        nonisolated init?(row: Row) {
+            switch row {
+            case let .allSelected(active):
+                self = .all(active: active)
+            case let .privateRow(active):
+                self = .private(active: active)
+            case let .group(id, name, _, active):
+                self = .group(id, name, active: active)
+            case .createEmpty, .createWithTabs:
+                return nil
+            }
+        }
+    }
+
     nonisolated static let headerTitle = "Tab Groups"
     nonisolated static let headerHeight: CGFloat = 52
     nonisolated static let closeButtonDiameter: CGFloat = 36
@@ -77,10 +100,12 @@ final class TabGroupsSheetController: UIViewController {
         groups: []
     )
     private var currentRows: [Row] = []
+    private var currentSegments: [Segment] = []
 
     private let headerBar = UIView()
     private let headerTitleLabel = UILabel()
     private let closeButton = UIButton(type: .system)
+    private let pillControl = UISegmentedControl()
     private let tableView = UITableView(frame: .zero, style: .insetGrouped)
 
     init(stateProvider: @escaping () -> TabGroupsSheetState) {
@@ -102,6 +127,13 @@ final class TabGroupsSheetController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         reload()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // Segment subviews only exist after layout, so refresh VoiceOver
+        // labels here just like `LibraryTabBar.layoutSubviews` does.
+        updatePillAccessibility()
     }
 
     // MARK: - Row derivation
@@ -127,10 +159,76 @@ final class TabGroupsSheetController: UIViewController {
         return rows
     }
 
+    /// Derived from `rows(for:)` via `Segment(row:)`; create rows map to
+    /// `nil` and are dropped, so the nil-id filtering lives only in `rows`.
+    nonisolated static func segments(for state: TabGroupsSheetState) -> [Segment] {
+        rows(for: state).compactMap { Segment(row: $0) }
+    }
+
     private func reload() {
         currentState = stateProvider()
         currentRows = Self.rows(for: currentState)
+        currentSegments = Self.segments(for: currentState)
+        pillControl.removeAllSegments()
+        for (index, segment) in currentSegments.enumerated() {
+            switch segment {
+            case .all:
+                pillControl.insertSegment(withTitle: "All", at: index, animated: false)
+            case .private:
+                pillControl.insertSegment(withTitle: "Private", at: index, animated: false)
+            case let .group(_, name, _):
+                pillControl.insertSegment(withTitle: name, at: index, animated: false)
+            }
+        }
+        let activeIndex = currentSegments.firstIndex {
+            switch $0 {
+            case let .all(active), let .private(active):
+                active
+            case let .group(_, _, active):
+                active
+            }
+        }
+        pillControl.selectedSegmentIndex = activeIndex ?? UISegmentedControl.noSegment
+        updatePillAccessibility()
         tableView.reloadData()
+    }
+
+    /// Mirrors `LibraryTabBar.segmentAccessibilityLabel(at:)`: the pill's
+    /// VoiceOver label is the segment's display title.
+    func segmentAccessibilityLabel(at index: Int) -> String? {
+        guard index >= 0, index < currentSegments.count else { return nil }
+        switch currentSegments[index] {
+        case .all:
+            return "All"
+        case .private:
+            return "Private"
+        case let .group(_, name, _):
+            return name
+        }
+    }
+
+    /// Each pill segment view exposes its title plus a stable identifier for
+    /// UI tests, via the shared `SegmentedAccessibility` helper.
+    private func updatePillAccessibility() {
+        // `segmentAccessibilityLabel(at:)` is non-nil for every valid index;
+        // the `?? ""` fallback only keeps indices aligned if that ever changes.
+        let labels = currentSegments.indices.map { segmentAccessibilityLabel(at: $0) ?? "" }
+        let identifiers = labels.map { "TabGroupsSheet.Pill.\($0)" }
+        SegmentedAccessibility.update(pillControl, labels: labels, identifiers: identifiers)
+    }
+
+    private func handlePillChanged() {
+        guard pillControl.selectedSegmentIndex >= 0,
+              pillControl.selectedSegmentIndex < currentSegments.count
+        else { return }
+        switch currentSegments[pillControl.selectedSegmentIndex] {
+        case .all:
+            forwardAndDismiss(.selectStandardAll)
+        case .private:
+            forwardAndDismiss(.selectPrivate)
+        case let .group(id, _, _):
+            forwardAndDismiss(.selectGroup(id))
+        }
     }
 
     // MARK: - Row presentation
@@ -269,6 +367,7 @@ final class TabGroupsSheetController: UIViewController {
 
         headerTitleLabel.text = Self.headerTitle
         headerTitleLabel.font = .preferredFont(forTextStyle: .headline)
+        headerTitleLabel.textColor = .label
         headerTitleLabel.adjustsFontForContentSizeCategory = true
         headerTitleLabel.textAlignment = .center
         headerTitleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -292,6 +391,16 @@ final class TabGroupsSheetController: UIViewController {
             for: .touchUpInside
         )
         headerBar.addSubview(closeButton)
+
+        pillControl.translatesAutoresizingMaskIntoConstraints = false
+        pillControl.accessibilityIdentifier = "TabGroupsSheet.Pill"
+        pillControl.setTitleTextAttributes([.foregroundColor: UIColor.label], for: .selected)
+        pillControl.setTitleTextAttributes([.foregroundColor: UIColor.secondaryLabel], for: .normal)
+        pillControl.addAction(
+            UIAction { [weak self] _ in self?.handlePillChanged() },
+            for: .valueChanged
+        )
+        view.addSubview(pillControl)
 
         tableView.accessibilityIdentifier = "TabGroupsSheet.Table"
         tableView.backgroundColor = .clear
@@ -322,9 +431,14 @@ final class TabGroupsSheetController: UIViewController {
             closeButton.widthAnchor.constraint(equalToConstant: Self.closeButtonDiameter),
             closeButton.heightAnchor.constraint(equalToConstant: Self.closeButtonDiameter),
 
+            pillControl.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            pillControl.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            pillControl.topAnchor.constraint(equalTo: headerBar.bottomAnchor, constant: 8),
+            pillControl.heightAnchor.constraint(equalToConstant: 32),
+
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tableView.topAnchor.constraint(equalTo: headerBar.bottomAnchor),
+            tableView.topAnchor.constraint(equalTo: pillControl.bottomAnchor, constant: 8),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
     }
@@ -352,7 +466,9 @@ extension TabGroupsSheetController: UITableViewDataSource, UITableViewDelegate {
         let row = currentRows[indexPath.row]
         cell.imageView?.image = UIImage(systemName: Self.systemImageName(for: row))
         cell.textLabel?.text = title(for: row)
+        cell.textLabel?.textColor = .label
         cell.detailTextLabel?.text = detail(for: row)
+        cell.detailTextLabel?.textColor = .secondaryLabel
         cell.accessoryType = Self.isActive(row) ? .checkmark : .none
         return cell
     }

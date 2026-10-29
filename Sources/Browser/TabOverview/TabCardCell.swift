@@ -8,16 +8,17 @@ import UIKit
 /// Single tab card: portrait-ratio preview above a favicon + title + host
 /// strip. Previews arrive asynchronously from the owner's snapshot provider;
 /// until then a host-tinted placeholder keeps the grid stable. Closing is a
-/// visible 28 pt xmark or a velocity-gated vertical flick; slow vertical
-/// drags are never claimed, so grid scrolling is unaffected.
+/// visible 28 pt xmark or a velocity-gated flick along the dominant axis;
+/// slow drags are never claimed, so grid scrolling is unaffected.
 @MainActor
 final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     static let reuseIdentifier = "TabCardCell"
     static let cornerRadius: CGFloat = 16
     static let previewAspectHeightOverWidth: CGFloat = 4.0 / 3.0
 
-    /// Flick gate: only fast, steeply vertical motions claim the touch, so
-    /// the collection's pan keeps slow and horizontal drags.
+    /// Flick gate: only fast dominant-axis motions claim the touch, so the
+    /// collection's pan keeps slow drags. Vertical claims still require a
+    /// steep angle; horizontal claims need only dominant speed.
     nonisolated static let flickBeginVelocity: CGFloat = 1000
     nonisolated static let flickDismissDistance: CGFloat = 96
     nonisolated static let flickDismissVelocity: CGFloat = 1400
@@ -31,11 +32,31 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     }
 
     nonisolated static func shouldBeginCardFlick(velocity: CGPoint) -> Bool {
-        abs(velocity.y) >= flickBeginVelocity && abs(velocity.y) > abs(velocity.x) * 1.4
+        let ax = abs(velocity.x)
+        let ay = abs(velocity.y)
+        if ax > ay {
+            return ax >= flickBeginVelocity
+        }
+        return ay >= flickBeginVelocity && ay > ax * 1.4
     }
 
-    nonisolated static func shouldDismissFlick(translationY: CGFloat, velocityY: CGFloat) -> Bool {
-        abs(translationY) >= flickDismissDistance || abs(velocityY) >= flickDismissVelocity
+    private nonisolated static func isHorizontalFlick(translation: CGPoint, velocity: CGPoint) -> Bool {
+        // Translation decides when the axes differ; a tied translation
+        // (including rest) falls back to velocity so zero-travel flings
+        // still pick a direction.
+        let tx = abs(translation.x)
+        let ty = abs(translation.y)
+        if tx != ty {
+            return tx > ty
+        }
+        return abs(velocity.x) > abs(velocity.y)
+    }
+
+    nonisolated static func shouldDismissFlick(translation: CGPoint, velocity: CGPoint) -> Bool {
+        if isHorizontalFlick(translation: translation, velocity: velocity) {
+            return abs(translation.x) >= flickDismissDistance || abs(velocity.x) >= flickDismissVelocity
+        }
+        return abs(translation.y) >= flickDismissDistance || abs(velocity.y) >= flickDismissVelocity
     }
 
     var onClose: (() -> Void)?
@@ -205,7 +226,7 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             placeholderLabel.centerXAnchor.constraint(equalTo: previewContainer.centerXAnchor),
             placeholderLabel.centerYAnchor.constraint(equalTo: previewContainer.centerYAnchor),
             closeButton.topAnchor.constraint(equalTo: previewContainer.topAnchor, constant: 6),
-            closeButton.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor, constant: -6),
+            closeButton.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor, constant: 6),
             closeButton.widthAnchor.constraint(equalToConstant: 28),
             closeButton.heightAnchor.constraint(equalToConstant: 28),
             stripStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 4),
@@ -238,9 +259,11 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             collectionPan?.isEnabled = false
         case .changed:
             let maxDrag: CGFloat = 240
-            let ty = min(maxDrag, max(-maxDrag, pan.translation(in: self).y))
-            contentView.transform = CGAffineTransform(translationX: 0, y: ty)
-            contentView.alpha = 1 - min(0.5, abs(ty) / maxDrag)
+            let raw = pan.translation(in: self)
+            let tx = min(maxDrag, max(-maxDrag, raw.x))
+            let ty = min(maxDrag, max(-maxDrag, raw.y))
+            contentView.transform = CGAffineTransform(translationX: tx, y: ty)
+            contentView.alpha = 1 - min(0.5, max(abs(tx), abs(ty)) / maxDrag)
         case .ended, .cancelled:
             collectionPan?.isEnabled = true
             finishFlick(pan)
@@ -250,9 +273,9 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     }
 
     private func finishFlick(_ pan: UIPanGestureRecognizer) {
-        let translationY = pan.translation(in: self).y
-        let velocityY = pan.velocity(in: self).y
-        guard Self.shouldDismissFlick(translationY: translationY, velocityY: velocityY) else {
+        let translation = pan.translation(in: self)
+        let velocity = pan.velocity(in: self)
+        guard Self.shouldDismissFlick(translation: translation, velocity: velocity) else {
             UIView.animate(
                 withDuration: 0.28,
                 delay: 0,
@@ -266,13 +289,21 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             return
         }
         // Zero-travel dismissals come from the velocity leg, so fall back to the velocity sign.
-        let direction: CGFloat =
-            translationY != 0 ? (translationY < 0 ? -1 : 1) : (velocityY < 0 ? -1 : 1)
+        let isHorizontal = Self.isHorizontalFlick(translation: translation, velocity: velocity)
         let exitDistance: CGFloat = 220
+        let direction: CGFloat = if isHorizontal {
+            translation.x != 0 ? (translation.x < 0 ? -1 : 1) : (velocity.x < 0 ? -1 : 1)
+        } else {
+            translation.y != 0 ? (translation.y < 0 ? -1 : 1) : (velocity.y < 0 ? -1 : 1)
+        }
+        let exit = exitDistance * direction
         UIView.animate(
             withDuration: 0.18,
             animations: {
-                self.contentView.transform = CGAffineTransform(translationX: 0, y: exitDistance * direction)
+                self.contentView.transform = CGAffineTransform(
+                    translationX: isHorizontal ? exit : 0,
+                    y: isHorizontal ? 0 : exit
+                )
                 self.contentView.alpha = 0
             },
             completion: { _ in self.onClose?() }

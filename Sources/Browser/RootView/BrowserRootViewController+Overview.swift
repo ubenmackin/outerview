@@ -64,6 +64,7 @@ extension BrowserRootViewController {
         let closedSelected = selectedTabID == id
         let wasPrivate = tabs.first(where: { $0.id == id })?.isPrivate ?? overviewMode.isPrivate
         removeTabs(ids: [id])
+        let wasLastTab = tabs.isEmpty
         if let replacement {
             // Last-card safe: the grid already inserted this id, so the owner
             // materializes that exact tab instead of inventing a second one.
@@ -82,9 +83,26 @@ extension BrowserRootViewController {
                 logPersistenceError(error, operation: "upsertTab")
             }
             selectedTabID = record.id
+            if wasLastTab {
+                if closedSelected, isFindActive {
+                    endFind()
+                }
+                persistStrip()
+                if let selected = selectedTabID, tabs.contains(where: { $0.id == selected }) {
+                    displaySelectedTab()
+                }
+                setOverviewVisible(false)
+                return
+            }
             persistStripAndRefresh(closedSelected: closedSelected, fallbackIsPrivate: replacement.isPrivate)
+            if isOverviewVisible {
+                overviewController.applyRailItems(to: railView)
+            }
         } else {
             persistStripAndRefresh(closedSelected: closedSelected, fallbackIsPrivate: wasPrivate)
+            if isOverviewVisible {
+                overviewController.applyRailItems(to: railView)
+            }
         }
     }
 
@@ -93,7 +111,30 @@ extension BrowserRootViewController {
         guard !ids.isEmpty else { return }
         let closedSelected = selectedTabID.map(ids.contains) ?? false
         removeTabs(ids: ids)
+        if tabs.isEmpty {
+            if closedSelected, isFindActive {
+                endFind()
+            }
+            let record = TabRecord(isPrivate: mode.isPrivate)
+            tabs.append(record)
+            tabPool.create(record)
+            do {
+                try tabStore?.upsertTab(record)
+            } catch {
+                logPersistenceError(error, operation: "upsertTab")
+            }
+            selectedTabID = record.id
+            persistStrip()
+            if let selected = selectedTabID, tabs.contains(where: { $0.id == selected }) {
+                displaySelectedTab()
+            }
+            setOverviewVisible(false)
+            return
+        }
         persistStripAndRefresh(closedSelected: closedSelected, fallbackIsPrivate: mode.isPrivate)
+        if isOverviewVisible {
+            overviewController.applyRailItems(to: railView)
+        }
     }
 
     private func removeTabs(ids: Set<UUID>) {
@@ -107,6 +148,27 @@ extension BrowserRootViewController {
             }
         }
         tabs.removeAll { ids.contains($0.id) }
+    }
+
+    /// Single write path for the strip snapshot: order plus selection stay
+    /// in sync across close, close-all, and reorder flows.
+    private func persistStrip() {
+        guard let store = tabStore, let selected = selectedTabID else { return }
+        do {
+            try store.saveSession(tabs: tabs, selected: selected)
+        } catch {
+            logPersistenceError(error, operation: "saveSession")
+        }
+        do {
+            try store.select(id: selected)
+        } catch {
+            logPersistenceError(error, operation: "select")
+        }
+        do {
+            try store.reorder(tabs: tabs)
+        } catch {
+            logPersistenceError(error, operation: "reorder")
+        }
     }
 
     private func persistStripAndRefresh(closedSelected: Bool) {
@@ -130,23 +192,7 @@ extension BrowserRootViewController {
         } else if closedSelected {
             selectedTabID = tabs.last?.id
         }
-        if let selected = selectedTabID {
-            do {
-                try tabStore?.saveSession(tabs: tabs, selected: selected)
-            } catch {
-                logPersistenceError(error, operation: "saveSession")
-            }
-            do {
-                try tabStore?.select(id: selected)
-            } catch {
-                logPersistenceError(error, operation: "select")
-            }
-            do {
-                try tabStore?.reorder(tabs: tabs)
-            } catch {
-                logPersistenceError(error, operation: "reorder")
-            }
-        }
+        persistStrip()
         if closedSelected, let selected = selectedTabID, tabs.contains(where: { $0.id == selected }) {
             displaySelectedTab()
         }
@@ -273,6 +319,27 @@ extension BrowserRootViewController: TabOverviewViewControllerDelegate {
             refreshOverview(groups: groups, selectedGroupID: valid)
         } catch {
             logPersistenceError(error, operation: "deleteGroup")
+        }
+    }
+
+    func tabOverview(_ overview: TabOverviewViewController, didReorderTabs orderedIDs: [UUID]) {
+        let isPrivate = overview.mode.isPrivate
+        var byID: [UUID: TabRecord] = [:]
+        var privacyByID: [UUID: Bool] = [:]
+        for record in tabs {
+            byID[record.id] = record
+            privacyByID[record.id] = record.isPrivate
+        }
+        let splicedIDs = TabOverviewViewController.spliceTabOrder(
+            currentIDs: tabs.map(\.id),
+            privacyByID: privacyByID,
+            orderedIDs: orderedIDs,
+            isPrivate: isPrivate
+        )
+        tabs = splicedIDs.compactMap { byID[$0] }
+        persistStrip()
+        if isOverviewVisible {
+            overviewController.setItems(overviewItems(), selectedID: selectedTabID)
         }
     }
 }
