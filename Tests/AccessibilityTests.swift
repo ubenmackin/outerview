@@ -16,7 +16,16 @@ final class AccessibilityTests: XCTestCase {
         XCTAssertEqual(tabBar.segmentAccessibilityLabel(at: 0), "Favorites")
         XCTAssertEqual(tabBar.segmentAccessibilityLabel(at: 1), "Bookmarks")
         XCTAssertEqual(tabBar.segmentAccessibilityLabel(at: 2), "History")
+        XCTAssertEqual(tabBar.segmentAccessibilityLabel(at: 3), "Reading List")
         XCTAssertNil(tabBar.segmentAccessibilityLabel(at: 99))
+    }
+
+    func testLibraryTabReadingListSegment() {
+        XCTAssertEqual(LibraryTab.allCases.count, 4)
+        XCTAssertEqual(LibraryTab.readingList.rawValue, 3)
+        XCTAssertEqual(LibraryTab.readingList.title, "Reading List")
+        XCTAssertEqual(LibraryTab.readingList.systemImageName, "eyeglasses")
+        XCTAssertNotNil(UIImage(systemName: LibraryTab.readingList.systemImageName))
     }
 
     func testFavoriteTileCellAccessibility() throws {

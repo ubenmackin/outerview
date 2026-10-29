@@ -490,4 +490,207 @@ final class PersistenceStoreTests: XCTestCase {
         // No longer in folder
         XCTAssertEqual(store.fetchBookmarks(folderId: folder.id).count, 0)
     }
+
+    // MARK: - Reading List
+
+    func testReadingListAddRoundTripsFields() throws {
+        let database = try makeDatabase()
+        let store = ReadingListStore(database: database)
+
+        let added = try XCTUnwrap(store.add(title: "Article", url: url("article")))
+
+        XCTAssertEqual(store.count(), 1)
+        let items = store.fetchAll()
+        XCTAssertEqual(items.map(\.id), [added.id])
+        let first = try XCTUnwrap(items.first)
+        XCTAssertEqual(first.title, "Article")
+        XCTAssertEqual(first.url, url("article"))
+        XCTAssertFalse(first.isRead)
+        XCTAssertEqual(first.sortIndex, 0)
+    }
+
+    func testReadingListFetchAllSortsByAddedAtDescending() throws {
+        let database = try makeDatabase()
+        let store = ReadingListStore(database: database)
+        let context = database.context
+        let base = Date(timeIntervalSince1970: 0)
+        context.insert(ReadingListItem(title: "Old", url: url("old"), addedAt: base))
+        context.insert(ReadingListItem(title: "New", url: url("new"), addedAt: base.addingTimeInterval(10)))
+        try context.save()
+
+        XCTAssertEqual(store.fetchAll().map(\.title), ["New", "Old"])
+    }
+
+    func testReadingListTitleClampsAtTwoHundredCharacters() throws {
+        let database = try makeDatabase()
+        let store = ReadingListStore(database: database)
+
+        try store.add(title: String(repeating: "x", count: 250), url: url("long"))
+
+        XCTAssertEqual(store.fetchAll().first?.title.count, ReadingListItem.maxTitleLength)
+    }
+
+    func testReadingListDedupeKeepsEarliestRow() throws {
+        let database = try makeDatabase()
+        let store = ReadingListStore(database: database)
+
+        let first = try XCTUnwrap(store.add(title: "First", url: url("same")))
+        try store.setRead(id: first.id, isRead: true)
+        let again = try XCTUnwrap(store.add(title: "Renamed", url: url("same")))
+
+        XCTAssertEqual(store.count(), 1)
+        XCTAssertEqual(again.id, first.id)
+        XCTAssertEqual(again.title, "First")
+        XCTAssertEqual(again.addedAt, first.addedAt)
+        XCTAssertTrue(again.isRead)
+    }
+
+    func testReadingListReSavedURLRefreshesEmptyTitle() throws {
+        let database = try makeDatabase()
+        let store = ReadingListStore(database: database)
+
+        let untitled = try XCTUnwrap(store.add(title: "", url: url("blank")))
+        let named = try XCTUnwrap(store.add(title: "Named", url: url("blank")))
+
+        XCTAssertEqual(store.count(), 1)
+        XCTAssertEqual(named.id, untitled.id)
+        XCTAssertEqual(named.title, "Named")
+    }
+
+    func testReadingListCapPrunesOldest() throws {
+        let database = try makeDatabase()
+        let store = ReadingListStore(database: database)
+        let context = database.context
+        let base = Date(timeIntervalSince1970: 0)
+        for index in 0 ..< ReadingListStore.maxEntries {
+            context.insert(
+                ReadingListItem(
+                    title: "r\(index)",
+                    url: url("r\(index)"),
+                    addedAt: base.addingTimeInterval(TimeInterval(index))
+                )
+            )
+        }
+        try context.save()
+
+        try store.add(title: "newest", url: url("newest"))
+
+        XCTAssertEqual(store.count(), ReadingListStore.maxEntries)
+        let all = store.fetchAll()
+        XCTAssertEqual(all.count, ReadingListStore.maxEntries)
+        XCTAssertEqual(all.first?.title, "newest")
+        XCTAssertFalse(all.contains { $0.title == "r0" })
+        XCTAssertTrue(all.contains { $0.title == "r1" })
+    }
+
+    func testReadingListSetReadTogglesPersistedFlag() throws {
+        let database = try makeDatabase()
+        let store = ReadingListStore(database: database)
+        let item = try XCTUnwrap(store.add(title: "Article", url: url("article")))
+
+        try store.setRead(id: item.id, isRead: true)
+        XCTAssertTrue(try XCTUnwrap(store.fetchAll().first).isRead)
+
+        try store.setRead(id: item.id, isRead: false)
+        XCTAssertFalse(try XCTUnwrap(store.fetchAll().first).isRead)
+
+        // Unknown ids are a silent no-op.
+        try store.setRead(id: UUID(), isRead: true)
+        XCTAssertEqual(store.count(), 1)
+    }
+
+    func testReadingListDeleteRemovesSingleRow() throws {
+        let database = try makeDatabase()
+        let store = ReadingListStore(database: database)
+        let first = try XCTUnwrap(store.add(title: "First", url: url("first")))
+        let second = try XCTUnwrap(store.add(title: "Second", url: url("second")))
+
+        try store.delete(id: first.id)
+
+        XCTAssertEqual(store.fetchAll().map(\.id), [second.id])
+
+        // Deleting an unknown id is a silent no-op.
+        try store.delete(id: first.id)
+        XCTAssertEqual(store.count(), 1)
+    }
+
+    func testReadingListReorderAssignsSequentialSortIndexes() throws {
+        let database = try makeDatabase()
+        let store = ReadingListStore(database: database)
+        let itemA = try XCTUnwrap(store.add(title: "A", url: url("a")))
+        let itemB = try XCTUnwrap(store.add(title: "B", url: url("b")))
+        let itemC = try XCTUnwrap(store.add(title: "C", url: url("c")))
+
+        try store.reorder(ids: [itemC.id, itemA.id, itemB.id])
+        var indexes = Dictionary(uniqueKeysWithValues: store.fetchAll().map { ($0.id, $0.sortIndex) })
+        XCTAssertEqual(indexes[itemC.id], 0)
+        XCTAssertEqual(indexes[itemA.id], 1)
+        XCTAssertEqual(indexes[itemB.id], 2)
+
+        // Unknown ids are skipped without throwing.
+        try store.reorder(ids: [itemB.id, UUID(), itemA.id, itemC.id])
+        indexes = Dictionary(uniqueKeysWithValues: store.fetchAll().map { ($0.id, $0.sortIndex) })
+        XCTAssertEqual(indexes[itemB.id], 0)
+        XCTAssertEqual(indexes[itemA.id], 1)
+        XCTAssertEqual(indexes[itemC.id], 2)
+    }
+
+    func testReadingListClearRemovesAllRows() throws {
+        let database = try makeDatabase()
+        let store = ReadingListStore(database: database)
+        try store.add(title: "First", url: url("first"))
+        try store.add(title: "Second", url: url("second"))
+
+        try store.clear()
+
+        XCTAssertEqual(store.count(), 0)
+        XCTAssertTrue(store.fetchAll().isEmpty)
+    }
+
+    func testReadingListAddRoundTripsPreviewText() throws {
+        let database = try makeDatabase()
+        let store = ReadingListStore(database: database)
+
+        let added = try XCTUnwrap(store.add(title: "Article", url: url("article"), previewText: "First sentence. Second sentence."))
+
+        let fetched = try XCTUnwrap(store.fetchAll().first)
+        XCTAssertEqual(fetched.id, added.id)
+        XCTAssertEqual(fetched.previewText, "First sentence. Second sentence.")
+    }
+
+    func testReadingListReSavedURLRefreshesEmptyPreviewText() throws {
+        let database = try makeDatabase()
+        let store = ReadingListStore(database: database)
+
+        let first = try XCTUnwrap(store.add(title: "Article", url: url("article"), previewText: nil))
+        XCTAssertNil(first.previewText)
+
+        let updated = try XCTUnwrap(store.add(title: "Article", url: url("article"), previewText: "Extracted preview text."))
+        XCTAssertEqual(updated.id, first.id)
+        XCTAssertEqual(updated.previewText, "Extracted preview text.")
+    }
+
+    func testReadingListBatchDeleteRemovesSet() throws {
+        let database = try makeDatabase()
+        let store = ReadingListStore(database: database)
+
+        let item1 = try XCTUnwrap(store.add(title: "1", url: url("1")))
+        let item2 = try XCTUnwrap(store.add(title: "2", url: url("2")))
+        let item3 = try XCTUnwrap(store.add(title: "3", url: url("3")))
+
+        try store.delete(ids: [item1.id, item3.id])
+
+        let remaining = store.fetchAll()
+        XCTAssertEqual(remaining.map(\.id), [item2.id])
+    }
+
+    func testReadingListPreviewTextClampsAtMaxPreviewLength() throws {
+        let database = try makeDatabase()
+        let store = ReadingListStore(database: database)
+
+        let longText = String(repeating: "w", count: 500)
+        let added = try XCTUnwrap(store.add(title: "Article", url: url("article"), previewText: longText))
+
+        XCTAssertEqual(added.previewText?.count, ReadingListItem.maxPreviewLength)
+    }
 }

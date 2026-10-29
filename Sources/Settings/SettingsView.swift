@@ -12,6 +12,7 @@ struct SettingsView: View {
     let bookmarkStore: BookmarkStore
     let historyStore: HistoryStore
     let tabStore: TabStore
+    let siteZoomStore: SiteZoomStore
     var onDidClearHistory: (() -> Void)?
     var onDidClearTabs: (() -> Void)?
 
@@ -21,25 +22,29 @@ struct SettingsView: View {
     @State private var showingImportResult = false
     @State private var showingClearHistoryConfirm = false
     @State private var showingClearTabsConfirm = false
+    @State private var showingResetZoomsConfirm = false
     @State private var actionError: String?
 
     init(
         viewModel: SettingsViewModel = SettingsViewModel(),
         bookmarkStore: BookmarkStore,
         historyStore: HistoryStore,
-        tabStore: TabStore
+        tabStore: TabStore,
+        siteZoomStore: SiteZoomStore = SiteZoomStore()
     ) {
         self.viewModel = viewModel
         self.bookmarkStore = bookmarkStore
         self.historyStore = historyStore
         self.tabStore = tabStore
+        self.siteZoomStore = siteZoomStore
     }
 
-    init(database: OuterViewDatabase, viewModel: SettingsViewModel = SettingsViewModel()) {
+    init(database: OuterViewDatabase, viewModel: SettingsViewModel = SettingsViewModel(), siteZoomStore: SiteZoomStore = SiteZoomStore()) {
         self.viewModel = viewModel
         self.bookmarkStore = BookmarkStore(database: database)
         self.historyStore = HistoryStore(database: database)
         self.tabStore = TabStore(database: database)
+        self.siteZoomStore = siteZoomStore
     }
 
     var body: some View {
@@ -69,6 +74,12 @@ struct SettingsView: View {
                     }
                     Button("Clear All Tabs", role: .destructive) {
                         showingClearTabsConfirm = true
+                    }
+                }
+
+                Section("Text Zoom") {
+                    Button("Reset All Text Zooms", role: .destructive) {
+                        showingResetZoomsConfirm = true
                     }
                 }
 
@@ -121,6 +132,14 @@ struct SettingsView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("This closes all tabs and opens a single empty tab.")
+            }
+            .alert("Reset All Text Zooms?", isPresented: $showingResetZoomsConfirm) {
+                Button("Reset", role: .destructive) {
+                    viewModel.resetAllTextZooms(siteZoomStore: siteZoomStore)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(SettingsViewModel.resetAllTextZoomsConfirmationText)
             }
             .alert("Something Went Wrong", isPresented: Binding(
                 get: { actionError != nil },

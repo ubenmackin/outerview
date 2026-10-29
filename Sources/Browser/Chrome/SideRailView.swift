@@ -11,6 +11,7 @@ struct RailAction {
     let accessibilityLabel: String
     let isProminent: Bool
     let isEnabled: Bool
+    let menu: UIMenu?
     let handler: () -> Void
 
     init(
@@ -18,12 +19,14 @@ struct RailAction {
         accessibilityLabel: String,
         isProminent: Bool = false,
         isEnabled: Bool = true,
-        handler: @escaping () -> Void
+        menu: UIMenu? = nil,
+        handler: @escaping () -> Void = {}
     ) {
         self.systemImageName = systemImageName
         self.accessibilityLabel = accessibilityLabel
         self.isProminent = isProminent
         self.isEnabled = isEnabled
+        self.menu = menu
         self.handler = handler
     }
 
@@ -52,8 +55,12 @@ struct RailAction {
         RailAction(systemImageName: "magnifyingglass", accessibilityLabel: "Search", handler: handler)
     }
 
-    static func pageMenu(handler: @escaping () -> Void) -> RailAction {
-        RailAction(systemImageName: "list.bullet", accessibilityLabel: "Page Menu", handler: handler)
+    static func overviewMenu(menu: UIMenu) -> RailAction {
+        RailAction(
+            systemImageName: "ellipsis",
+            accessibilityLabel: "Overview Menu",
+            menu: menu
+        )
     }
 
     static func done(handler: @escaping () -> Void) -> RailAction {
@@ -90,10 +97,27 @@ struct RailAction {
         )
     }
 
-    static func clear(isEnabled: Bool = true, handler: @escaping () -> Void) -> RailAction {
+    static func clear(label: String = "Clear History", isEnabled: Bool = true, handler: @escaping () -> Void) -> RailAction {
         RailAction(
             systemImageName: "trash",
-            accessibilityLabel: "Clear History",
+            accessibilityLabel: label,
+            isEnabled: isEnabled,
+            handler: handler
+        )
+    }
+
+    static func readingListMenu(menu: UIMenu) -> RailAction {
+        RailAction(
+            systemImageName: "ellipsis",
+            accessibilityLabel: "Reading List Options",
+            menu: menu
+        )
+    }
+
+    static func deleteSelected(isEnabled: Bool = true, handler: @escaping () -> Void) -> RailAction {
+        RailAction(
+            systemImageName: "trash",
+            accessibilityLabel: "Delete Selected",
             isEnabled: isEnabled,
             handler: handler
         )
@@ -121,7 +145,12 @@ final class RailButton: UIButton {
                 .withRenderingMode(.alwaysTemplate),
             for: .normal
         )
-        addAction(UIAction { [weak self] _ in self?.action?.handler() }, for: .touchUpInside)
+        if let menu = action.menu {
+            self.menu = menu
+            self.showsMenuAsPrimaryAction = true
+        } else {
+            addAction(UIAction { [weak self] _ in self?.action?.handler() }, for: .touchUpInside)
+        }
         setupGlass()
     }
 

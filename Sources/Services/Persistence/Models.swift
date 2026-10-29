@@ -152,3 +152,37 @@ final class TabSession {
         self.selectedTabId = selectedTabId
     }
 }
+
+/// Saved-for-later page; URL-based dedupe keeps the earliest row.
+@Model
+final class ReadingListItem {
+    static let maxTitleLength = 200
+    static let maxPreviewLength = 400
+
+    var id: UUID
+    var title: String
+    var url: URL
+    var addedAt: Date
+    var isRead: Bool
+    var sortIndex: Int
+    var previewText: String?
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        url: URL,
+        addedAt: Date = Date(),
+        isRead: Bool = false,
+        sortIndex: Int = 0,
+        previewText: String? = nil
+    ) {
+        self.id = id
+        // Titles clamp at creation so persisted values never exceed the cap.
+        self.title = String(title.prefix(Self.maxTitleLength))
+        self.url = url
+        self.addedAt = addedAt
+        self.isRead = isRead
+        self.sortIndex = sortIndex
+        self.previewText = previewText.map { String($0.prefix(Self.maxPreviewLength)) }
+    }
+}

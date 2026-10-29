@@ -4,8 +4,15 @@
 //
 
 import os
+import Photos
 import SwiftUI
 import UIKit
+
+/// Failure kind distinguishing Photos permission denial, which is surfaced to
+/// the user, from ordinary save errors, which are only logged.
+private enum PhotoSaveFailure: Error {
+    case accessDenied
+}
 
 /// Single chrome applier: tab content, floating rail + pill, editor, error
 /// overlay, and tab overview placeholder. Content renders full-bleed while
@@ -63,11 +70,20 @@ final class BrowserRootViewController: UIViewController {
 
     let contentContainer = UIView()
     let startPageContainer = UIView()
-    private let errorContainer = UIView()
-    private let errorLabel = UILabel()
-    private let retryButton = UIButton(type: .system)
+    let errorContainer = UIView()
+    let errorStackView = UIStackView()
+    let errorIconView = UIImageView()
+    let errorTitleLabel = UILabel()
+    let errorHostLabel = UILabel()
+    let errorDetailLabel = UILabel()
+    let errorHintLabel = UILabel()
+    let errorButtonStack = UIStackView()
+    let retryButton = UIButton(type: .system)
+    let copyErrorButton = UIButton(type: .system)
+    var errorCopyText = ""
     let railView = SideRailView()
     let pillView = AddressBarView()
+    let findView = FindInPageView()
     let editorView = AddressEditorView()
     let bookmarksLibraryView = BookmarksLibraryView()
     private let bookmarkEditorContainer = UIView()
@@ -75,6 +91,8 @@ final class BrowserRootViewController: UIViewController {
     private var activeBookmarkEditorModel: BookmarkEditorModel?
     private(set) var isBookmarkEditorVisible = false
     var isEditingAddress = false
+    var isFindActive = false
+    var findBottomConstraint: NSLayoutConstraint?
     let overviewView = UIView()
     let overviewController = TabOverviewViewController()
     var overviewMode: TabOverviewMode = .standard
@@ -88,6 +106,8 @@ final class BrowserRootViewController: UIViewController {
     var pillAnimator: UIViewPropertyAnimator?
     private var structuralTask: Task<Void, Never>?
     var suggestionTask: Task<Void, Never>?
+    var findQueryTask: Task<Void, Never>?
+    var findStepTask: Task<Void, Never>?
 
     // MARK: - State
 
@@ -102,10 +122,20 @@ final class BrowserRootViewController: UIViewController {
     var snapshotListenerIDs: [UUID: UUID] = [:]
     var forcedStartPageTabs = Set<UUID>()
     var startPageView: StartPageView?
+    /// Single construction site for element context-menu actions; every page
+    /// receives it when its snapshot listener is wired.
+    private(set) var elementContextActions: ElementContextActions?
+    /// Shared per-site text zoom; every page receives it at the same wiring
+    /// site so zoom persists across tabs and relaunch.
+    let siteZoomStore = SiteZoomStore()
+    /// Shared download pipeline; every page reports into it at the same
+    /// wiring site so navigation-driven downloads always land.
+    let downloadsManager = DownloadsManager()
 
     private var database: OuterViewDatabase?
     var bookmarkStore: BookmarkStore?
     var historyStore: HistoryStore?
+    var readingListStore: ReadingListStore?
     private(set) var recentSearchStore: RecentSearchStore?
     var tabStore: TabStore?
     var restoreCoordinator: SessionRestoreCoordinator?
@@ -135,9 +165,11 @@ final class BrowserRootViewController: UIViewController {
             }
         }
         super.init(nibName: nil, bundle: nil)
+        elementContextActions = makeElementContextActions()
         if let database = self.database {
             bookmarkStore = BookmarkStore(database: database)
             historyStore = HistoryStore(database: database)
+            readingListStore = ReadingListStore(database: database)
             recentSearchStore = RecentSearchStore(database: database)
             let tabs = TabStore(database: database)
             tabStore = tabs
@@ -167,6 +199,7 @@ final class BrowserRootViewController: UIViewController {
     override func viewSafeAreaInsetsDidChange() {
         super.viewSafeAreaInsetsDidChange()
         updatePillBottomOffset()
+        updateFindBottomOffset()
         applyContentInsets()
     }
 
@@ -219,6 +252,7 @@ final class BrowserRootViewController: UIViewController {
 
         setupErrorOverlay()
         setupPill()
+        setupFind()
         setupRail()
         setupEditor()
         setupLibrary()
@@ -234,6 +268,7 @@ final class BrowserRootViewController: UIViewController {
     func bringChromeToFront() {
         view.bringSubviewToFront(errorContainer)
         view.bringSubviewToFront(pillView)
+        view.bringSubviewToFront(findView)
         view.bringSubviewToFront(editorView)
         view.bringSubviewToFront(bookmarksLibraryView)
         view.bringSubviewToFront(bookmarkEditorContainer)
@@ -330,10 +365,11 @@ final class BrowserRootViewController: UIViewController {
             bookmarksLibraryView.topAnchor.constraint(equalTo: view.topAnchor),
             bookmarksLibraryView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
-        if let bookmarkStore, let historyStore {
+        if let bookmarkStore, let historyStore, let readingListStore {
             bookmarksLibraryView.configureStores(
                 bookmarkStore: bookmarkStore,
-                historyStore: historyStore
+                historyStore: historyStore,
+                readingListStore: readingListStore
             )
         }
         bookmarksLibraryView.onOpenURL = { [weak self] url in
@@ -352,6 +388,10 @@ final class BrowserRootViewController: UIViewController {
         }
         bookmarksLibraryView.onTabChanged = { [weak self] tab in
             self?.updateLibraryRailItems(for: tab)
+        }
+        bookmarksLibraryView.onReadingListStateChanged = { [weak self] in
+            guard let self, self.isLibraryVisible, self.bookmarksLibraryView.currentTab == .readingList else { return }
+            self.updateLibraryRailItems(for: .readingList)
         }
     }
 
@@ -430,6 +470,11 @@ final class BrowserRootViewController: UIViewController {
     func updateLibraryRailItems(for tab: LibraryTab) {
         guard isLibraryVisible else { return }
         var prefix: [RailAction] = []
+        var suffix: [RailAction] = [
+            .done { [weak self] in
+                self?.closeBookmarksLibrary()
+            }
+        ]
         switch tab {
         case .bookmarks:
             let isEditing = bookmarksLibraryView.isEditingBookmarks
@@ -449,18 +494,40 @@ final class BrowserRootViewController: UIViewController {
                     self?.bookmarksLibraryView.promptClearHistory()
                 }
             ]
+        case .readingList:
+            if bookmarksLibraryView.isReadingListInSelectionMode {
+                let canDelete = bookmarksLibraryView.canDeleteReadingListSelection
+                // No Library-exit action while selecting: the blue check ends
+                // selection mode first; rail exit returns once it ends.
+                prefix = [
+                    .deleteSelected(isEnabled: canDelete) { [weak self] in
+                        self?.bookmarksLibraryView.deleteReadingListSelectedItems()
+                        self?.updateLibraryRailItems(for: .readingList)
+                    }
+                ]
+                suffix = [
+                    .done { [weak self] in
+                        self?.bookmarksLibraryView.exitReadingListSelectionMode()
+                        self?.updateLibraryRailItems(for: .readingList)
+                    }
+                ]
+            } else {
+                if let menu = bookmarksLibraryView.makeReadingListMenu() {
+                    prefix = [
+                        .readingListMenu(menu: menu)
+                    ]
+                }
+                suffix = [
+                    .done { [weak self] in
+                        self?.closeBookmarksLibrary()
+                    }
+                ]
+            }
         case .favorites:
             prefix = []
         }
 
-        railView.setItems(
-            prefix: prefix,
-            suffix: [
-                .done { [weak self] in
-                    self?.closeBookmarksLibrary()
-                }
-            ]
-        )
+        railView.setItems(prefix: prefix, suffix: suffix)
     }
 
     private func setupOverview() {
@@ -493,38 +560,6 @@ final class BrowserRootViewController: UIViewController {
             }
             page.takeSnapshot(completion: completion)
         }
-    }
-
-    private func setupErrorOverlay() {
-        errorContainer.translatesAutoresizingMaskIntoConstraints = false
-        errorContainer.backgroundColor = .systemBackground
-        errorContainer.isHidden = true
-        view.addSubview(errorContainer)
-        NSLayoutConstraint.activate([
-            errorContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            errorContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            errorContainer.topAnchor.constraint(equalTo: view.topAnchor),
-            errorContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        ])
-        errorLabel.numberOfLines = 0
-        errorLabel.textAlignment = .center
-        errorLabel.font = .preferredFont(forTextStyle: .body)
-        errorLabel.adjustsFontForContentSizeCategory = true
-        errorLabel.translatesAutoresizingMaskIntoConstraints = false
-        errorContainer.addSubview(errorLabel)
-        retryButton.setTitle("Retry", for: .normal)
-        retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        retryButton.translatesAutoresizingMaskIntoConstraints = false
-        retryButton.addAction(UIAction { [weak self] _ in self?.activePage()?.reload() }, for: .touchUpInside)
-        errorContainer.addSubview(retryButton)
-        NSLayoutConstraint.activate([
-            errorLabel.centerXAnchor.constraint(equalTo: errorContainer.safeAreaLayoutGuide.centerXAnchor),
-            errorLabel.centerYAnchor.constraint(equalTo: errorContainer.centerYAnchor),
-            errorLabel.leadingAnchor.constraint(greaterThanOrEqualTo: errorContainer.safeAreaLayoutGuide.leadingAnchor, constant: 32),
-            errorLabel.trailingAnchor.constraint(lessThanOrEqualTo: errorContainer.safeAreaLayoutGuide.trailingAnchor, constant: -32),
-            retryButton.centerXAnchor.constraint(equalTo: errorContainer.safeAreaLayoutGuide.centerXAnchor),
-            retryButton.topAnchor.constraint(equalTo: errorLabel.bottomAnchor, constant: 16)
-        ])
     }
 
     private func setupStartPageContent() {
@@ -585,7 +620,11 @@ final class BrowserRootViewController: UIViewController {
 
     func ensureSnapshotListener(for id: UUID, page: WebPageController) {
         // A recreated page (after eviction) is a new instance with no
-        // listeners; the old controller and its subscriptions are gone.
+        // listeners; the old controller and its subscriptions are gone. It
+        // also arrives with no menu wiring, so context actions reattach here.
+        page.contextActions = elementContextActions
+        page.siteZoomStore = siteZoomStore
+        page.downloadsManager = downloadsManager
         if let bound = boundListenerPages[id],
            bound == ObjectIdentifier(page),
            snapshotListenerIDs[id] != nil
@@ -699,19 +738,6 @@ final class BrowserRootViewController: UIViewController {
         }
     }
 
-    // MARK: - Error overlay
-
-    func updateErrorOverlay(for snapshot: WebPageSnapshot) {
-        guard let message = snapshot.lastError else {
-            errorContainer.isHidden = true
-            return
-        }
-        errorContainer.isHidden = false
-        errorLabel.text = message
-        bringChromeToFront()
-        UIAccessibility.post(notification: .screenChanged, argument: errorContainer)
-    }
-
     // MARK: - Bridges for same-type extensions
 
     /// Single gateway for the browsing-resumed FSM input so extensions never
@@ -742,7 +768,7 @@ final class BrowserRootViewController: UIViewController {
 
     func makeSettingsController() -> UIViewController? {
         guard let database else { return nil }
-        var settingsView = SettingsView(database: database)
+        var settingsView = SettingsView(database: database, siteZoomStore: siteZoomStore)
         settingsView.onDidClearHistory = { [weak self] in self?.refreshStartPageAfterHistoryClear() }
         settingsView.onDidClearTabs = { [weak self] in self?.resetAllTabsToSingleEmptyTab() }
         return UIHostingController(rootView: settingsView)
@@ -763,5 +789,100 @@ final class BrowserRootViewController: UIViewController {
             popover.sourceRect = pillView.bounds
         }
         present(controller, animated: true)
+    }
+
+    // MARK: - Element context actions
+
+    /// The only place action closures are constructed: each maps a URL back
+    /// to a root-level capability, so pages never reach into stores directly.
+    private func makeElementContextActions() -> ElementContextActions {
+        ElementContextActions(
+            openInNewTab: { [weak self] url in
+                self?.openInNewTab(url: url)
+            },
+            addToReadingList: { [weak self] url in
+                self?.addReadingListEntry(url: url)
+            },
+            copyLink: { [weak self] url in
+                self?.copyElementURLToPasteboard(url)
+            },
+            share: { [weak self] url in
+                self?.shareElementURL(url)
+            },
+            saveToPhotos: { [weak self] url in
+                self?.saveImageToPhotos(from: url)
+            },
+            copyImage: { [weak self] url in
+                self?.copyElementURLToPasteboard(url)
+            }
+        )
+    }
+
+    private func addReadingListEntry(url: URL) {
+        guard URLNormalizer.isLoadable(url) else { return }
+        let title = HostFormatter.displayTitle(url: url, title: nil)
+        do {
+            try readingListStore?.add(title: title, url: url)
+        } catch {
+            logPersistenceError(error, operation: "addToReadingList")
+        }
+    }
+
+    private func copyElementURLToPasteboard(_ url: URL) {
+        UIPasteboard.general.url = url
+    }
+
+    private func shareElementURL(_ url: URL) {
+        let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        presentPopover(activity)
+    }
+
+    private func saveImageToPhotos(from url: URL) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                try await saveImageDataToPhotos(data)
+            } catch {
+                processPhotoSaveFailure(error)
+            }
+        }
+    }
+
+    /// Prompts for add-only Photos access on the first save, then inserts the
+    /// downloaded bytes as a single photo resource.
+    private func saveImageDataToPhotos(_ data: Data) async throws {
+        let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+        switch status {
+        case .notDetermined:
+            let granted = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+            guard granted == .authorized || granted == .limited else {
+                throw PhotoSaveFailure.accessDenied
+            }
+        case .limited, .authorized:
+            break
+        default:
+            throw PhotoSaveFailure.accessDenied
+        }
+        try await PHPhotoLibrary.shared().performChanges {
+            let request = PHAssetCreationRequest.forAsset()
+            request.addResource(with: .photo, data: data, options: nil)
+        }
+    }
+
+    private func processPhotoSaveFailure(_ error: Error) {
+        // Permission denial is the only failure users can act on; the rest
+        // stays a log entry so failed saves never retry behind the user's back.
+        guard error is PhotoSaveFailure else {
+            logPersistenceError(error, operation: "saveImageToPhotos")
+            return
+        }
+        let alert = UIAlertController(
+            title: "Can't Save Photo",
+            message: "OuterView does not have permission to add to your photo library.",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
     }
 }

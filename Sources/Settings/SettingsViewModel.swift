@@ -13,6 +13,7 @@ final class SettingsViewModel {
     static let appVersionLabel = "OuterView 0.1.0"
     static let safariExportInstructions =
         "Export from Safari: Settings → Apps → Safari → Export → Bookmarks, then open the ZIP in Files and pick Bookmarks.html."
+    static let resetAllTextZoomsConfirmationText = "This resets text zoom for all sites."
 
     @ObservationIgnored
     private let defaults: UserDefaults
@@ -49,6 +50,10 @@ final class SettingsViewModel {
         }
         let fresh = TabRecord(isPrivate: false)
         try tabStore.saveSession(tabs: [fresh], selected: fresh.id)
+    }
+
+    func resetAllTextZooms(siteZoomStore: SiteZoomStore) {
+        siteZoomStore.clearAll()
     }
 
     static func formattedSummary(_ summary: ImportSummary) -> String {

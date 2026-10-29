@@ -9,12 +9,14 @@ enum LibraryTab: Int, CaseIterable, Sendable {
     case favorites = 0
     case bookmarks = 1
     case history = 2
+    case readingList = 3
 
     var title: String {
         switch self {
         case .favorites: "Favorites"
         case .bookmarks: "Bookmarks"
         case .history: "History"
+        case .readingList: "Reading List"
         }
     }
 
@@ -23,12 +25,13 @@ enum LibraryTab: Int, CaseIterable, Sendable {
         case .favorites: "star"
         case .bookmarks: "book"
         case .history: "clock"
+        case .readingList: "eyeglasses"
         }
     }
 }
 
 /// Top tab bar for the Bookmarks & History library overlay, letting users switch
-/// between Favorites, Bookmarks, and History.
+/// between Favorites, Bookmarks, History, and Reading List.
 @MainActor
 final class LibraryTabBar: UIView {
     var onTabSelected: ((LibraryTab) -> Void)?

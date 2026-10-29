@@ -84,6 +84,10 @@ extension BrowserRootViewController {
 
     func applyPillViews(animated: Bool) {
         let state = chromeController.state
+        if isFindActive, state.pill != .editing {
+            pillView.isHidden = true
+            return
+        }
         pillView.setAddressState(state)
 
         let updatePillGeometry = { [weak self] in

@@ -64,6 +64,35 @@ extension BrowserRootViewController {
         loadActivePage(url)
     }
 
+    /// Opens `url` on a fresh non-private tab inserted directly after the
+    /// selected one, without disturbing tabs further down the strip. When
+    /// `background` is false the new tab becomes selected and chrome resumes
+    /// through the browsing-resumed override.
+    func openInNewTab(url: URL, background: Bool = false) {
+        let record = TabRecord(url: url, isPrivate: false)
+        let insertIndex: Int =
+            if let selected = selectedTabID, let index = tabs.firstIndex(where: { $0.id == selected }) {
+                index + 1
+            } else {
+                tabs.count
+            }
+        tabs.insert(record, at: insertIndex)
+        tabPool.create(record)
+        do {
+            try tabStore?.saveSession(tabs: tabs, selected: selectedTabID)
+        } catch {
+            logPersistenceError(error, operation: "saveSession")
+        }
+        if background {
+            if isOverviewVisible {
+                overviewController.setItems(overviewItems(), selectedID: selectedTabID)
+            }
+            return
+        }
+        selectTab(id: record.id)
+        applyBrowsingResumed(animated: true)
+    }
+
     func displaySelectedTab() {
         for subview in contentContainer.subviews where subview !== startPageContainer {
             subview.removeFromSuperview()
@@ -129,6 +158,9 @@ extension BrowserRootViewController {
     }
 
     func selectTab(id: UUID) {
+        if isFindActive {
+            endFind()
+        }
         guard tabs.contains(where: { $0.id == id }) else { return }
         selectedTabID = id
         if let index = tabs.firstIndex(where: { $0.id == id }) {
@@ -158,6 +190,9 @@ extension BrowserRootViewController {
     /// live page and per-tab entry so a background save cannot resurrect
     /// closed tabs, then displays the fresh empty tab.
     func resetAllTabsToSingleEmptyTab() {
+        if isFindActive {
+            endFind()
+        }
         for id in tabs.map(\.id) {
             prunePerTabState(id: id)
             tabPool.delete(id: id)
