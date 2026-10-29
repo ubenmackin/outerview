@@ -40,6 +40,10 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         return ay >= flickBeginVelocity && ay > ax * 1.4
     }
 
+    nonisolated static func shouldClaimFlick(velocity: CGPoint, alreadyClaimed: Bool) -> Bool {
+        alreadyClaimed || shouldBeginCardFlick(velocity: velocity)
+    }
+
     private nonisolated static func isHorizontalFlick(translation: CGPoint, velocity: CGPoint) -> Bool {
         // Translation decides when the axes differ; a tied translation
         // (including rest) falls back to velocity so zero-travel flings
@@ -60,6 +64,8 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     }
 
     var onClose: (() -> Void)?
+
+    private var flickClaimed = false
 
     private let previewContainer = UIView()
     private let previewImageView = UIImageView()
@@ -83,6 +89,7 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        flickClaimed = false
         onClose = nil
         previewImageView.image = nil
         previewImageView.isHidden = true
@@ -236,9 +243,10 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         ])
 
         // Simultaneous with the collection's pan lets the flick claim an
-        // already-scrolling touch; disabling the grid's scroll recognizer on
-        // begin keeps the flick from scrolling the collection underneath.
+        // already-scrolling touch; the grid's scroll recognizer is disabled
+        // only after the flick latches on speed.
         cardFlickPan.delegate = self
+        cardFlickPan.cancelsTouchesInView = false
         cardFlickPan.addTarget(self, action: #selector(handlePan(_:)))
         contentView.addGestureRecognizer(cardFlickPan)
 
@@ -256,8 +264,12 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         let collectionPan = (superview as? UICollectionView)?.panGestureRecognizer
         switch pan.state {
         case .began:
-            collectionPan?.isEnabled = false
+            flickClaimed = false
         case .changed:
+            let velocity = pan.velocity(in: self)
+            guard Self.shouldClaimFlick(velocity: velocity, alreadyClaimed: flickClaimed) else { return }
+            flickClaimed = true
+            collectionPan?.isEnabled = false
             let maxDrag: CGFloat = 240
             let raw = pan.translation(in: self)
             let tx = min(maxDrag, max(-maxDrag, raw.x))
@@ -266,7 +278,13 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             contentView.alpha = 1 - min(0.5, max(abs(tx), abs(ty)) / maxDrag)
         case .ended, .cancelled:
             collectionPan?.isEnabled = true
-            finishFlick(pan)
+            if flickClaimed {
+                flickClaimed = false
+                finishFlick(pan)
+            } else {
+                contentView.transform = .identity
+                contentView.alpha = 1
+            }
         default:
             collectionPan?.isEnabled = true
         }
@@ -321,11 +339,8 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         )
     }
 
-    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard let pan = gestureRecognizer as? UIPanGestureRecognizer, pan === cardFlickPan else {
-            return true
-        }
-        return Self.shouldBeginCardFlick(velocity: pan.velocity(in: self))
+    override func gestureRecognizerShouldBegin(_: UIGestureRecognizer) -> Bool {
+        true
     }
 }
 

@@ -12,6 +12,15 @@ final class ReadingListAndSearchTests: XCTestCase {
         try OuterViewDatabase(inMemory: true)
     }
 
+    private func makeIsolatedDefaults() throws -> UserDefaults {
+        let suiteName = "ReadingListAndSearchTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        addTeardownBlock {
+            UserDefaults.standard.removePersistentDomain(forName: suiteName)
+        }
+        return defaults
+    }
+
     // MARK: - SentenceExtractor Tests
 
     func testSentenceExtractorSingleSentence() {
@@ -50,7 +59,7 @@ final class ReadingListAndSearchTests: XCTestCase {
     func testReadingListViewDisplayModeToggle() throws {
         let database = try makeDatabase()
         let store = ReadingListStore(database: database)
-        let view = ReadingListView(store: store)
+        let view = try ReadingListView(store: store, defaults: makeIsolatedDefaults())
 
         XCTAssertEqual(view.displayMode, .compact)
         view.setDisplayMode(.large)
@@ -66,7 +75,7 @@ final class ReadingListAndSearchTests: XCTestCase {
         let item2 = try XCTUnwrap(try store.add(title: "Read Item", url: XCTUnwrap(URL(string: "https://b.com"))))
         try store.setRead(id: item2.id, isRead: true)
 
-        let view = ReadingListView(store: store)
+        let view = try ReadingListView(store: store, defaults: makeIsolatedDefaults())
         XCTAssertEqual(view.filterMode, .all)
         XCTAssertFalse(item1.isRead)
         XCTAssertTrue(item2.isRead)
@@ -84,7 +93,7 @@ final class ReadingListAndSearchTests: XCTestCase {
         let item1 = try XCTUnwrap(try store.add(title: "Item 1", url: XCTUnwrap(URL(string: "https://one.com"))))
         let item2 = try XCTUnwrap(try store.add(title: "Item 2", url: XCTUnwrap(URL(string: "https://two.com"))))
 
-        let view = ReadingListView(store: store)
+        let view = try ReadingListView(store: store, defaults: makeIsolatedDefaults())
         XCTAssertFalse(view.isSelectionMode)
 
         var selectionModeNotified = false
@@ -115,7 +124,7 @@ final class ReadingListAndSearchTests: XCTestCase {
     func testReadingListMenuConstruction() throws {
         let database = try makeDatabase()
         let store = ReadingListStore(database: database)
-        let view = ReadingListView(store: store)
+        let view = try ReadingListView(store: store, defaults: makeIsolatedDefaults())
 
         let menu = view.makeMenu()
         XCTAssertEqual(menu.children.count, 3) // displaySection, filterSection, actionsSection
