@@ -26,6 +26,21 @@ final class TabCardFlickTests: XCTestCase {
         XCTAssertFalse(TabCardCell.shouldBeginCardFlick(velocity: CGPoint(x: 300, y: 100)))
     }
 
+    func testShouldClaimFlickLatchesOnceClaimed() {
+        XCTAssertFalse(TabCardCell.shouldClaimFlick(
+            velocity: CGPoint(x: 300, y: 100),
+            alreadyClaimed: false
+        ))
+        XCTAssertTrue(TabCardCell.shouldClaimFlick(
+            velocity: CGPoint(x: 300, y: 100),
+            alreadyClaimed: true
+        ))
+        XCTAssertTrue(TabCardCell.shouldClaimFlick(
+            velocity: CGPoint(x: 1200, y: 100),
+            alreadyClaimed: false
+        ))
+    }
+
     func testShouldDismissFlickUsesDominantAxis() {
         // Vertical: 100 pt of travel clears the 96 pt distance leg.
         XCTAssertTrue(TabCardCell.shouldDismissFlick(

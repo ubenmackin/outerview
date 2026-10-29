@@ -3,6 +3,7 @@
 //  OuterView
 //
 
+import os
 import UIKit
 
 enum TabOverviewMode: Int, Sendable, CaseIterable {
@@ -317,13 +318,15 @@ final class TabOverviewViewController: UIViewController {
     var previewProvider: ((UUID, @escaping @MainActor (UIImage?) -> Void) -> Void)?
 
     private(set) var mode: TabOverviewMode = .standard
-    private var allTabs: [TabOverviewItem] = []
+    private(set) var allTabs: [TabOverviewItem] = []
     private(set) var allGroups: [TabGroup] = []
     private(set) var selectedGroupID: UUID?
     private var selectedID: UUID?
     private var previews: [UUID: UIImage] = [:]
     private var filterQuery = ""
     private var isFilterVisible = false
+    private var isDragReordering = false
+    private var pendingPreviewIDs = Set<UUID>()
 
     private var visibleItems: [TabOverviewItem] {
         Self.visibleTabs(allTabs, mode: mode, query: filterQuery, groupId: selectedGroupID)
@@ -336,8 +339,7 @@ final class TabOverviewViewController: UIViewController {
     private let filterRow = UIView()
     private let filterField = UITextField()
     private var filterHeightConstraint: NSLayoutConstraint!
-    private let tabsCapsule = UIVisualEffectView(effect: GlassEffect.make())
-    private let tabsButton = UIButton(type: .system)
+    let pickerBar = TabGroupPickerBar()
     private let emptyLabel = UILabel()
 
     override init(nibName nibNameOrNil: String?, bundle nibBundleOrNil: Bundle?) {
@@ -358,7 +360,7 @@ final class TabOverviewViewController: UIViewController {
         super.viewDidLoad()
         setupHierarchy()
         updateAppearance()
-        updateTabsCapsuleTitle()
+        updatePickerBar()
         updateItemSize()
     }
 
@@ -375,8 +377,6 @@ final class TabOverviewViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        tabsCapsule.layer.cornerRadius = tabsCapsule.bounds.height / 2
-        tabsCapsule.clipsToBounds = true
         updateItemSize()
     }
 
@@ -394,14 +394,14 @@ final class TabOverviewViewController: UIViewController {
         allGroups = groups
         self.selectedGroupID = selectedGroupID.flatMap { id in groups.contains(where: { $0.id == id }) ? id : nil }
         applyMode(mode, notify: false)
-        updateTabsCapsuleTitle()
+        updatePickerBar()
         requestPreviews()
     }
 
     func setItems(_ tabs: [TabOverviewItem], selectedID: UUID?) {
         adoptItems(tabs)
         self.selectedID = selectedID
-        updateTabsCapsuleTitle()
+        updatePickerBar()
         collectionView.reloadData()
         updateEmptyState()
     }
@@ -413,7 +413,7 @@ final class TabOverviewViewController: UIViewController {
         } else {
             self.selectedGroupID = nil
         }
-        updateTabsCapsuleTitle()
+        updatePickerBar()
         collectionView.reloadData()
         updateEmptyState()
     }
@@ -423,7 +423,7 @@ final class TabOverviewViewController: UIViewController {
             return
         }
         selectedGroupID = groupId
-        updateTabsCapsuleTitle()
+        updatePickerBar()
         collectionView.reloadData()
         updateEmptyState()
     }
@@ -524,19 +524,13 @@ final class TabOverviewViewController: UIViewController {
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(emptyLabel)
 
-        tabsCapsule.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(tabsCapsule)
-        tabsButton.accessibilityIdentifier = "TabOverview.TabsButton"
-        tabsButton.accessibilityLabel = "Select tab group"
-        tabsButton.showsMenuAsPrimaryAction = false
-        tabsButton.menu = makeOverviewMenu(includesCloseAll: false)
-        tabsButton.addAction(
-            UIAction { [weak self] _ in self?.showGroupsSheet() },
-            for: .touchUpInside
-        )
-        tabsButton.translatesAutoresizingMaskIntoConstraints = false
-        tabsCapsule.contentView.addSubview(tabsButton)
-        updateTabsCapsuleTitle()
+        pickerBar.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(pickerBar)
+        pickerBar.onTap = { [weak self] in self?.showGroupsSheet() }
+        pickerBar.onLongPress = { [weak self] in self?.showPickerMenu() }
+        pickerBar.onScrubSelect = { [weak self] in self?.applyPickerSelection($0) }
+        pickerBar.onScrubEnd = { [weak self] in self?.applyPickerSelection($0) }
+        updatePickerBar()
 
         filterHeightConstraint = filterRow.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
@@ -557,19 +551,15 @@ final class TabOverviewViewController: UIViewController {
             emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
 
-            tabsCapsule.leadingAnchor.constraint(
+            pickerBar.leadingAnchor.constraint(
                 equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16
             ),
-            tabsCapsule.bottomAnchor.constraint(
+            pickerBar.bottomAnchor.constraint(
                 equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12
             ),
-            tabsCapsule.trailingAnchor.constraint(
+            pickerBar.trailingAnchor.constraint(
                 lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16
-            ),
-            tabsButton.leadingAnchor.constraint(equalTo: tabsCapsule.contentView.leadingAnchor, constant: 12),
-            tabsButton.trailingAnchor.constraint(equalTo: tabsCapsule.contentView.trailingAnchor, constant: -12),
-            tabsButton.topAnchor.constraint(equalTo: tabsCapsule.contentView.topAnchor, constant: 6),
-            tabsButton.bottomAnchor.constraint(equalTo: tabsCapsule.contentView.bottomAnchor, constant: -6)
+            )
         ])
         NSLayoutConstraint.activate([
             filterField.heightAnchor.constraint(equalToConstant: 36)
@@ -590,15 +580,17 @@ final class TabOverviewViewController: UIViewController {
                 previews[id] = nil
             }
         }
-        updateTabsCapsuleTitle()
+        updatePickerBar()
         collectionView.reloadData()
         updateEmptyState()
     }
 
-    private func applyMode(_ newMode: TabOverviewMode, notify: Bool) {
+    /// Cross-file entry for the picker extension: the extension lives in its
+    /// own file so mode application stays internal here rather than private.
+    func applyMode(_ newMode: TabOverviewMode, notify: Bool) {
         mode = newMode
         updateAppearance()
-        updateTabsCapsuleTitle()
+        updatePickerBar()
         collectionView.reloadData()
         updateEmptyState()
         if notify {
@@ -606,157 +598,28 @@ final class TabOverviewViewController: UIViewController {
         }
     }
 
-    private func updateTabsCapsuleTitle() {
-        let totals = Self.counts(allTabs)
-        let count = mode.isPrivate ? totals.privateCount : totals.standard
-        let font = UIFont.systemFont(ofSize: 16, weight: .semibold)
-        let secondaryAttributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: UIColor.secondaryLabel
-        ]
-        let attributed = NSMutableAttributedString(string: Self.otherModeTitle(for: mode), attributes: secondaryAttributes)
-        attributed.append(NSAttributedString(string: " · ", attributes: secondaryAttributes))
-        attributed.append(NSAttributedString(
-            string: Self.tabsCapsuleCountTitle(count: count),
-            attributes: [
-                .font: font,
-                .foregroundColor: UIColor.label
-            ]
-        ))
-        tabsButton.setAttributedTitle(attributed, for: .normal)
-        tabsButton.accessibilityValue = attributed.string
-    }
-
-    /// Overview commands shared by the rail ellipsis and the pill's
-    /// long-press menu. The pill drops Close All Tabs: that destructive
-    /// action owns its own confirm sheet and stays rail-only.
-    private func makeOverviewMenu(includesCloseAll: Bool) -> UIMenu {
-        UIMenu(children: [
-            UIDeferredMenuElement.uncached { [weak self] completion in
-                guard let self else {
-                    completion([])
-                    return
-                }
-                var children: [UIMenuElement] = [
-                    UIAction(title: "Manage Tab Groups", image: UIImage(systemName: "list.bullet.rectangle")) { [weak self] _ in
-                        self?.showGroupsSheet()
-                    },
-                    UIAction(title: "New Group…", image: UIImage(systemName: "folder.badge.plus")) { [weak self] _ in
-                        self?.promptNewGroupCreation(withTabIDs: [])
-                    }
-                ]
-                if includesCloseAll {
-                    children.append(
-                        UIAction(title: "Close All Tabs", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
-                            self?.showCloseAllSheet()
-                        }
-                    )
-                }
-                completion(children)
+    /// Single-refresh mode + filter application for scrub ticks. `applyMode`
+    /// followed by `setGroupFilter` would pay two picker rebuilds and two
+    /// grid reloads per tick; this batches them into one.
+    func applySelectionBatched(mode newMode: TabOverviewMode, groupID: UUID?, notify: Bool) {
+        let modeChanged = mode != newMode
+        mode = newMode
+        if let groupID {
+            if allGroups.contains(where: { $0.id == groupID }) {
+                selectedGroupID = groupID
             }
-        ])
-    }
-
-    private func moveToGroupMenu(forTab id: UUID) -> UIMenu {
-        let tab = allTabs.first(where: { $0.id == id })
-        var children: [UIMenuElement] = []
-        for group in allGroups {
-            let action = UIAction(
-                title: group.name,
-                state: tab?.groupId == group.id ? .on : .off
-            ) { [weak self] _ in
-                guard let self else { return }
-                self.delegate?.tabOverview(self, didAssignTab: id, toGroup: group.id)
-            }
-            children.append(action)
+        } else {
+            selectedGroupID = nil
         }
-        children.append(
-            UIAction(title: "New Group…") { [weak self] _ in
-                self?.promptNewGroupCreation(withTabIDs: [id])
-            }
-        )
-        if tab?.groupId != nil {
-            children.append(
-                UIAction(title: "Remove from Group", attributes: .destructive) { [weak self] _ in
-                    guard let self else { return }
-                    self.delegate?.tabOverview(self, didAssignTab: id, toGroup: nil)
-                }
-            )
+        if modeChanged {
+            updateAppearance()
+        } else {
+            collectionView.reloadData()
         }
-        return UIMenu(title: "Move to Group…", children: children)
-    }
-
-    private func promptNewGroupCreation(withTabIDs tabIDs: [UUID]) {
-        let alert = UIAlertController(title: "New Group", message: "Enter a name for this group.", preferredStyle: .alert)
-        alert.addTextField { field in
-            field.placeholder = "Group Name"
-            field.autocapitalizationType = .words
-        }
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Save", style: .default) { [weak self, weak alert] _ in
-            guard let self,
-                  let raw = alert?.textFields?.first?.text,
-                  !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            else { return }
-            let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            self.delegate?.tabOverview(self, didCreateGroup: name, withTabIDs: tabIDs)
-        })
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = tabsButton
-            popover.sourceRect = tabsButton.bounds
-        }
-        present(alert, animated: true)
-    }
-
-    /// One Safari-style sheet for mode + group selection. The sheet re-reads
-    /// `stateProvider` itself, so the owner only applies emitted actions.
-    private func showGroupsSheet() {
-        let sheet = TabGroupsSheetController(stateProvider: { [weak self] in
-            guard let self else {
-                return TabGroupsSheetState(
-                    isPrivate: false,
-                    selectedGroupID: nil,
-                    standardCount: 0,
-                    privateCount: 0,
-                    groups: []
-                )
-            }
-            let totals = Self.counts(allTabs)
-            return TabGroupsSheetState(
-                isPrivate: mode.isPrivate,
-                selectedGroupID: selectedGroupID,
-                standardCount: totals.standard,
-                privateCount: totals.privateCount,
-                groups: Self.groupCapsuleItems(groups: allGroups, tabs: allTabs)
-            )
-        })
-        sheet.onAction = { [weak self] in self?.handleGroupsSheetAction($0) }
-        sheet.modalPresentationStyle = .pageSheet
-        if let presentation = sheet.sheetPresentationController {
-            presentation.detents = [.medium(), .large()]
-            presentation.prefersGrabberVisible = true
-        }
-        present(sheet, animated: true)
-    }
-
-    private func handleGroupsSheetAction(_ action: TabGroupsSheetController.Action) {
-        switch action {
-        case .selectStandardAll:
-            applyMode(.standard, notify: true)
-            setGroupFilter(nil)
-        case .selectPrivate:
-            applyMode(.privateMode, notify: true)
-            setGroupFilter(nil)
-        case let .selectGroup(id):
-            applyMode(.standard, notify: true)
-            setGroupFilter(id)
-        case let .createGroup(name, withAllStandardTabs):
-            let tabIDs = withAllStandardTabs ? Self.tabs(allTabs, in: .standard).map(\.id) : []
-            delegate?.tabOverview(self, didCreateGroup: name, withTabIDs: tabIDs)
-        case let .renameGroup(id, name):
-            delegate?.tabOverview(self, didRenameGroup: id, toName: name)
-        case let .deleteGroup(id):
-            delegate?.tabOverview(self, didDeleteGroup: id)
+        updatePickerBar()
+        updateEmptyState()
+        if notify {
+            delegate?.tabOverview(self, didChangeMode: newMode)
         }
     }
 
@@ -795,6 +658,10 @@ final class TabOverviewViewController: UIViewController {
             provider(id) { [weak self] image in
                 guard let self, self.allTabs.contains(where: { $0.id == id }) else { return }
                 self.previews[id] = image
+                if self.isDragReordering || self.collectionView.hasActiveDrag || self.collectionView.hasActiveDrop {
+                    self.pendingPreviewIDs.insert(id)
+                    return
+                }
                 for (index, item) in self.visibleItems.enumerated() where item.id == id {
                     self.collectionView.reloadItems(at: [IndexPath(item: index, section: 0)])
                     return
@@ -811,7 +678,7 @@ final class TabOverviewViewController: UIViewController {
             orderedIDs: orderedIDs,
             isPrivate: mode.isPrivate
         )
-        updateTabsCapsuleTitle()
+        updatePickerBar()
     }
 
     private func closeTab(id: UUID) {
@@ -822,7 +689,7 @@ final class TabOverviewViewController: UIViewController {
             let replacement = Self.fallbackTab(mode: mode)
             allTabs.append(replacement)
             selectedID = replacement.id
-            updateTabsCapsuleTitle()
+            updatePickerBar()
             collectionView.reloadData()
             updateEmptyState()
             delegate?.tabOverview(self, didCloseTab: id, replacementIfEmpty: replacement)
@@ -831,13 +698,15 @@ final class TabOverviewViewController: UIViewController {
         selectedID = Self.selectionAfterClosing(
             closedID: id, remainingTabs: allTabs, selectedID: selectedID
         )
-        updateTabsCapsuleTitle()
+        updatePickerBar()
         collectionView.reloadData()
         updateEmptyState()
         delegate?.tabOverview(self, didCloseTab: id, replacementIfEmpty: nil)
     }
 
-    private func showCloseAllSheet() {
+    /// Confirm sheet for closing all tabs in the current mode. Internal
+    /// because the picker extension presents it from the rail ellipsis menu.
+    func showCloseAllSheet() {
         let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
         sheet.addAction(UIAlertAction(title: "Close All Tabs", style: .destructive) { [weak self] _ in
             guard let self else { return }
@@ -902,6 +771,24 @@ extension TabOverviewViewController: UICollectionViewDataSource, UICollectionVie
 // MARK: - UICollectionViewDragDelegate, UICollectionViewDropDelegate
 
 extension TabOverviewViewController: UICollectionViewDragDelegate, UICollectionViewDropDelegate {
+    func collectionView(_: UICollectionView, dragSessionWillBegin _: UIDragSession) {
+        isDragReordering = true
+    }
+
+    func collectionView(_ collectionView: UICollectionView, dragSessionDidEnd _: UIDragSession) {
+        isDragReordering = false
+        guard !pendingPreviewIDs.isEmpty else { return }
+        let ids = pendingPreviewIDs
+        pendingPreviewIDs.removeAll()
+        for id in ids {
+            guard allTabs.contains(where: { $0.id == id }) else { continue }
+            for (index, item) in visibleItems.enumerated() where item.id == id {
+                collectionView.reloadItems(at: [IndexPath(item: index, section: 0)])
+                break
+            }
+        }
+    }
+
     func collectionView(
         _: UICollectionView,
         itemsForBeginning _: UIDragSession,
@@ -928,12 +815,24 @@ extension TabOverviewViewController: UICollectionViewDragDelegate, UICollectionV
         _: UICollectionView,
         performDropWith coordinator: UICollectionViewDropCoordinator
     ) {
-        guard filterQuery.isEmpty, selectedGroupID == nil else { return }
+        guard filterQuery.isEmpty, selectedGroupID == nil else {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "TabOverview")
+                .info("performDropWith ignored: filter or group active")
+            return
+        }
         let localItems = coordinator.items.filter { $0.dragItem.localObject is UUID }
-        guard !localItems.isEmpty else { return }
+        guard !localItems.isEmpty else {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "TabOverview")
+                .info("performDropWith ignored: no local items")
+            return
+        }
         let draggedIDs = localItems.compactMap { $0.dragItem.localObject as? UUID }
         let ids = visibleItems.map(\.id)
-        guard !ids.isEmpty else { return }
+        guard !ids.isEmpty else {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "TabOverview")
+                .info("performDropWith ignored: empty grid")
+            return
+        }
         // A nil destination means past the trailing edge: append.
         let rawDestination = coordinator.destinationIndexPath?.item ?? ids.count
         let orderedIDs = Self.reorderedIDs(
@@ -959,6 +858,8 @@ extension TabOverviewViewController: UICollectionViewDragDelegate, UICollectionV
                   let final = orderedIDs.firstIndex(of: id) else { continue }
             coordinator.drop(item.dragItem, toItemAt: IndexPath(item: final, section: 0))
         }
+        Logger(subsystem: "com.volcrypt.OuterView", category: "TabOverview")
+            .info("didReorder commit count: \(orderedIDs.count, privacy: .public)")
         delegate?.tabOverview(self, didReorderTabs: orderedIDs)
     }
 }
