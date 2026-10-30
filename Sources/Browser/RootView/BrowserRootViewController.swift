@@ -642,6 +642,7 @@ final class BrowserRootViewController: UIViewController {
     private func handleSnapshot(_ snapshot: WebPageSnapshot, for id: UUID) {
         var didChange = false
         var didCommitNewURL = false
+        var didTitleChange = false
         var isPrivateTab = false
         // Rejected schemes never persist: neither the in-memory strip nor the
         // stores may adopt them, even if the web view somehow reports one.
@@ -664,6 +665,7 @@ final class BrowserRootViewController: UIViewController {
             } else if record.url != snapshot.url || record.title != snapshot.title {
                 didChange = true
                 didCommitNewURL = record.url != snapshot.url && snapshot.url != nil
+                didTitleChange = record.title != snapshot.title
                 record.url = snapshot.url
                 record.title = snapshot.title
                 record.lastActiveAt = Date()
@@ -682,6 +684,18 @@ final class BrowserRootViewController: UIViewController {
                 try historyStore?.record(visit: PageVisit(url: url, title: title))
             } catch {
                 logPersistenceError(error, operation: "recordVisit")
+            }
+        }
+        if !didCommitNewURL, didTitleChange, !isPrivateTab, snapshot.lastError == nil, let url = snapshot.url, URLNormalizer.isLoadable(url),
+           tabs.first(where: { $0.id == id })?.url == url,
+           let trimmed = snapshot.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !trimmed.isEmpty
+        {
+            let title = HostFormatter.displayTitle(url: url, title: trimmed)
+            do {
+                try historyStore?.refreshTitle(url: url, title: title)
+            } catch {
+                logPersistenceError(error, operation: "refreshHistoryTitle")
             }
         }
         if isOverviewVisible, didChange {
@@ -713,6 +727,7 @@ final class BrowserRootViewController: UIViewController {
     }
 
     func updateStartPageContent(with snapshot: WebPageSnapshot? = nil) {
+        startPageView?.viewModel.reload()
         let snapshot = snapshot ?? peekActivePage()?.snapshot
         startPageView?.updateActivePage(url: snapshot?.url, title: snapshot?.title)
         startPageView?.reload()
@@ -777,7 +792,6 @@ final class BrowserRootViewController: UIViewController {
     /// Re-reads history-backed start page content after Settings clears the
     /// store so the recents list empties immediately.
     func refreshStartPageAfterHistoryClear() {
-        startPageView?.viewModel.reload()
         updateStartPageContent()
     }
 

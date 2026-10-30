@@ -5,11 +5,15 @@
 
 import CoreGraphics
 
-/// Pure, value-semantic owner of rail × pill visibility. Tracks the 24 pt
-/// down-scroll and 32 pt up-scroll accumulators locally and reports only the
-/// chrome fields that actually changed; all layout and animation stays in
-/// the view layer.
+/// Pure, value-semantic owner of rail × pill visibility. The 8 pt rail-hide
+/// and 24 pt pill-minify share one down-scroll accumulator; the 32 pt reveal
+/// uses the up-scroll accumulator. Reports only the chrome fields that
+/// actually changed; all layout and animation stays in the view layer.
 struct ChromeStateController: Sendable {
+    /// Accumulated down-scroll distance, in points, required to hide the
+    /// rail. Keeps small drifts and finger jitter from collapsing it.
+    static let hideThreshold: CGFloat = 8
+
     /// Accumulated down-scroll distance, in points, required to minify the
     /// pill.
     static let minifyThreshold: CGFloat = 24
@@ -66,20 +70,17 @@ struct ChromeStateController: Sendable {
 
     private mutating func handleDragBegan() -> ChromeCommands {
         guard state.pill != .editing else { return .noChange }
+        // Finger-down never hides chrome on its own; it only resets the
+        // gesture accumulators for the fresh drag.
         downOffsetAccumulator = 0
         upOffsetAccumulator = 0
-        var commands = ChromeCommands()
-        if state.rail != .hidden {
-            state.rail = .hidden
-            commands.rail = .hidden
-        }
-        return commands
+        return .noChange
     }
 
     private mutating func applyDownScroll(_ offsetDelta: CGFloat, commands: inout ChromeCommands) {
         downOffsetAccumulator += offsetDelta
         upOffsetAccumulator = 0
-        if state.rail != .hidden {
+        if downOffsetAccumulator >= Self.hideThreshold, state.rail != .hidden {
             state.rail = .hidden
             commands.rail = .hidden
         }

@@ -80,11 +80,14 @@ final class StartPageViewModel {
     }
 
     static func sortedRecents(_ entries: [HistoryEntry]) -> [HistoryEntry] {
-        // Dedupe key is the exact absoluteString; the first (newest) visit wins.
+        // Host dedupe: the first (newest) visit keeps the row; www. folds
+        // onto the bare host while other subdomains stay distinct.
         var seen = Set<String>()
         var unique: [HistoryEntry] = []
         unique.reserveCapacity(entries.count)
-        for entry in entries.sorted(by: { $0.visitedAt > $1.visitedAt }) where seen.insert(entry.url.absoluteString).inserted {
+        for entry in entries.sorted(by: { $0.visitedAt > $1.visitedAt }) {
+            let key = HostFormatter.normalizedHost(HostFormatter.host(of: entry.url))
+            guard seen.insert(key).inserted else { continue }
             unique.append(entry)
         }
         return Array(unique.prefix(Self.recentsLimit))

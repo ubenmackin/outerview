@@ -36,8 +36,14 @@ final class ChromeStateControllerTests: XCTestCase {
         ),
         // Scroll down
         MatrixCase(
-            label: "first scrolling pixel hides rail only",
-            inputs: [down(1)],
+            label: "7 pt of down-scroll keeps the rail",
+            inputs: [down(7)],
+            rail: .visible,
+            pill: .expanded
+        ),
+        MatrixCase(
+            label: "accumulated 8 pt hides the rail only",
+            inputs: [down(4), down(4)],
             rail: .hidden,
             pill: .expanded
         ),
@@ -86,9 +92,9 @@ final class ChromeStateControllerTests: XCTestCase {
         ),
         // Drag start
         MatrixCase(
-            label: "dragBegan hides the rail while keeping the pill expanded",
+            label: "dragBegan at rest keeps visible chrome",
             inputs: [.dragBegan],
-            rail: .hidden,
+            rail: .visible,
             pill: .expanded
         ),
         MatrixCase(
@@ -98,9 +104,9 @@ final class ChromeStateControllerTests: XCTestCase {
             pill: .minified
         ),
         MatrixCase(
-            label: "dragBegan after reveal hides the rail again",
+            label: "dragBegan after reveal keeps the rail visible",
             inputs: [down(30), up(32), .dragBegan, up(10), .dragBegan],
-            rail: .hidden,
+            rail: .visible,
             pill: .expanded
         ),
         MatrixCase(
@@ -218,7 +224,7 @@ final class ChromeStateControllerTests: XCTestCase {
         ),
         MatrixCase(
             label: "repeat same-direction scrolls below the threshold keep the pill expanded",
-            inputs: [down(1), down(1), down(1)],
+            inputs: [down(3), down(3), down(3)],
             rail: .hidden,
             pill: .expanded
         ),
@@ -301,7 +307,8 @@ final class ChromeStateControllerTests: XCTestCase {
     }
 
     func testCommandsCarryOnlyChangedFields() {
-        XCTAssertEqual(finalCommands(after: [Self.down(1)]), ChromeCommands(rail: .hidden, pill: nil))
+        XCTAssertEqual(finalCommands(after: [Self.down(7)]), .noChange)
+        XCTAssertEqual(finalCommands(after: [Self.down(8)]), ChromeCommands(rail: .hidden, pill: nil))
         XCTAssertEqual(finalCommands(after: [Self.down(30)]), ChromeCommands(rail: .hidden, pill: .minified))
         XCTAssertEqual(finalCommands(after: [Self.down(30), Self.down(5)]), .noChange)
 
@@ -316,32 +323,37 @@ final class ChromeStateControllerTests: XCTestCase {
         )
         XCTAssertEqual(
             finalCommands(after: [Self.down(24), Self.up(32), Self.down(7)]),
+            .noChange
+        )
+        XCTAssertEqual(
+            finalCommands(after: [Self.down(24), Self.up(32), Self.down(8)]),
             ChromeCommands(rail: .hidden, pill: nil)
         )
         XCTAssertEqual(finalCommands(after: [Self.down(30), Self.up(32), Self.up(5)]), .noChange)
         XCTAssertEqual(finalCommands(after: [Self.down(30), Self.up(32), Self.up(16)]), .noChange)
         XCTAssertEqual(
-            finalCommands(after: [Self.down(30), Self.up(32), Self.down(1)]),
+            finalCommands(after: [Self.down(30), Self.up(32), Self.down(8)]),
             ChromeCommands(rail: .hidden, pill: nil)
         )
         XCTAssertEqual(
-            finalCommands(after: [Self.down(30), Self.up(32), Self.down(1), Self.up(31)]),
+            finalCommands(after: [Self.down(30), Self.up(32), Self.down(8), Self.up(31)]),
             .noChange
         )
         XCTAssertEqual(
-            finalState(after: [Self.down(30), Self.up(32), Self.down(1)]),
+            finalState(after: [Self.down(30), Self.up(32), Self.down(8)]),
             ChromeState(rail: .hidden, pill: .expanded)
         )
         XCTAssertEqual(
-            finalState(after: [Self.down(30), Self.up(32), Self.down(1), Self.up(31)]),
+            finalState(after: [Self.down(30), Self.up(32), Self.down(8), Self.up(31)]),
             ChromeState(rail: .hidden, pill: .expanded)
         )
         XCTAssertEqual(finalCommands(after: [Self.up(1)]), .noChange)
         XCTAssertEqual(finalCommands(after: [Self.up(40)]), .noChange)
 
-        XCTAssertEqual(finalCommands(after: [.dragBegan]), ChromeCommands(rail: .hidden, pill: nil))
+        XCTAssertEqual(finalCommands(after: [.dragBegan]), .noChange)
         XCTAssertEqual(finalCommands(after: [.dragBegan, .dragBegan]), .noChange)
         XCTAssertEqual(finalCommands(after: [.editBegan, .dragBegan]), .noChange)
+        XCTAssertEqual(finalCommands(after: [Self.down(30), Self.up(32), .dragBegan]), .noChange)
         XCTAssertEqual(
             finalCommands(after: [Self.down(30), .railMenuTapped]),
             ChromeCommands(rail: .visible, pill: .expanded)
