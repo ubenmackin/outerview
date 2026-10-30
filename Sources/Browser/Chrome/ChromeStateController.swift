@@ -93,6 +93,7 @@ struct ChromeStateController: Sendable {
         downOffsetAccumulator = 0
         upOffsetAccumulator += distance
         guard upOffsetAccumulator >= Self.revealThreshold else { return }
+        upOffsetAccumulator = 0
         if state.rail != .visible {
             state.rail = .visible
             commands.rail = .visible

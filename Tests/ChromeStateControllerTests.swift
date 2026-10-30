@@ -318,6 +318,24 @@ final class ChromeStateControllerTests: XCTestCase {
             finalCommands(after: [Self.down(24), Self.up(32), Self.down(7)]),
             ChromeCommands(rail: .hidden, pill: nil)
         )
+        XCTAssertEqual(finalCommands(after: [Self.down(30), Self.up(32), Self.up(5)]), .noChange)
+        XCTAssertEqual(finalCommands(after: [Self.down(30), Self.up(32), Self.up(16)]), .noChange)
+        XCTAssertEqual(
+            finalCommands(after: [Self.down(30), Self.up(32), Self.down(1)]),
+            ChromeCommands(rail: .hidden, pill: nil)
+        )
+        XCTAssertEqual(
+            finalCommands(after: [Self.down(30), Self.up(32), Self.down(1), Self.up(31)]),
+            .noChange
+        )
+        XCTAssertEqual(
+            finalState(after: [Self.down(30), Self.up(32), Self.down(1)]),
+            ChromeState(rail: .hidden, pill: .expanded)
+        )
+        XCTAssertEqual(
+            finalState(after: [Self.down(30), Self.up(32), Self.down(1), Self.up(31)]),
+            ChromeState(rail: .hidden, pill: .expanded)
+        )
         XCTAssertEqual(finalCommands(after: [Self.up(1)]), .noChange)
         XCTAssertEqual(finalCommands(after: [Self.up(40)]), .noChange)
 
