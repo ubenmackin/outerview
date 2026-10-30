@@ -106,10 +106,12 @@ enum ElementContextMenu {
         baseURL: URL?
     ) -> ElementContextKind? {
         if let linkURL {
+            guard URLNormalizer.isLoadable(linkURL) else { return nil }
             return .link(url: linkURL)
         }
         guard let imageURLString,
-              let url = absoluteURL(for: imageURLString, baseURL: baseURL)
+              let url = absoluteURL(for: imageURLString, baseURL: baseURL),
+              URLNormalizer.isLoadable(url)
         else { return nil }
         return .image(url: url)
     }
@@ -117,9 +119,13 @@ enum ElementContextMenu {
     static func absoluteURL(for source: String, baseURL: URL?) -> URL? {
         guard !source.isEmpty, let parsed = URL(string: source) else { return nil }
         if let scheme = parsed.scheme, !scheme.isEmpty {
+            guard URLNormalizer.isLoadable(parsed) else { return nil }
             return parsed
         }
-        guard let baseURL else { return nil }
-        return URL(string: source, relativeTo: baseURL)?.absoluteURL
+        guard let baseURL,
+              let resolved = URL(string: source, relativeTo: baseURL)?.absoluteURL,
+              URLNormalizer.isLoadable(resolved)
+        else { return nil }
+        return resolved
     }
 }

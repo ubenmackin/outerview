@@ -275,6 +275,13 @@ final class SideRailView: UIView {
     /// Called when the bottom-right quick menu button is tapped.
     var onQuickMenuTapped: (() -> Void)?
 
+    /// Last rail state actually applied through `setRailState`. A repeat
+    /// request for the same rail skips the spring so buttons never restart.
+    private(set) var lastAppliedRail: RailState?
+
+    /// Number of times the appear/disappear spring body actually ran.
+    private(set) var applyCount: Int = 0
+
     private let topStack = UIStackView()
     private let bottomStack = UIStackView()
     private lazy var quickMenuButton: RailButton = {
@@ -342,6 +349,7 @@ final class SideRailView: UIView {
     }
 
     func setRailState(_ rail: RailState, pill _: PillState, animated: Bool) {
+        guard rail != lastAppliedRail else { return }
         let update = { [weak self] in
             guard let self else { return }
             // Quick menu appears as soon as the rail collapses so a restore
@@ -373,6 +381,8 @@ final class SideRailView: UIView {
         } else {
             update()
         }
+        lastAppliedRail = rail
+        applyCount += 1
     }
 
     // MARK: - Private

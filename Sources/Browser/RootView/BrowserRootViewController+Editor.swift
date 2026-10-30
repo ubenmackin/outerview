@@ -8,6 +8,34 @@ import UIKit
 extension BrowserRootViewController {
     // MARK: - Editor
 
+    enum PillTapRoute: Sendable, Equatable { case restoreChrome, beginEditing }
+
+    static func routePillTap(pill: PillState, isEditing: Bool) -> PillTapRoute? {
+        if isEditing {
+            return nil
+        }
+        switch pill {
+        case .editing:
+            return nil
+        case .minified:
+            return .restoreChrome
+        case .expanded:
+            return .beginEditing
+        }
+    }
+
+    func handlePillTap() {
+        guard let route = Self.routePillTap(pill: chromeController.state.pill, isEditing: isEditingAddress) else {
+            return
+        }
+        switch route {
+        case .restoreChrome:
+            applyBrowsingResumed(animated: true)
+        case .beginEditing:
+            beginEditing()
+        }
+    }
+
     func beginEditing() {
         let engine = currentSearchEngine()
         configureEditor(text: editorInitialText(), engine: engine)

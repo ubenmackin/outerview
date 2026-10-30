@@ -42,7 +42,9 @@ final class StartPageViewModel {
 
     func reload() {
         favorites = Self.sortedFavorites(bookmarkStore.fetchFavorites())
-        recents = Self.sortedRecents(historyStore.fetchRecents(limit: Self.recentsLimit))
+        // Fetch beyond the display cap so unique rows hidden behind a
+        // duplicated head still surface after dedupe.
+        recents = Self.sortedRecents(historyStore.fetchAll(limit: 200))
     }
 
     func updateActivePage(url: URL?, title: String?) {
@@ -78,7 +80,14 @@ final class StartPageViewModel {
     }
 
     static func sortedRecents(_ entries: [HistoryEntry]) -> [HistoryEntry] {
-        entries.sorted { $0.visitedAt > $1.visitedAt }
+        // Dedupe key is the exact absoluteString; the first (newest) visit wins.
+        var seen = Set<String>()
+        var unique: [HistoryEntry] = []
+        unique.reserveCapacity(entries.count)
+        for entry in entries.sorted(by: { $0.visitedAt > $1.visitedAt }) where seen.insert(entry.url.absoluteString).inserted {
+            unique.append(entry)
+        }
+        return Array(unique.prefix(Self.recentsLimit))
     }
 
     static func isFavoritesEmpty(_ favorites: [Bookmark]) -> Bool {

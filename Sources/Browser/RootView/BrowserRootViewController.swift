@@ -331,7 +331,7 @@ final class BrowserRootViewController: UIViewController {
             pillLeadingConstraint,
             pillTrailingConstraint
         ])
-        pillView.onPillTap = { [weak self] in self?.beginEditing() }
+        pillView.onPillTap = { [weak self] in self?.handlePillTap() }
         pillView.onPageMenu = { [weak self] in self?.showPageMenu() }
         pillView.pageMenuProvider = { [weak self] in
             self?.makePageMenu() ?? UIMenu()
@@ -838,6 +838,7 @@ final class BrowserRootViewController: UIViewController {
     }
 
     private func saveImageToPhotos(from url: URL) {
+        guard URLNormalizer.isLoadable(url) else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
