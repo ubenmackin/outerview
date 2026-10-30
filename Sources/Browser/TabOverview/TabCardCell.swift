@@ -5,23 +5,65 @@
 
 import UIKit
 
+/// Pan gesture recognizer that differentiates immediate horizontal swipe-to-dismiss
+/// from a stationary hold intended for long-press menus or drag-reordering.
+@MainActor
+final class CardSwipePanGestureRecognizer: UIPanGestureRecognizer {
+    private var touchStartTime: TimeInterval = 0
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        touchStartTime = CACurrentMediaTime()
+        super.touchesBegan(touches, with: event)
+    }
+
+    override func reset() {
+        super.reset()
+        touchStartTime = 0
+    }
+
+    var isImmediateSwipe: Bool {
+        guard touchStartTime > 0 else { return true }
+        return (CACurrentMediaTime() - touchStartTime) < 0.30
+    }
+}
+
 /// Single tab card: portrait-ratio preview above a favicon + title + host
 /// strip. Previews arrive asynchronously from the owner's snapshot provider;
 /// until then a host-tinted placeholder keeps the grid stable. Closing is a
-/// visible 28 pt xmark or a velocity-gated flick along the dominant axis;
-/// slow drags are never claimed, so grid scrolling is unaffected.
+/// visible 28 pt xmark or a horizontal swipe to remove (slow drag past threshold
+/// or fast flick towards edge).
 @MainActor
 final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     static let reuseIdentifier = "TabCardCell"
     static let cornerRadius: CGFloat = 16
     static let previewAspectHeightOverWidth: CGFloat = 4.0 / 3.0
 
-    /// Flick gate: only fast dominant-axis motions claim the touch, so the
-    /// collection's pan keeps slow drags. Vertical claims still require a
-    /// steep angle; horizontal claims need only dominant speed.
-    nonisolated static let flickBeginVelocity: CGFloat = 1000
-    nonisolated static let flickDismissDistance: CGFloat = 96
-    nonisolated static let flickDismissVelocity: CGFloat = 1400
+    nonisolated static let swipeDismissDistance: CGFloat = 120
+    nonisolated static let swipeDismissVelocity: CGFloat = 800
+
+    /// Determines if a horizontal swipe should dismiss the card.
+    /// Requires far drag (>= 120 pt or 60% of card width) or fast flick with at least 50 pt travel.
+    nonisolated static func shouldDismissSwipe(
+        translationX: CGFloat,
+        velocityX: CGFloat,
+        cardWidth: CGFloat
+    ) -> Bool {
+        let distanceThreshold = max(swipeDismissDistance, cardWidth * 0.60)
+        if abs(translationX) >= distanceThreshold {
+            return true
+        }
+        if abs(velocityX) >= swipeDismissVelocity, abs(translationX) >= 50 {
+            return (translationX > 0 && velocityX > 0) || (translationX < 0 && velocityX < 0)
+        }
+        return false
+    }
+
+    /// Pure helper to check if a gesture qualifies as an immediate horizontal swipe.
+    /// Stationary holds (isImmediate == false) and vertical dominant gestures are rejected,
+    /// guaranteeing long-press reorder and vertical scrolling never conflict.
+    nonisolated static func shouldBeginSwipe(isImmediate: Bool, velocity: CGPoint) -> Bool {
+        isImmediate && abs(velocity.x) > abs(velocity.y) * 1.2
+    }
 
     /// Deterministic tint for the snapshot placeholder so the same host
     /// always renders the same muted hue.
@@ -31,42 +73,11 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         return UIColor(hue: hue, saturation: 0.25, brightness: 0.92, alpha: 1.0)
     }
 
-    nonisolated static func shouldBeginCardFlick(velocity: CGPoint) -> Bool {
-        let ax = abs(velocity.x)
-        let ay = abs(velocity.y)
-        if ax > ay {
-            return ax >= flickBeginVelocity
-        }
-        return ay >= flickBeginVelocity && ay > ax * 1.4
-    }
-
-    nonisolated static func shouldClaimFlick(velocity: CGPoint, alreadyClaimed: Bool) -> Bool {
-        alreadyClaimed || shouldBeginCardFlick(velocity: velocity)
-    }
-
-    private nonisolated static func isHorizontalFlick(translation: CGPoint, velocity: CGPoint) -> Bool {
-        // Translation decides when the axes differ; a tied translation
-        // (including rest) falls back to velocity so zero-travel flings
-        // still pick a direction.
-        let tx = abs(translation.x)
-        let ty = abs(translation.y)
-        if tx != ty {
-            return tx > ty
-        }
-        return abs(velocity.x) > abs(velocity.y)
-    }
-
-    nonisolated static func shouldDismissFlick(translation: CGPoint, velocity: CGPoint) -> Bool {
-        if isHorizontalFlick(translation: translation, velocity: velocity) {
-            return abs(translation.x) >= flickDismissDistance || abs(velocity.x) >= flickDismissVelocity
-        }
-        return abs(translation.y) >= flickDismissDistance || abs(velocity.y) >= flickDismissVelocity
-    }
-
     var onClose: (() -> Void)?
 
-    private var flickClaimed = false
-
+    /// Internal container holding all card content. Transforming this view ensures
+    /// UICollectionViewCell layout passes do not reset or conflict with swipe animations.
+    private let cardContainer = UIView()
     private let previewContainer = UIView()
     private let previewImageView = UIImageView()
     private let placeholderLabel = UILabel()
@@ -75,7 +86,7 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private let titleLabel = UILabel()
     private let hostLabel = UILabel()
     private let closeButton = UIButton(type: .system)
-    private let cardFlickPan = UIPanGestureRecognizer()
+    private let swipePanRecognizer = CardSwipePanGestureRecognizer()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -89,15 +100,16 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        flickClaimed = false
         onClose = nil
         previewImageView.image = nil
         previewImageView.isHidden = true
         titleLabel.text = nil
         hostLabel.text = nil
-        contentView.layer.removeAllAnimations()
-        contentView.transform = .identity
-        contentView.alpha = 1
+        cardContainer.layer.removeAllAnimations()
+        cardContainer.transform = .identity
+        cardContainer.alpha = 1
+        contentView.layer.borderWidth = 0
+        contentView.layer.borderColor = nil
         closeButton.transform = .identity
         closeButton.alpha = 1
     }
@@ -130,8 +142,10 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             placeholderLabel.text = initial.isEmpty ? "◌" : String(initial)
         }
 
-        contentView.layer.borderWidth = isSelected ? 2 : 0
-        contentView.layer.borderColor = isSelected ? tintColor.cgColor : nil
+        // No blue outline on selection
+        contentView.layer.borderWidth = 0
+        contentView.layer.borderColor = nil
+
         accessibilityTraits = isSelected ? [.button, .selected] : [.button]
         let displayTitle = titleLabel.text ?? "New Tab"
         if let host, !host.isEmpty, !displayTitle.contains(host) {
@@ -147,11 +161,17 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private func setup() {
         backgroundColor = .clear
         contentView.backgroundColor = .clear
+        clipsToBounds = false
+        contentView.clipsToBounds = false
+
+        cardContainer.translatesAutoresizingMaskIntoConstraints = false
+        cardContainer.clipsToBounds = false
+        contentView.addSubview(cardContainer)
 
         previewContainer.layer.cornerRadius = Self.cornerRadius
         previewContainer.clipsToBounds = true
         previewContainer.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(previewContainer)
+        cardContainer.addSubview(previewContainer)
 
         previewImageView.contentMode = .scaleAspectFill
         previewImageView.clipsToBounds = true
@@ -220,12 +240,17 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         stripStack.translatesAutoresizingMaskIntoConstraints = false
         stripStack.addArrangedSubview(faviconView)
         stripStack.addArrangedSubview(textStack)
-        contentView.addSubview(stripStack)
+        cardContainer.addSubview(stripStack)
 
         NSLayoutConstraint.activate([
-            previewContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            previewContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            previewContainer.topAnchor.constraint(equalTo: contentView.topAnchor),
+            cardContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            cardContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            cardContainer.topAnchor.constraint(equalTo: contentView.topAnchor),
+            cardContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+
+            previewContainer.leadingAnchor.constraint(equalTo: cardContainer.leadingAnchor),
+            previewContainer.trailingAnchor.constraint(equalTo: cardContainer.trailingAnchor),
+            previewContainer.topAnchor.constraint(equalTo: cardContainer.topAnchor),
             previewImageView.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor),
             previewImageView.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor),
             previewImageView.topAnchor.constraint(equalTo: previewContainer.topAnchor),
@@ -236,19 +261,17 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             closeButton.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor, constant: 6),
             closeButton.widthAnchor.constraint(equalToConstant: 28),
             closeButton.heightAnchor.constraint(equalToConstant: 28),
-            stripStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 4),
-            stripStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -4),
+            stripStack.leadingAnchor.constraint(equalTo: cardContainer.leadingAnchor, constant: 4),
+            stripStack.trailingAnchor.constraint(equalTo: cardContainer.trailingAnchor, constant: -4),
             stripStack.topAnchor.constraint(equalTo: previewContainer.bottomAnchor, constant: 6),
-            stripStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor)
+            stripStack.bottomAnchor.constraint(lessThanOrEqualTo: cardContainer.bottomAnchor)
         ])
 
-        // Simultaneous with the collection's pan lets the flick claim an
-        // already-scrolling touch; the grid's scroll recognizer is disabled
-        // only after the flick latches on speed.
-        cardFlickPan.delegate = self
-        cardFlickPan.cancelsTouchesInView = false
-        cardFlickPan.addTarget(self, action: #selector(handlePan(_:)))
-        contentView.addGestureRecognizer(cardFlickPan)
+        swipePanRecognizer.delegate = self
+        swipePanRecognizer.cancelsTouchesInView = true
+        swipePanRecognizer.maximumNumberOfTouches = 1
+        swipePanRecognizer.addTarget(self, action: #selector(handleSwipePan(_:)))
+        contentView.addGestureRecognizer(swipePanRecognizer)
 
         isAccessibilityElement = true
         accessibilityTraits = .button
@@ -260,40 +283,41 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         ]
     }
 
-    @objc private func handlePan(_ pan: UIPanGestureRecognizer) {
-        let collectionPan = (superview as? UICollectionView)?.panGestureRecognizer
+    @objc private func handleSwipePan(_ pan: UIPanGestureRecognizer) {
         switch pan.state {
         case .began:
-            flickClaimed = false
+            break
         case .changed:
-            let velocity = pan.velocity(in: self)
-            guard Self.shouldClaimFlick(velocity: velocity, alreadyClaimed: flickClaimed) else { return }
-            flickClaimed = true
-            collectionPan?.isEnabled = false
-            let maxDrag: CGFloat = 240
-            let raw = pan.translation(in: self)
-            let tx = min(maxDrag, max(-maxDrag, raw.x))
-            let ty = min(maxDrag, max(-maxDrag, raw.y))
-            contentView.transform = CGAffineTransform(translationX: tx, y: ty)
-            contentView.alpha = 1 - min(0.5, max(abs(tx), abs(ty)) / maxDrag)
-        case .ended, .cancelled:
-            collectionPan?.isEnabled = true
-            if flickClaimed {
-                flickClaimed = false
-                finishFlick(pan)
-            } else {
-                contentView.transform = .identity
-                contentView.alpha = 1
+            let tx = pan.translation(in: self).x
+            cardContainer.transform = CGAffineTransform(translationX: tx, y: 0)
+            let cardWidth = bounds.width > 0 ? bounds.width : 160
+            let progress = min(1.0, abs(tx) / cardWidth)
+            // Subtle dimming during swipe; card stays clearly visible
+            cardContainer.alpha = max(0.85, 1.0 - (progress * 0.15))
+        case .ended:
+            finishSwipe(pan)
+        case .cancelled, .failed:
+            UIView.animate(
+                withDuration: 0.25,
+                delay: 0,
+                usingSpringWithDamping: 0.8,
+                initialSpringVelocity: 0,
+                options: [.beginFromCurrentState]
+            ) {
+                self.cardContainer.transform = .identity
+                self.cardContainer.alpha = 1
             }
         default:
-            collectionPan?.isEnabled = true
+            break
         }
     }
 
-    private func finishFlick(_ pan: UIPanGestureRecognizer) {
-        let translation = pan.translation(in: self)
-        let velocity = pan.velocity(in: self)
-        guard Self.shouldDismissFlick(translation: translation, velocity: velocity) else {
+    private func finishSwipe(_ pan: UIPanGestureRecognizer) {
+        let tx = pan.translation(in: self).x
+        let vx = pan.velocity(in: self).x
+        let cardWidth = bounds.width > 0 ? bounds.width : 160
+
+        guard Self.shouldDismissSwipe(translationX: tx, velocityX: vx, cardWidth: cardWidth) else {
             UIView.animate(
                 withDuration: 0.28,
                 delay: 0,
@@ -301,30 +325,25 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
                 initialSpringVelocity: 0,
                 options: [.beginFromCurrentState]
             ) {
-                self.contentView.transform = .identity
-                self.contentView.alpha = 1
+                self.cardContainer.transform = .identity
+                self.cardContainer.alpha = 1
             }
             return
         }
-        // Zero-travel dismissals come from the velocity leg, so fall back to the velocity sign.
-        let isHorizontal = Self.isHorizontalFlick(translation: translation, velocity: velocity)
-        let exitDistance: CGFloat = 220
-        let direction: CGFloat = if isHorizontal {
-            translation.x != 0 ? (translation.x < 0 ? -1 : 1) : (velocity.x < 0 ? -1 : 1)
-        } else {
-            translation.y != 0 ? (translation.y < 0 ? -1 : 1) : (velocity.y < 0 ? -1 : 1)
-        }
-        let exit = exitDistance * direction
+
+        let direction: CGFloat = (tx != 0 ? tx : vx) > 0 ? 1 : -1
+        let exitDistance = cardWidth + 120
         UIView.animate(
-            withDuration: 0.18,
+            withDuration: 0.2,
+            delay: 0,
+            options: [.curveEaseOut],
             animations: {
-                self.contentView.transform = CGAffineTransform(
-                    translationX: isHorizontal ? exit : 0,
-                    y: isHorizontal ? 0 : exit
-                )
-                self.contentView.alpha = 0
+                self.cardContainer.transform = CGAffineTransform(translationX: exitDistance * direction, y: 0)
+                self.cardContainer.alpha = 0
             },
-            completion: { _ in self.onClose?() }
+            completion: { _ in
+                self.onClose?()
+            }
         )
     }
 
@@ -339,8 +358,12 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         )
     }
 
-    override func gestureRecognizerShouldBegin(_: UIGestureRecognizer) -> Bool {
-        true
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if let swipePan = gestureRecognizer as? CardSwipePanGestureRecognizer {
+            let velocity = swipePan.velocity(in: self)
+            return Self.shouldBeginSwipe(isImmediate: swipePan.isImmediateSwipe, velocity: velocity)
+        }
+        return true
     }
 }
 
@@ -351,6 +374,7 @@ extension TabCardCell {
         _: UIGestureRecognizer,
         shouldRecognizeSimultaneouslyWith _: UIGestureRecognizer
     ) -> Bool {
-        true
+        // Horizontal swipe locks exclusivity once begun
+        false
     }
 }

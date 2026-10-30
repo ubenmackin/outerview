@@ -12,42 +12,23 @@ enum PickerSelection: Equatable, Sendable {
     case group(UUID)
 }
 
-/// Single bottom pill owning tap, long-press, and scrub-to-select. Rests as
-/// one compact pill; a horizontal drag past threshold crossfades to the item
-/// strip, tracks the nearest pill, and collapses on release.
+/// Safari-exact bottom tab group segmented picker bar.
+///
+/// Features matching Safari.png:
+/// - Continuous floating blurred capsule container at the bottom center.
+/// - Segmented options: "Private" and "X Tabs" (plus any named tab groups) side-by-side.
+/// - Active sliding pill: A prominent rounded pill sits behind the currently active segment.
+/// - Tap active segment (the pill): Opens the Tab Groups management sheet with options.
+/// - Tap inactive segment: Smoothly slides the pill over and switches mode/group.
+/// - Drag / Pan: Smoothly slides the pill horizontally between segments with haptics, snapping on release.
 @MainActor
-final class TabGroupPickerBar: UIView {
+final class TabGroupPickerBar: UIView, UIGestureRecognizerDelegate {
     var onTap: (() -> Void)?
-    var onLongPress: (() -> Void)?
     var onScrubSelect: ((PickerSelection) -> Void)?
     var onScrubEnd: ((PickerSelection) -> Void)?
 
-    nonisolated static let scrubThreshold: CGFloat = 10
+    // MARK: - Pure Derivation Helpers
 
-    private let backgroundView = UIVisualEffectView(effect: GlassEffect.make())
-    private let compactLabel = UILabel()
-    private let stripScroll = UIScrollView()
-    private let stripStack = UIStackView()
-    private let indicatorView = UIView()
-
-    private var currentState = TabGroupsSheetState(
-        isPrivate: false,
-        selectedGroupID: nil,
-        standardCount: 0,
-        privateCount: 0,
-        groups: []
-    )
-    private var itemSelections: [PickerSelection] = []
-    private var itemButtons: [UIButton] = []
-    private var activeIndex: Int?
-    private var isScrubbing = false
-    private var scrubCurrentIndex: Int?
-
-    private let tapRecognizer = UITapGestureRecognizer()
-    private let longPressRecognizer = UILongPressGestureRecognizer()
-    private let scrubPan = UIPanGestureRecognizer()
-
-    /// Pure derivation: private wins, then a known group id, else All.
     nonisolated static func selection(
         isPrivate: Bool,
         selectedGroupID: UUID?,
@@ -62,8 +43,6 @@ final class TabGroupPickerBar: UIView {
         return .allStandard
     }
 
-    /// Compact rest title, composed from the shared segments builder so the
-    /// pill text can never drift from the sheet counts.
     nonisolated static func compactSegments(for state: TabGroupsSheetState) -> (modeTitle: String, countTitle: String) {
         let mode: TabOverviewMode = state.isPrivate ? .privateMode : .standard
         let count = state.isPrivate ? state.privateCount : state.standardCount
@@ -78,29 +57,45 @@ final class TabGroupPickerBar: UIView {
         return "\(segments.modeTitle) · \(segments.countTitle)"
     }
 
-    nonisolated static func compactAttributedTitle(for state: TabGroupsSheetState) -> NSAttributedString {
-        let segments = compactSegments(for: state)
-        let font = UIFont.systemFont(ofSize: 16, weight: .semibold)
-        let secondary: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: UIColor.secondaryLabel
-        ]
-        let attributed = NSMutableAttributedString(string: segments.modeTitle, attributes: secondary)
-        attributed.append(NSAttributedString(string: " · ", attributes: secondary))
-        attributed.append(NSAttributedString(
-            string: segments.countTitle,
-            attributes: [.font: font, .foregroundColor: UIColor.label]
-        ))
-        return attributed
-    }
+    // MARK: - Subviews
+
+    private let backgroundView = UIVisualEffectView(effect: GlassEffect.make())
+    let slidingPillView = UIView()
+    let segmentStack = UIStackView()
+
+    // MARK: - State
+
+    private var currentState = TabGroupsSheetState(
+        isPrivate: false,
+        selectedGroupID: nil,
+        standardCount: 0,
+        privateCount: 0,
+        groups: []
+    )
+    private(set) var segmentSelections: [PickerSelection] = []
+    private(set) var segmentButtons: [UIButton] = []
+    private(set) var activeIndex = 0
+    private var isPanning = false
+    private var panStartIndex = 0
+    private var lastScrubNotified: PickerSelection?
+    private let feedbackGenerator = UISelectionFeedbackGenerator()
+
+    // MARK: - Gestures
+
+    private let panGesture = UIPanGestureRecognizer()
+
+    // MARK: - Lifecycle
 
     override var intrinsicContentSize: CGSize {
-        CGSize(width: UIView.noIntrinsicMetric, height: 52)
+        let stackWidth = segmentStack.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width
+        let minWidth: CGFloat = 160
+        return CGSize(width: max(minWidth, stackWidth + 8), height: 44)
     }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        setup()
+        setupHierarchy()
+        setupGestures()
     }
 
     @available(*, unavailable)
@@ -110,78 +105,55 @@ final class TabGroupPickerBar: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        backgroundView.layer.cornerRadius = bounds.height / 2
+        segmentStack.layoutIfNeeded()
+        let radius = bounds.height / 2
+        backgroundView.layer.cornerRadius = radius
         backgroundView.clipsToBounds = true
-        layer.cornerRadius = bounds.height / 2
+        layer.cornerRadius = radius
         clipsToBounds = true
-        guard let index = activeIndex, index < itemButtons.count else { return }
-        let button = itemButtons[index]
-        let target = button.convert(button.bounds, to: stripScroll)
-        guard target.width > 0, indicatorView.frame != target else { return }
-        indicatorView.frame = target
-        indicatorView.layer.cornerRadius = target.height / 2
+
+        if !isPanning, activeIndex < segmentButtons.count {
+            positionPill(at: activeIndex, animated: false)
+        }
     }
+
+    // MARK: - Public Render
 
     func render(state: TabGroupsSheetState) {
         currentState = state
-        let attributed = Self.compactAttributedTitle(for: state)
-        compactLabel.attributedText = attributed
+        rebuildSegments(for: state)
+        accessibilityLabel = "Tab groups picker"
         accessibilityValue = Self.compactTitle(for: state)
-        rebuildStrip(for: state)
+        accessibilityHint = "Tap selected pill for options, tap another segment or drag to switch"
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
     }
 
-    // MARK: - Private
+    // MARK: - Setup
 
-    private func setup() {
+    private func setupHierarchy() {
+        backgroundColor = .clear
+
         backgroundView.translatesAutoresizingMaskIntoConstraints = false
         backgroundView.isUserInteractionEnabled = false
         addSubview(backgroundView)
 
-        compactLabel.textAlignment = .center
-        compactLabel.font = .systemFont(ofSize: 16, weight: .semibold)
-        compactLabel.adjustsFontForContentSizeCategory = true
-        compactLabel.isUserInteractionEnabled = false
-        compactLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(compactLabel)
+        // The sliding pill highlight behind the active segment (Safari.png style)
+        slidingPillView.backgroundColor = UIColor { trait in
+            trait.userInterfaceStyle == .dark
+                ? UIColor(white: 0.38, alpha: 0.65)
+                : UIColor(white: 1.0, alpha: 0.85)
+        }
+        slidingPillView.isUserInteractionEnabled = false
+        slidingPillView.clipsToBounds = true
+        addSubview(slidingPillView)
 
-        stripScroll.showsHorizontalScrollIndicator = false
-        stripScroll.isScrollEnabled = false
-        stripScroll.isUserInteractionEnabled = false
-        stripScroll.alpha = 0
-        stripScroll.isHidden = true
-        stripScroll.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stripScroll)
-
-        stripStack.axis = .horizontal
-        stripStack.spacing = 8
-        stripStack.alignment = .center
-        stripStack.isUserInteractionEnabled = false
-        stripStack.translatesAutoresizingMaskIntoConstraints = false
-        stripScroll.addSubview(stripStack)
-
-        indicatorView.backgroundColor = .secondarySystemFill
-        indicatorView.isUserInteractionEnabled = false
-        indicatorView.isHidden = true
-        stripScroll.addSubview(indicatorView)
-        stripScroll.sendSubviewToBack(indicatorView)
-
-        isAccessibilityElement = true
-        accessibilityIdentifier = "TabOverview.PickerBar"
-        accessibilityLabel = "Select tab group"
-        accessibilityTraits = .button
-
-        tapRecognizer.addTarget(self, action: #selector(handleTap(_:)))
-        tapRecognizer.require(toFail: longPressRecognizer)
-        addGestureRecognizer(tapRecognizer)
-
-        longPressRecognizer.minimumPressDuration = 0.5
-        longPressRecognizer.allowableMovement = 10
-        longPressRecognizer.addTarget(self, action: #selector(handleLongPress(_:)))
-        addGestureRecognizer(longPressRecognizer)
-
-        scrubPan.addTarget(self, action: #selector(handlePan(_:)))
-        scrubPan.maximumNumberOfTouches = 1
-        addGestureRecognizer(scrubPan)
+        segmentStack.axis = .horizontal
+        segmentStack.alignment = .fill
+        segmentStack.distribution = .fillProportionally
+        segmentStack.spacing = 2
+        segmentStack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(segmentStack)
 
         NSLayoutConstraint.activate([
             backgroundView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -189,45 +161,46 @@ final class TabGroupPickerBar: UIView {
             backgroundView.topAnchor.constraint(equalTo: topAnchor),
             backgroundView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            compactLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            compactLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            compactLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
-            compactLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            compactLabel.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 10),
-            compactLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -10),
+            heightAnchor.constraint(equalToConstant: 44),
 
-            stripScroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            stripScroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            stripScroll.centerYAnchor.constraint(equalTo: centerYAnchor),
-            stripScroll.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 6),
-            stripScroll.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -6),
-            stripScroll.heightAnchor.constraint(equalToConstant: 32),
-
-            stripStack.leadingAnchor.constraint(equalTo: stripScroll.contentLayoutGuide.leadingAnchor),
-            stripStack.trailingAnchor.constraint(equalTo: stripScroll.contentLayoutGuide.trailingAnchor),
-            stripStack.topAnchor.constraint(equalTo: stripScroll.contentLayoutGuide.topAnchor),
-            stripStack.bottomAnchor.constraint(equalTo: stripScroll.contentLayoutGuide.bottomAnchor),
-            stripStack.heightAnchor.constraint(equalTo: stripScroll.frameLayoutGuide.heightAnchor),
-
-            heightAnchor.constraint(equalToConstant: 52)
+            segmentStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            segmentStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            segmentStack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            segmentStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4)
         ])
+
+        isAccessibilityElement = false
+        accessibilityIdentifier = "TabOverview.PickerBar"
+        segmentStack.accessibilityIdentifier = "TabOverview.PickerBar"
     }
 
-    private func rebuildStrip(for state: TabGroupsSheetState) {
-        for button in itemButtons {
-            stripStack.removeArrangedSubview(button)
-            button.removeFromSuperview()
-        }
-        itemButtons.removeAll(keepingCapacity: true)
-        itemSelections.removeAll(keepingCapacity: true)
+    private func setupGestures() {
+        panGesture.delegate = self
+        panGesture.addTarget(self, action: #selector(handlePan(_:)))
+        panGesture.maximumNumberOfTouches = 1
+        addGestureRecognizer(panGesture)
+    }
 
-        let allTitle = "All · \(TabOverviewViewController.tabsCapsuleCountTitle(count: state.standardCount))"
-        appendStripItem(title: allTitle, selection: .allStandard)
-        let privateTitle = "Private · \(TabOverviewViewController.tabsCapsuleCountTitle(count: state.privateCount))"
-        appendStripItem(title: privateTitle, selection: .private)
-        for item in state.groups {
-            guard let id = item.id else { continue }
-            appendStripItem(title: item.title, selection: .group(id))
+    // MARK: - Segments Construction
+
+    private func rebuildSegments(for state: TabGroupsSheetState) {
+        var newSelections: [PickerSelection] = []
+        var newTitles: [String] = []
+
+        // 1. Private Segment
+        newSelections.append(.private)
+        newTitles.append("Private")
+
+        // 2. All Standard Tabs Segment (Count title e.g. "2 Tabs" or "1 Tab")
+        let standardCountTitle = TabOverviewViewController.tabsCapsuleCountTitle(count: state.standardCount)
+        newSelections.append(.allStandard)
+        newTitles.append(standardCountTitle)
+
+        // 3. Any Custom Tab Groups
+        for group in state.groups {
+            guard let id = group.id else { continue }
+            newSelections.append(.group(id))
+            newTitles.append(group.title)
         }
 
         let current = Self.selection(
@@ -235,200 +208,227 @@ final class TabGroupPickerBar: UIView {
             selectedGroupID: state.selectedGroupID,
             groups: state.groups
         )
-        activeIndex = itemSelections.firstIndex(of: current) ?? 0
-        if scrubCurrentIndex == nil || !isScrubbing {
-            updateActiveAppearance()
-            setNeedsLayout()
-            layoutIfNeeded()
-            moveIndicator(animated: false)
-            if isScrubbing {
-                scrollActiveIntoView(animated: false)
+        let newActiveIndex = newSelections.firstIndex(of: current) ?? 1
+
+        if segmentSelections == newSelections, segmentButtons.count == newTitles.count {
+            for (index, button) in segmentButtons.enumerated() {
+                let title = newTitles[index]
+                if button.configuration?.title != title {
+                    var config = button.configuration ?? UIButton.Configuration.plain()
+                    config.title = title
+                    button.configuration = config
+                }
             }
-        } else {
-            updateActiveAppearance()
-            setNeedsLayout()
-        }
-    }
-
-    private func appendStripItem(title: String, selection: PickerSelection) {
-        var configuration = UIButton.Configuration.plain()
-        configuration.title = title
-        configuration.baseForegroundColor = .secondaryLabel
-        configuration.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
-        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
-            var outgoing = incoming
-            outgoing.font = .systemFont(ofSize: 14, weight: .semibold)
-            return outgoing
-        }
-        let button = UIButton(configuration: configuration)
-        button.isUserInteractionEnabled = false
-        stripStack.addArrangedSubview(button)
-        itemButtons.append(button)
-        itemSelections.append(selection)
-    }
-
-    private func updateActiveAppearance() {
-        for (index, button) in itemButtons.enumerated() {
-            let color: UIColor = index == activeIndex ? .label : .secondaryLabel
-            if var configuration = button.configuration {
-                configuration.baseForegroundColor = color
-                button.configuration = configuration
-            } else {
-                button.tintColor = color
+            activeIndex = newActiveIndex
+            updateButtonColors()
+            if !isPanning {
+                segmentStack.layoutIfNeeded()
+                positionPill(at: activeIndex, animated: false)
             }
-        }
-    }
-
-    private func moveIndicator(animated: Bool) {
-        guard let index = activeIndex, index < itemButtons.count else {
-            indicatorView.isHidden = true
             return
         }
-        indicatorView.isHidden = false
-        let button = itemButtons[index]
-        let target = button.convert(button.bounds, to: stripScroll)
-        guard target.width > 0 else { return }
-        indicatorView.layer.cornerRadius = target.height / 2
+
+        for button in segmentButtons {
+            segmentStack.removeArrangedSubview(button)
+            button.removeFromSuperview()
+        }
+        segmentButtons.removeAll(keepingCapacity: true)
+        segmentSelections.removeAll(keepingCapacity: true)
+
+        for (selection, title) in zip(newSelections, newTitles) {
+            appendSegment(title: title, selection: selection)
+        }
+
+        activeIndex = newActiveIndex
+        updateButtonColors()
+        segmentStack.layoutIfNeeded()
+        if !isPanning {
+            positionPill(at: activeIndex, animated: false)
+        }
+    }
+
+    private func appendSegment(title: String, selection: PickerSelection) {
+        var config = UIButton.Configuration.plain()
+        config.title = title
+        config.baseForegroundColor = .secondaryLabel
+        config.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16)
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = .systemFont(ofSize: 15, weight: .semibold)
+            return outgoing
+        }
+
+        let button = UIButton(configuration: config)
+        button.addAction(UIAction { [weak self, weak button] _ in
+            guard let self, let button, let index = self.segmentButtons.firstIndex(of: button) else { return }
+            self.handleSegmentTap(at: index)
+        }, for: .touchUpInside)
+
+        segmentStack.addArrangedSubview(button)
+        segmentButtons.append(button)
+        segmentSelections.append(selection)
+    }
+
+    private func updateButtonColors() {
+        let groupValue = Self.compactTitle(for: currentState)
+        for (index, button) in segmentButtons.enumerated() {
+            let isActive = index == activeIndex
+            let color: UIColor = isActive ? .label : .secondaryLabel
+            if var config = button.configuration {
+                config.baseForegroundColor = color
+                button.configuration = config
+            }
+            button.accessibilityLabel = button.configuration?.title
+            if isActive {
+                button.accessibilityTraits = [.button, .selected]
+                button.accessibilityValue = groupValue
+                button.accessibilityHint = "Double tap for tab group options"
+            } else {
+                button.accessibilityTraits = .button
+                button.accessibilityValue = nil
+                if let title = button.configuration?.title {
+                    button.accessibilityHint = "Double tap to switch to \(title)"
+                } else {
+                    button.accessibilityHint = "Double tap to switch tabs"
+                }
+            }
+        }
+    }
+
+    private func positionPill(at index: Int, animated: Bool) {
+        guard index < segmentButtons.count else { return }
+        segmentStack.layoutIfNeeded()
+        let button = segmentButtons[index]
+        button.layoutIfNeeded()
+        let buttonFrame = button.convert(button.bounds, to: self)
+        guard buttonFrame.width > 0 else { return }
+
+        slidingPillView.layer.cornerRadius = buttonFrame.height / 2
         if animated {
-            UIView.animate(withDuration: 0.2) {
-                self.indicatorView.frame = target
+            UIView.animate(
+                withDuration: 0.28,
+                delay: 0,
+                usingSpringWithDamping: 0.82,
+                initialSpringVelocity: 0,
+                options: [.beginFromCurrentState]
+            ) {
+                self.slidingPillView.frame = buttonFrame
             }
         } else {
-            indicatorView.frame = target
+            slidingPillView.frame = buttonFrame
         }
     }
 
-    private func scrollActiveIntoView(animated: Bool) {
-        guard let index = activeIndex, index < itemButtons.count else { return }
-        let button = itemButtons[index]
-        let rect = button.convert(button.bounds, to: stripScroll)
-        stripScroll.scrollRectToVisible(rect.insetBy(dx: -20, dy: 0), animated: animated)
-    }
+    // MARK: - Interactions
 
-    private func setExpanded(_ expanded: Bool, animated: Bool = true) {
-        // Both sides stay visible through the crossfade; the faded-out
-        // side hides only in finish so collapse no longer animates a hidden view.
-        compactLabel.isHidden = false
-        stripScroll.isHidden = false
-        let changes = {
-            self.compactLabel.alpha = expanded ? 0 : 1
-            self.stripScroll.alpha = expanded ? 1 : 0
-        }
-        let finish = {
-            self.compactLabel.isHidden = expanded
-            self.stripScroll.isHidden = !expanded
-            if expanded {
-                self.scrollActiveIntoView(animated: true)
-            }
-        }
-        if animated {
-            UIView.animate(withDuration: 0.2, animations: changes) { _ in finish() }
+    private func handleSegmentTap(at index: Int) {
+        if index == activeIndex {
+            // Tapping the active pill opens the Tab Groups management sheet immediately
+            onTap?()
         } else {
-            changes()
-            finish()
+            // Tapping an inactive segment slides the pill over and selects it
+            selectSegment(at: index, animated: true, notify: true)
         }
     }
 
-    private func nearestIndex(to point: CGPoint) -> Int? {
-        guard !itemButtons.isEmpty else { return nil }
-        var best = 0
-        var bestDistance = CGFloat.greatestFiniteMagnitude
-        for (index, button) in itemButtons.enumerated() {
-            let distance = abs(button.center.x - point.x)
-            if distance < bestDistance {
-                bestDistance = distance
-                best = index
-            }
-        }
-        return best
-    }
-
-    private func updateScrubSelection(with pan: UIPanGestureRecognizer) {
-        layoutIfNeeded()
-        let point = pan.location(in: stripStack)
-        guard let nearest = nearestIndex(to: point), nearest != scrubCurrentIndex else { return }
-        scrubCurrentIndex = nearest
-        activeIndex = nearest
-        updateActiveAppearance()
-        moveIndicator(animated: true)
-        scrollActiveIntoView(animated: true)
-        onScrubSelect?(itemSelections[nearest])
-    }
-
-    private func finishScrub() {
-        isScrubbing = false
-        let final: PickerSelection = if let index = scrubCurrentIndex, index < itemSelections.count {
-            itemSelections[index]
-        } else if let index = activeIndex, index < itemSelections.count {
-            itemSelections[index]
-        } else {
-            Self.selection(
-                isPrivate: currentState.isPrivate,
-                selectedGroupID: currentState.selectedGroupID,
-                groups: currentState.groups
-            )
-        }
-        scrubCurrentIndex = nil
-        setExpanded(false)
-        onScrubEnd?(final)
-    }
-
-    @objc private func handleTap(_ tap: UITapGestureRecognizer) {
-        guard tap.state == .ended, !isScrubbing else { return }
-        onTap?()
-    }
-
-    @objc private func handleLongPress(_ press: UILongPressGestureRecognizer) {
-        switch press.state {
-        case .began:
-            scrubPan.isEnabled = false
-            onLongPress?()
-        case .ended, .cancelled, .failed:
-            scrubPan.isEnabled = true
-        default:
-            break
+    private func selectSegment(at index: Int, animated: Bool, notify: Bool) {
+        guard index < segmentSelections.count else { return }
+        activeIndex = index
+        updateButtonColors()
+        positionPill(at: index, animated: animated)
+        if notify {
+            onScrubEnd?(segmentSelections[index])
         }
     }
 
     @objc private func handlePan(_ pan: UIPanGestureRecognizer) {
         switch pan.state {
         case .began:
-            scrubCurrentIndex = nil
+            guard segmentSelections.count > 1 else { return }
+            isPanning = true
+            panStartIndex = activeIndex
+            lastScrubNotified = nil
+            feedbackGenerator.prepare()
+            updatePillForPan(at: pan.location(in: segmentStack))
+
         case .changed:
-            let translation = pan.translation(in: self)
-            let distance = hypot(translation.x, translation.y)
-            if !isScrubbing {
-                guard distance > Self.scrubThreshold else { return }
-                isScrubbing = true
-                scrubCurrentIndex = activeIndex
-                setExpanded(true)
-                updateScrubSelection(with: pan)
-            } else {
-                updateScrubSelection(with: pan)
-            }
+            guard isPanning else { return }
+            updatePillForPan(at: pan.location(in: segmentStack))
+
         case .ended:
-            // A pan that never passed threshold ends here without scrubbing
-            // so the tap recognizer still proceeds.
-            guard isScrubbing else { return }
-            finishScrub()
+            guard isPanning else { return }
+            isPanning = false
+            let finalIndex = nearestIndex(to: pan.location(in: segmentStack))
+            // The final tick already applied this selection; commit visually without re-notifying.
+            if finalIndex < segmentSelections.count,
+               segmentSelections[finalIndex] == lastScrubNotified
+            {
+                selectSegment(at: finalIndex, animated: true, notify: false)
+            } else {
+                selectSegment(at: finalIndex, animated: true, notify: true)
+            }
+            lastScrubNotified = nil
+
         case .cancelled, .failed:
-            guard isScrubbing else { return }
-            // Cancel reverts the live-filtered grid to the committed
-            // selection instead of stranding it at the last scrub tick.
-            let reverted = Self.selection(
-                isPrivate: currentState.isPrivate,
-                selectedGroupID: currentState.selectedGroupID,
-                groups: currentState.groups
-            )
-            isScrubbing = false
-            scrubCurrentIndex = nil
-            activeIndex = itemSelections.firstIndex(of: reverted) ?? activeIndex
-            updateActiveAppearance()
-            moveIndicator(animated: true)
-            setExpanded(false)
-            onScrubEnd?(reverted)
+            guard isPanning else { return }
+            isPanning = false
+            lastScrubNotified = nil
+            selectSegment(at: panStartIndex, animated: true, notify: true)
+
         default:
             break
         }
+    }
+
+    private func updatePillForPan(at point: CGPoint) {
+        let nearest = nearestIndex(to: point)
+        if nearest != activeIndex {
+            activeIndex = nearest
+            feedbackGenerator.selectionChanged()
+            updateButtonColors()
+            if nearest < segmentSelections.count {
+                let selection = segmentSelections[nearest]
+                lastScrubNotified = selection
+                onScrubSelect?(selection)
+            }
+        }
+
+        // Live spring track to the hovered segment
+        guard nearest < segmentButtons.count else { return }
+        let button = segmentButtons[nearest]
+        let buttonFrame = button.convert(button.bounds, to: self)
+        slidingPillView.layer.cornerRadius = buttonFrame.height / 2
+        UIView.animate(
+            withDuration: 0.2,
+            delay: 0,
+            usingSpringWithDamping: 0.85,
+            initialSpringVelocity: 0,
+            options: [.beginFromCurrentState]
+        ) {
+            self.slidingPillView.frame = buttonFrame
+        }
+    }
+
+    private func nearestIndex(to point: CGPoint) -> Int {
+        guard !segmentButtons.isEmpty else { return 0 }
+        var best = 0
+        var bestDist = CGFloat.greatestFiniteMagnitude
+        for (index, button) in segmentButtons.enumerated() {
+            let dist = abs(button.center.x - point.x)
+            if dist < bestDist {
+                bestDist = dist
+                best = index
+            }
+        }
+        return best
+    }
+
+    // MARK: - UIGestureRecognizerDelegate
+
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === panGesture {
+            return segmentSelections.count > 1
+        }
+        return true
     }
 }

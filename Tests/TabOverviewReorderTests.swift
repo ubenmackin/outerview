@@ -46,6 +46,33 @@ final class TabOverviewReorderTests: XCTestCase {
         XCTAssertEqual(TabOverviewViewController.moveID(ids, from: -1, to: 2), ids)
     }
 
+    func testReorderedIDsSingleItemMove() {
+        let ids = makeIDs(3)
+        // Drag item 0 to slot 1
+        let moved0to1 = TabOverviewViewController.reorderedIDs(
+            currentIDs: ids,
+            draggedIDs: [ids[0]],
+            destinationIndex: 1
+        )
+        XCTAssertEqual(moved0to1, [ids[1], ids[0], ids[2]])
+
+        // Drag item 1 to slot 0
+        let moved1to0 = TabOverviewViewController.reorderedIDs(
+            currentIDs: ids,
+            draggedIDs: [ids[1]],
+            destinationIndex: 0
+        )
+        XCTAssertEqual(moved1to0, [ids[1], ids[0], ids[2]])
+
+        // Drag item 0 to slot 2
+        let moved0to2 = TabOverviewViewController.reorderedIDs(
+            currentIDs: ids,
+            draggedIDs: [ids[0]],
+            destinationIndex: 2
+        )
+        XCTAssertEqual(moved0to2, [ids[1], ids[2], ids[0]])
+    }
+
     func testSpliceStandardReorderPutsStandardFirst() {
         let s1 = UUID()
         let s2 = UUID()

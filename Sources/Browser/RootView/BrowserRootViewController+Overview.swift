@@ -338,8 +338,5 @@ extension BrowserRootViewController: TabOverviewViewControllerDelegate {
         )
         tabs = splicedIDs.compactMap { byID[$0] }
         persistStrip()
-        if isOverviewVisible {
-            overviewController.setItems(overviewItems(), selectedID: selectedTabID)
-        }
     }
 }

@@ -28,25 +28,7 @@ extension TabOverviewViewController {
         }
     }
 
-    func showPickerMenu() {
-        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
-        sheet.addAction(UIAlertAction(title: "Manage Tab Groups", style: .default) { [weak self] _ in
-            self?.showGroupsSheet()
-        })
-        sheet.addAction(UIAlertAction(title: "New Group…", style: .default) { [weak self] _ in
-            self?.promptNewGroupCreation(withTabIDs: [])
-        })
-        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = pickerBar
-            popover.sourceRect = pickerBar.bounds
-        }
-        present(sheet, animated: true)
-    }
-
-    /// Overview commands shared by the rail ellipsis and the pill's
-    /// long-press menu. The pill drops Close All Tabs: that destructive
-    /// action owns its own confirm sheet and stays rail-only.
+    /// Overview commands shared by the rail ellipsis menu.
     func makeOverviewMenu(includesCloseAll: Bool) -> UIMenu {
         UIMenu(children: [
             UIDeferredMenuElement.uncached { [weak self] completion in
