@@ -6,6 +6,10 @@
 import os
 import UIKit
 
+/// UserDefaults keys libraryTab as Int, overviewMode as String, and overviewGroup as String.
+/// Values are read at init and setup and written on every change; private mode is never
+/// written and restores as standard. Unparseable values fall back to bookmarks, standard,
+/// and nil; a stored group id resolving to no existing group restores as nil.
 enum TabOverviewMode: Int, Sendable, CaseIterable {
     case standard = 0
     case privateMode = 1
@@ -316,6 +320,8 @@ final class TabOverviewViewController: UIViewController {
     /// tabs without a cached preview.
     var previewProvider: ((UUID, @escaping @MainActor (UIImage?) -> Void) -> Void)?
 
+    var selectionDefaults: UserDefaults = .standard
+
     private(set) var mode: TabOverviewMode = .standard
     private(set) var allTabs: [TabOverviewItem] = []
     private(set) var allGroups: [TabGroup] = []
@@ -624,6 +630,7 @@ final class TabOverviewViewController: UIViewController {
         } else {
             selectedGroupID = nil
         }
+        Self.persistOverviewSelection(mode: newMode, groupID: selectedGroupID, defaults: selectionDefaults)
         if modeChanged {
             updateAppearance()
         } else {

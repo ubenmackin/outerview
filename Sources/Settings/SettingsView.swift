@@ -16,7 +16,6 @@ struct SettingsView: View {
     var onDidClearHistory: (() -> Void)?
     var onDidClearTabs: (() -> Void)?
 
-    @Environment(\.dismiss) private var dismiss
     @State private var showingImporter = false
     @State private var importSummary: ImportSummary?
     @State private var showingImportResult = false
@@ -56,7 +55,7 @@ struct SettingsView: View {
                             Text(engine.displayName).tag(engine)
                         }
                     }
-                    .pickerStyle(.segmented)
+                    .pickerStyle(.menu)
                     .labelsHidden()
                 }
 
@@ -89,13 +88,6 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-            }
             .sheet(isPresented: $showingImporter) {
                 BookmarksDocumentPicker(
                     onPick: handlePickedURL,

@@ -3,6 +3,7 @@
 //  OuterView
 //
 
+import os
 import UIKit
 
 /// Displays user favorites as large favicon tiles in a responsive grid.
@@ -17,6 +18,36 @@ final class FavoritesGridView: UIView {
     private let collectionView: UICollectionView
     private let flowLayout: UICollectionViewFlowLayout
     private let emptyLabel = UILabel()
+
+    nonisolated static func itemSize(forContentWidth width: CGFloat, columns: Int) -> CGSize {
+        let count = max(1, columns)
+        let totalSpacing = CGFloat(max(count - 1, 0)) * 16
+        let raw = floor((width - totalSpacing) / CGFloat(count))
+        // Clamp tiny widths to the minimum tile so rotation never collapses or clips.
+        let side = max(76, raw)
+        return CGSize(width: side, height: side + 36)
+    }
+
+    nonisolated static func canBeginDrag(itemCount: Int, index: Int) -> Bool {
+        index >= 0 && index < itemCount
+    }
+
+    nonisolated static func reorderedIDs(
+        currentIDs: [UUID],
+        draggedIDs: [UUID],
+        destinationIndex: Int
+    ) -> [UUID] {
+        guard !currentIDs.isEmpty,
+              let draggedID = draggedIDs.first,
+              let from = currentIDs.firstIndex(of: draggedID)
+        else { return currentIDs }
+        let clamped = min(max(destinationIndex, 0), currentIDs.count - 1)
+        guard from != clamped else { return currentIDs }
+        var result = currentIDs
+        let element = result.remove(at: from)
+        result.insert(element, at: clamped)
+        return result
+    }
 
     init(bookmarkStore: BookmarkStore) {
         self.bookmarkStore = bookmarkStore
@@ -45,6 +76,16 @@ final class FavoritesGridView: UIView {
         collectionView.reloadData()
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let columns = StartPageViewModel.columnCount(for: traitCollection)
+        let size = Self.itemSize(forContentWidth: bounds.width - 32, columns: columns)
+        if flowLayout.itemSize != size {
+            flowLayout.itemSize = size
+            flowLayout.invalidateLayout()
+        }
+    }
+
     // MARK: - Private
 
     private func setup() {
@@ -61,8 +102,12 @@ final class FavoritesGridView: UIView {
 
         collectionView.translatesAutoresizingMaskIntoConstraints = false
         collectionView.backgroundColor = .clear
+        collectionView.alwaysBounceVertical = true
         collectionView.dataSource = self
         collectionView.delegate = self
+        collectionView.dragInteractionEnabled = true
+        collectionView.dragDelegate = self
+        collectionView.dropDelegate = self
         collectionView.register(FavoriteTileCell.self, forCellWithReuseIdentifier: FavoriteTileCell.reuseIdentifier)
         addSubview(collectionView)
 
@@ -127,6 +172,91 @@ extension FavoritesGridView: UICollectionViewDataSource, UICollectionViewDelegat
                 self?.onDeleteFavorite?(bookmark.id)
             }
             return UIMenu(children: [copyAction, deleteAction])
+        }
+    }
+}
+
+// MARK: - UICollectionViewDragDelegate, UICollectionViewDropDelegate
+
+extension FavoritesGridView: UICollectionViewDragDelegate, UICollectionViewDropDelegate {
+    func collectionView(
+        _: UICollectionView,
+        itemsForBeginning _: UIDragSession,
+        at indexPath: IndexPath
+    ) -> [UIDragItem] {
+        guard Self.canBeginDrag(itemCount: favorites.count, index: indexPath.item) else { return [] }
+        let dragItem = UIDragItem(itemProvider: NSItemProvider())
+        dragItem.localObject = favorites[indexPath.item].id
+        return [dragItem]
+    }
+
+    func collectionView(
+        _: UICollectionView,
+        dropSessionDidUpdate session: UIDropSession,
+        withDestinationIndexPath _: IndexPath?
+    ) -> UICollectionViewDropProposal {
+        guard session.localDragSession != nil else {
+            return UICollectionViewDropProposal(operation: .forbidden)
+        }
+        return UICollectionViewDropProposal(operation: .move, intent: .insertAtDestinationIndexPath)
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        performDropWith coordinator: UICollectionViewDropCoordinator
+    ) {
+        guard coordinator.proposal.operation == .move else { return }
+        let localItems = coordinator.items.filter { $0.dragItem.localObject is UUID }
+        guard !localItems.isEmpty else { return }
+        let currentIDs = favorites.map(\.id)
+        guard !currentIDs.isEmpty else { return }
+        let draggedIDs = localItems.compactMap { $0.dragItem.localObject as? UUID }
+        guard !draggedIDs.isEmpty else { return }
+        // Nil destination means past the trailing edge.
+        let rawDestination = coordinator.destinationIndexPath?.item ?? currentIDs.count
+        let ordered = Self.reorderedIDs(
+            currentIDs: currentIDs,
+            draggedIDs: draggedIDs,
+            destinationIndex: rawDestination
+        )
+        guard ordered != currentIDs else {
+            for item in localItems {
+                if let source = item.sourceIndexPath {
+                    coordinator.drop(item.dragItem, toItemAt: source)
+                }
+            }
+            return
+        }
+        let byID = Dictionary(uniqueKeysWithValues: favorites.map { ($0.id, $0) })
+        var reordered: [Bookmark] = []
+        reordered.reserveCapacity(ordered.count)
+        for id in ordered {
+            guard let bookmark = byID[id] else {
+                reload()
+                return
+            }
+            reordered.append(bookmark)
+        }
+        favorites = reordered
+        do {
+            try bookmarkStore.reorderBookmarks(ordered)
+        } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
+                .error("reorderFavorites failed: \(error.localizedDescription, privacy: .public)")
+            reload()
+            return
+        }
+        collectionView.reloadData()
+        let keptID = draggedIDs.first(where: { currentIDs.contains($0) })
+        for item in localItems {
+            guard let id = item.dragItem.localObject as? UUID else { continue }
+            if let kept = keptID, id == kept,
+               let final = ordered.firstIndex(of: id)
+            {
+                coordinator.drop(item.dragItem, toItemAt: IndexPath(item: final, section: 0))
+            } else if let source = item.sourceIndexPath {
+                coordinator.drop(item.dragItem, toItemAt: source)
+            }
         }
     }
 }

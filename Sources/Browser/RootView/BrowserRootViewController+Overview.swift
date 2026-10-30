@@ -5,6 +5,10 @@
 
 import UIKit
 
+/// UserDefaults keys libraryTab as Int, overviewMode as String, and overviewGroup as String.
+/// Values are read at init and setup and written on every change; private mode is never
+/// written and restores as standard. Unparseable values fall back to bookmarks, standard,
+/// and nil; a stored group id resolving to no existing group restores as nil.
 extension BrowserRootViewController {
     // MARK: - Overview
 
@@ -17,7 +21,10 @@ extension BrowserRootViewController {
         overviewView.isHidden = !visible
         if visible {
             let groups = overviewGroups()
-            let validFilter = overviewController.selectedGroupID.flatMap { id in
+            // A stored group resolving to no existing group restores as nil.
+            let candidate = overviewController.selectedGroupID
+                ?? TabOverviewViewController.storedOverviewGroupID(defaults: selectionDefaults)
+            let validFilter = candidate.flatMap { id in
                 groups.contains(where: { $0.id == id }) ? id : nil
             }
             overviewController.configure(

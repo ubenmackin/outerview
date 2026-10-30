@@ -8,8 +8,22 @@ import os
 import UIKit
 
 /// Full-screen overlay for Bookmarks, Favorites, History, and Reading List library (matching Safari).
+/// UserDefaults keys libraryTab as Int, overviewMode as String, and overviewGroup as String.
+/// Values are read at init and setup and written on every change; private mode is never
+/// written and restores as standard. Unparseable values fall back to bookmarks, standard,
+/// and nil; a stored group id resolving to no existing group restores as nil.
 @MainActor
 final class BookmarksLibraryView: UIView {
+    nonisolated static let libraryTabDefaultsKey = "libraryTab"
+
+    nonisolated static func storedTab(defaults: UserDefaults = .standard) -> LibraryTab {
+        LibraryTabBar.storedTab(defaults: defaults)
+    }
+
+    nonisolated static func persist(tab: LibraryTab, defaults: UserDefaults = .standard) {
+        LibraryTabBar.persist(tab: tab, defaults: defaults)
+    }
+
     var onOpenURL: ((URL) -> Void)?
     var onOpenInNewTab: ((URL) -> Void)?
     var onRequestEdit: ((BookmarkEditorTarget) -> Void)?
@@ -17,7 +31,8 @@ final class BookmarksLibraryView: UIView {
     var onTabChanged: ((LibraryTab) -> Void)?
 
     private let headerContainer = UIView()
-    private let topTabBar = LibraryTabBar()
+    private let topTabBar: LibraryTabBar
+    private let defaults: UserDefaults
 
     private let contentContainer = UIView()
     private var bookmarksBrowserView: BookmarksBrowserView?
@@ -49,9 +64,13 @@ final class BookmarksLibraryView: UIView {
 
     var onReadingListStateChanged: (() -> Void)?
 
-    init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        self.topTabBar = LibraryTabBar(defaults: defaults)
+        self.activeTab = Self.storedTab(defaults: defaults)
         super.init(frame: .zero)
         setup()
+        topTabBar.selectTab(activeTab, notify: false)
     }
 
     @available(*, unavailable)
@@ -115,6 +134,7 @@ final class BookmarksLibraryView: UIView {
 
     func open(tab: LibraryTab = .bookmarks) {
         activeTab = tab
+        Self.persist(tab: tab, defaults: defaults)
         topTabBar.selectTab(tab, notify: false)
         reload()
         updateVisibleTab()
@@ -165,6 +185,7 @@ final class BookmarksLibraryView: UIView {
         topTabBar.onTabSelected = { [weak self] tab in
             guard let self else { return }
             self.activeTab = tab
+            Self.persist(tab: tab, defaults: self.defaults)
             self.updateVisibleTab()
             self.onTabChanged?(tab)
         }

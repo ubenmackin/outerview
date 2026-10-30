@@ -274,8 +274,7 @@ extension BrowserRootViewController {
     }
 
     func presentSettings() {
-        guard let settings = makeSettingsController() else { return }
-        present(settings, animated: true)
+        presentSettingsSheet()
     }
 
     func openStartPageFromMenu() {

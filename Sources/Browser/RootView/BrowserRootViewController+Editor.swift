@@ -281,7 +281,8 @@ extension BrowserRootViewController {
         )
         editorView.setSuggestions(localSuggestions)
 
-        // 2. Debounced background fetch for Google remote suggestions
+        // 2. Debounced background fetch for per-engine remote suggestions
+        let engine = currentSearchEngine()
         suggestionTask = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(nanoseconds: 120_000_000)
@@ -290,13 +291,13 @@ extension BrowserRootViewController {
             }
             guard !Task.isCancelled, let self else { return }
 
-            let googleSuggestions = await GoogleSuggestService.shared.fetchSuggestions(for: trimmed)
-            guard !Task.isCancelled, !googleSuggestions.isEmpty else { return }
+            let remoteSuggestions = await GoogleSuggestService.shared.fetchSuggestions(for: trimmed, engine: engine)
+            guard !Task.isCancelled, !remoteSuggestions.isEmpty else { return }
 
             let mergedSuggestions = SuggestionEngine.suggestions(
                 for: query,
                 currentURL: currentURL,
-                googleSuggestions: googleSuggestions,
+                googleSuggestions: remoteSuggestions,
                 tabs: tabSnapshots,
                 bookmarks: bookmarkSnapshots,
                 recents: historySnapshots

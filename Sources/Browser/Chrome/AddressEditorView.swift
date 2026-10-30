@@ -32,7 +32,7 @@ struct SuggestionRowViewModel: Hashable, Sendable {
             return SuggestionRowViewModel(
                 systemImageName: "magnifyingglass",
                 primary: query,
-                secondary: "Google Search"
+                secondary: "\(engine.displayName) Suggestions"
             )
         case let .search(query):
             return SuggestionRowViewModel(

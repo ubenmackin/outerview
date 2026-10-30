@@ -121,6 +121,57 @@ final class ReadingListAndSearchTests: XCTestCase {
         XCTAssertFalse(view.isSelectionMode)
     }
 
+    func testReadingListOpenMarksReadThroughView() throws {
+        let database = try makeDatabase()
+        let store = ReadingListStore(database: database)
+        let url = try XCTUnwrap(URL(string: "https://example.com/article"))
+        let item = try XCTUnwrap(try store.add(title: "Article", url: url))
+
+        let view = try ReadingListView(store: store, defaults: makeIsolatedDefaults())
+        var openedURL: URL?
+        view.onOpenURL = { openedURL = $0 }
+
+        let tableView = try XCTUnwrap(view.subviews.compactMap { $0 as? UITableView }.first)
+        XCTAssertEqual(view.tableView(tableView, numberOfRowsInSection: 0), 1)
+
+        view.tableView(tableView, didSelectRowAt: IndexPath(row: 0, section: 0))
+
+        XCTAssertEqual(openedURL, url)
+        XCTAssertTrue(try XCTUnwrap(store.fetchAll().first(where: { $0.id == item.id })).isRead)
+    }
+
+    func testReadingListUnreadOnlyExcludesReadRows() throws {
+        let database = try makeDatabase()
+        let store = ReadingListStore(database: database)
+        try store.add(title: "Article", url: XCTUnwrap(URL(string: "https://example.com/article")))
+
+        let view = try ReadingListView(store: store, defaults: makeIsolatedDefaults())
+        let tableView = try XCTUnwrap(view.subviews.compactMap { $0 as? UITableView }.first)
+
+        view.tableView(tableView, didSelectRowAt: IndexPath(row: 0, section: 0))
+        XCTAssertTrue(try XCTUnwrap(store.fetchAll().first).isRead)
+
+        view.setFilterMode(.unreadOnly)
+        XCTAssertEqual(view.tableView(tableView, numberOfRowsInSection: 0), 0)
+    }
+
+    func testReadingListUnreadRowsStayVisible() throws {
+        let database = try makeDatabase()
+        let store = ReadingListStore(database: database)
+        try store.add(title: "First", url: XCTUnwrap(URL(string: "https://one.com")))
+        try store.add(title: "Second", url: XCTUnwrap(URL(string: "https://two.com")))
+
+        let view = try ReadingListView(store: store, defaults: makeIsolatedDefaults())
+        let tableView = try XCTUnwrap(view.subviews.compactMap { $0 as? UITableView }.first)
+        XCTAssertEqual(view.tableView(tableView, numberOfRowsInSection: 0), 2)
+
+        // Newest-first ordering puts Second at row 0, so opening it marks only that row read.
+        view.tableView(tableView, didSelectRowAt: IndexPath(row: 0, section: 0))
+
+        view.setFilterMode(.unreadOnly)
+        XCTAssertEqual(view.tableView(tableView, numberOfRowsInSection: 0), 1)
+    }
+
     func testReadingListMenuConstruction() throws {
         let database = try makeDatabase()
         let store = ReadingListStore(database: database)
