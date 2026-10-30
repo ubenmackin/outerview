@@ -17,6 +17,10 @@ private enum PhotoSaveFailure: Error {
 /// Single chrome applier: tab content, floating rail + pill, editor, error
 /// overlay, and tab overview placeholder. Content renders full-bleed while
 /// chrome floats above it.
+/// UserDefaults keys libraryTab as Int, overviewMode as String, and overviewGroup as String.
+/// Values are read at init and setup and written on every change; private mode is never
+/// written and restores as standard. Unparseable values fall back to bookmarks, standard,
+/// and nil; a stored group id resolving to no existing group restores as nil.
 @MainActor
 final class BrowserRootViewController: UIViewController {
     nonisolated static let railHideDuration: TimeInterval = 0.25
@@ -85,7 +89,11 @@ final class BrowserRootViewController: UIViewController {
     let pillView = AddressBarView()
     let findView = FindInPageView()
     let editorView = AddressEditorView()
-    let bookmarksLibraryView = BookmarksLibraryView()
+    let bookmarksLibraryView: BookmarksLibraryView
+    let libraryOverlay = SheetCardOverlayView()
+    let settingsOverlay = SheetCardOverlayView()
+    private(set) var settingsHosting: UIViewController?
+    private(set) var isSettingsVisible = false
     private let bookmarkEditorContainer = UIView()
     private var bookmarkEditorHosting: UIHostingController<BookmarkEditorView>?
     private var activeBookmarkEditorModel: BookmarkEditorModel?
@@ -94,8 +102,9 @@ final class BrowserRootViewController: UIViewController {
     var isFindActive = false
     var findBottomConstraint: NSLayoutConstraint?
     let overviewView = UIView()
-    let overviewController = TabOverviewViewController()
-    var overviewMode: TabOverviewMode = .standard
+    let overviewController: TabOverviewViewController
+    var overviewMode: TabOverviewMode
+    let selectionDefaults: UserDefaults
 
     var pillHeightConstraint: NSLayoutConstraint!
     var pillBottomConstraint: NSLayoutConstraint!
@@ -146,7 +155,11 @@ final class BrowserRootViewController: UIViewController {
     /// status/camera region on both displays.
     private var reservedOcclusionUnion: CGRect = .zero
 
-    init(database: OuterViewDatabase? = nil) {
+    init(database: OuterViewDatabase? = nil, defaults: UserDefaults = .standard) {
+        self.selectionDefaults = defaults
+        self.bookmarksLibraryView = BookmarksLibraryView(defaults: defaults)
+        self.overviewController = TabOverviewViewController()
+        self.overviewMode = TabOverviewViewController.storedOverviewMode(defaults: defaults)
         if let database {
             self.database = database
         } else {
@@ -165,6 +178,7 @@ final class BrowserRootViewController: UIViewController {
             }
         }
         super.init(nibName: nil, bundle: nil)
+        overviewController.selectionDefaults = defaults
         elementContextActions = makeElementContextActions()
         if let database = self.database {
             bookmarkStore = BookmarkStore(database: database)
@@ -256,6 +270,7 @@ final class BrowserRootViewController: UIViewController {
         setupRail()
         setupEditor()
         setupLibrary()
+        setupSettings()
         setupBookmarkEditor()
         setupOverview()
         bringChromeToFront()
@@ -270,7 +285,8 @@ final class BrowserRootViewController: UIViewController {
         view.bringSubviewToFront(pillView)
         view.bringSubviewToFront(findView)
         view.bringSubviewToFront(editorView)
-        view.bringSubviewToFront(bookmarksLibraryView)
+        view.bringSubviewToFront(libraryOverlay)
+        view.bringSubviewToFront(settingsOverlay)
         view.bringSubviewToFront(bookmarkEditorContainer)
         view.bringSubviewToFront(overviewView)
         view.bringSubviewToFront(railView)
@@ -356,15 +372,16 @@ final class BrowserRootViewController: UIViewController {
     }
 
     private func setupLibrary() {
-        bookmarksLibraryView.translatesAutoresizingMaskIntoConstraints = false
-        bookmarksLibraryView.isHidden = true
-        view.addSubview(bookmarksLibraryView)
+        libraryOverlay.translatesAutoresizingMaskIntoConstraints = false
+        libraryOverlay.isHidden = true
+        view.addSubview(libraryOverlay)
         NSLayoutConstraint.activate([
-            bookmarksLibraryView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            bookmarksLibraryView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            bookmarksLibraryView.topAnchor.constraint(equalTo: view.topAnchor),
-            bookmarksLibraryView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            libraryOverlay.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            libraryOverlay.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            libraryOverlay.topAnchor.constraint(equalTo: view.topAnchor),
+            libraryOverlay.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
+        libraryOverlay.setContent(bookmarksLibraryView)
         if let bookmarkStore, let historyStore, let readingListStore {
             bookmarksLibraryView.configureStores(
                 bookmarkStore: bookmarkStore,
@@ -393,6 +410,43 @@ final class BrowserRootViewController: UIViewController {
             guard let self, self.isLibraryVisible, self.bookmarksLibraryView.currentTab == .readingList else { return }
             self.updateLibraryRailItems(for: .readingList)
         }
+    }
+
+    private func setupSettings() {
+        settingsOverlay.translatesAutoresizingMaskIntoConstraints = false
+        settingsOverlay.isHidden = true
+        view.addSubview(settingsOverlay)
+        NSLayoutConstraint.activate([
+            settingsOverlay.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            settingsOverlay.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            settingsOverlay.topAnchor.constraint(equalTo: view.topAnchor),
+            settingsOverlay.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+    }
+
+    func presentSettingsSheet() {
+        guard let hosting = makeSettingsController() else { return }
+        settingsHosting?.view.removeFromSuperview()
+        settingsHosting?.removeFromParent()
+        addChild(hosting)
+        settingsOverlay.setContent(hosting.view)
+        hosting.didMove(toParent: self)
+        settingsHosting = hosting
+        isSettingsVisible = true
+        settingsOverlay.isHidden = false
+        bringChromeToFront()
+        updateRailItems()
+        applyRailViews(animated: true)
+    }
+
+    func dismissSettingsSheet() {
+        isSettingsVisible = false
+        settingsOverlay.isHidden = true
+        settingsHosting?.view.removeFromSuperview()
+        settingsHosting?.removeFromParent()
+        settingsHosting = nil
+        updateRailItems()
+        applyRailViews(animated: true)
     }
 
     func presentBookmarkEditor(for target: BookmarkEditorTarget) {
@@ -453,17 +507,18 @@ final class BrowserRootViewController: UIViewController {
         }
     }
 
-    func openBookmarksLibrary(tab: LibraryTab = .bookmarks) {
+    func openBookmarksLibrary(tab: LibraryTab? = nil) {
+        let resolved = tab ?? LibraryTabBar.storedTab(defaults: selectionDefaults)
         isLibraryVisible = true
-        bookmarksLibraryView.open(tab: tab)
-        bookmarksLibraryView.isHidden = false
-        updateLibraryRailItems(for: tab)
+        bookmarksLibraryView.open(tab: resolved)
+        libraryOverlay.isHidden = false
+        updateLibraryRailItems(for: resolved)
         bringChromeToFront()
     }
 
     func closeBookmarksLibrary() {
         isLibraryVisible = false
-        bookmarksLibraryView.isHidden = true
+        libraryOverlay.isHidden = true
         updateRailItems()
     }
 
@@ -598,7 +653,9 @@ final class BrowserRootViewController: UIViewController {
         ])
         startPageView = startView
     }
+}
 
+extension BrowserRootViewController {
     // MARK: - App lifecycle
 
     /// Scene changes forwarded from the app entry. Persistence is owned by the
@@ -764,6 +821,17 @@ final class BrowserRootViewController: UIViewController {
 
     func setOverviewMode(_ mode: TabOverviewMode) {
         overviewMode = mode
+        // Private mode is never written; a private selection clears the stored group.
+        if mode.isPrivate {
+            selectionDefaults.removeObject(forKey: TabOverviewViewController.overviewModeDefaultsKey)
+            selectionDefaults.removeObject(forKey: TabOverviewViewController.overviewGroupDefaultsKey)
+        } else {
+            TabOverviewViewController.persistOverviewSelection(
+                mode: mode,
+                groupID: overviewController.selectedGroupID,
+                defaults: selectionDefaults
+            )
+        }
     }
 
     func clearForcedStartPageForSelectedTab() {

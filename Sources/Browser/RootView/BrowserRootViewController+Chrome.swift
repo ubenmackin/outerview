@@ -125,7 +125,7 @@ extension BrowserRootViewController {
 
     func applyRailViews(animated: Bool) {
         var state = chromeController.state
-        if currentRailMode == .startPage || currentRailMode == .bookmarkEditor || isLibraryVisible {
+        if currentRailMode == .startPage || currentRailMode == .bookmarkEditor || currentRailMode == .settings || isLibraryVisible || isSettingsVisible {
             state.rail = .visible
         }
         railView.transform = .identity
@@ -138,11 +138,15 @@ extension BrowserRootViewController {
         case library(LibraryTab)
         case startPage
         case bookmarkEditor
+        case settings
     }
 
     var currentRailMode: RailMode {
         if isBookmarkEditorVisible {
             return .bookmarkEditor
+        }
+        if isSettingsVisible {
+            return .settings
         }
         if isLibraryVisible {
             return .library(bookmarksLibraryView.currentTab)
@@ -181,6 +185,15 @@ extension BrowserRootViewController {
                 suffix: [
                     .done { [weak self] in
                         self?.saveBookmarkEditor()
+                    }
+                ]
+            )
+        case .settings:
+            railView.setItems(
+                prefix: [],
+                suffix: [
+                    .done { [weak self] in
+                        self?.dismissSettingsSheet()
                     }
                 ]
             )

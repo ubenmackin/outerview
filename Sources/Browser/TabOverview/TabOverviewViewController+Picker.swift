@@ -5,7 +5,51 @@
 
 import UIKit
 
+/// UserDefaults keys libraryTab as Int, overviewMode as String, and overviewGroup as String.
+/// Values are read at init and setup and written on every change; private mode is never
+/// written and restores as standard. Unparseable values fall back to bookmarks, standard,
+/// and nil; a stored group id resolving to no existing group restores as nil.
 extension TabOverviewViewController {
+    nonisolated static let overviewModeDefaultsKey = "overviewMode"
+    nonisolated static let overviewGroupDefaultsKey = "overviewGroup"
+
+    nonisolated static func storedOverviewMode(defaults: UserDefaults = .standard) -> TabOverviewMode {
+        guard let raw = defaults.string(forKey: overviewModeDefaultsKey),
+              raw == "standard"
+        else {
+            return .standard
+        }
+        return .standard
+    }
+
+    nonisolated static func storedOverviewGroupID(defaults: UserDefaults = .standard) -> UUID? {
+        guard let raw = defaults.string(forKey: overviewGroupDefaultsKey),
+              let id = UUID(uuidString: raw)
+        else {
+            return nil
+        }
+        return id
+    }
+
+    nonisolated static func persistOverviewSelection(
+        mode: TabOverviewMode,
+        groupID: UUID?,
+        defaults: UserDefaults = .standard
+    ) {
+        // Private mode is never written; a private selection clears stored values.
+        guard !mode.isPrivate else {
+            defaults.removeObject(forKey: overviewModeDefaultsKey)
+            defaults.removeObject(forKey: overviewGroupDefaultsKey)
+            return
+        }
+        defaults.set("standard", forKey: overviewModeDefaultsKey)
+        if let groupID {
+            defaults.set(groupID.uuidString, forKey: overviewGroupDefaultsKey)
+        } else {
+            defaults.removeObject(forKey: overviewGroupDefaultsKey)
+        }
+    }
+
     func updatePickerBar() {
         let totals = Self.counts(allTabs)
         pickerBar.render(state: TabGroupsSheetState(
@@ -21,10 +65,13 @@ extension TabOverviewViewController {
         switch selection {
         case .allStandard:
             applySelectionBatched(mode: .standard, groupID: nil, notify: true)
+            Self.persistOverviewSelection(mode: .standard, groupID: nil, defaults: selectionDefaults)
         case .private:
             applySelectionBatched(mode: .privateMode, groupID: nil, notify: true)
+            Self.persistOverviewSelection(mode: .privateMode, groupID: nil, defaults: selectionDefaults)
         case let .group(id):
             applySelectionBatched(mode: .standard, groupID: id, notify: true)
+            Self.persistOverviewSelection(mode: .standard, groupID: id, defaults: selectionDefaults)
         }
     }
 
@@ -142,10 +189,13 @@ extension TabOverviewViewController {
         switch action {
         case .selectStandardAll:
             applySelectionBatched(mode: .standard, groupID: nil, notify: true)
+            Self.persistOverviewSelection(mode: .standard, groupID: nil, defaults: selectionDefaults)
         case .selectPrivate:
             applySelectionBatched(mode: .privateMode, groupID: nil, notify: true)
+            Self.persistOverviewSelection(mode: .privateMode, groupID: nil, defaults: selectionDefaults)
         case let .selectGroup(id):
             applySelectionBatched(mode: .standard, groupID: id, notify: true)
+            Self.persistOverviewSelection(mode: .standard, groupID: id, defaults: selectionDefaults)
         case let .createGroup(name, withAllStandardTabs):
             let tabIDs = withAllStandardTabs ? Self.tabs(allTabs, in: .standard).map(\.id) : []
             delegate?.tabOverview(self, didCreateGroup: name, withTabIDs: tabIDs)

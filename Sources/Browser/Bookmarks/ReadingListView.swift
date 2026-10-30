@@ -529,6 +529,13 @@ extension ReadingListView: UITableViewDataSource, UITableViewDelegate {
             tableView.reloadRows(at: [indexPath], with: .none)
             onStateChanged?()
         } else {
+            do {
+                try store.setRead(id: item.id, isRead: true)
+            } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
+                    .error("mark reading list item read failed: \(error.localizedDescription, privacy: .public)")
+            }
+            reload()
             onOpenURL?(item.url)
         }
     }

@@ -390,7 +390,7 @@ final class SuggestionEngineTests: XCTestCase {
         let googleSuggest = Suggestion(kind: .googleSuggest(query: "cool math games"))
         let vm = SuggestionRowViewModel.make(for: googleSuggest, engine: .google)
         XCTAssertEqual(vm.primary, "cool math games")
-        XCTAssertEqual(vm.secondary, "Google Search")
+        XCTAssertEqual(vm.secondary, "Google Suggestions")
         XCTAssertEqual(vm.systemImageName, "magnifyingglass")
 
         let tabID = UUID()
