@@ -231,9 +231,8 @@ final class TabOverviewViewController: UIViewController {
         if orderedDragged.count == 1, let only = orderedDragged.first,
            let from = currentIDs.firstIndex(of: only)
         {
-            let clampedDestination = min(max(destinationIndex, 0), currentIDs.count)
-            let adjusted = clampedDestination - (from < clampedDestination ? 1 : 0)
-            return moveID(currentIDs, from: from, to: min(adjusted, currentIDs.count - 1))
+            let clampedDestination = min(max(destinationIndex, 0), currentIDs.count - 1)
+            return moveID(currentIDs, from: from, to: clampedDestination)
         }
         let clamped = min(max(destinationIndex, 0), currentIDs.count)
         var draggedBefore = 0
@@ -527,7 +526,6 @@ final class TabOverviewViewController: UIViewController {
         pickerBar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(pickerBar)
         pickerBar.onTap = { [weak self] in self?.showGroupsSheet() }
-        pickerBar.onLongPress = { [weak self] in self?.showPickerMenu() }
         pickerBar.onScrubSelect = { [weak self] in self?.applyPickerSelection($0) }
         pickerBar.onScrubEnd = { [weak self] in self?.applyPickerSelection($0) }
         updatePickerBar()
@@ -551,11 +549,12 @@ final class TabOverviewViewController: UIViewController {
             emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
 
-            pickerBar.leadingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16
-            ),
+            pickerBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             pickerBar.bottomAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12
+                equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16
+            ),
+            pickerBar.leadingAnchor.constraint(
+                greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16
             ),
             pickerBar.trailingAnchor.constraint(
                 lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16
@@ -602,6 +601,20 @@ final class TabOverviewViewController: UIViewController {
     /// followed by `setGroupFilter` would pay two picker rebuilds and two
     /// grid reloads per tick; this batches them into one.
     func applySelectionBatched(mode newMode: TabOverviewMode, groupID: UUID?, notify: Bool) {
+        // Re-applying the current mode + filter is a no-op; skip reload and delegate.
+        if mode == newMode {
+            if let groupID {
+                if allGroups.contains(where: { $0.id == groupID }) {
+                    if selectedGroupID == groupID {
+                        return
+                    }
+                } else {
+                    return
+                }
+            } else if selectedGroupID == nil {
+                return
+            }
+        }
         let modeChanged = mode != newMode
         mode = newMode
         if let groupID {
@@ -754,6 +767,94 @@ extension TabOverviewViewController: UICollectionViewDataSource, UICollectionVie
         delegate?.tabOverview(self, didSelectTab: item.id)
     }
 
+    /// Batch contract for closing other tabs: the grid refreshes once
+    /// (single picker rebuild + reload + empty-state update) while the
+    /// owner is still notified once per closed tab via `didCloseTab`
+    /// (with `replacementIfEmpty` always nil since the kept tab survives),
+    /// so per-tab teardown stays per-tab.
+    private func closeOtherTabs(keeping keepID: UUID) {
+        guard allTabs.contains(where: { $0.id == keepID }) else { return }
+        let idsToClose = Self.tabs(allTabs, in: mode).filter { $0.id != keepID }.map(\.id)
+        guard !idsToClose.isEmpty else { return }
+        showCloseOtherTabsSheet(keeping: keepID, idsToClose: idsToClose)
+    }
+
+    private func showCloseOtherTabsSheet(keeping keepID: UUID, idsToClose: [UUID]) {
+        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+        sheet.addAction(UIAlertAction(title: "Close Other Tabs", style: .destructive) { [weak self] _ in
+            guard let self else { return }
+            self.closeOtherTabsConfirmed(keeping: keepID, idsToClose: idsToClose)
+        })
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = view
+            popover.sourceRect = CGRect(
+                x: view.bounds.midX, y: view.bounds.midY, width: 0, height: 0
+            )
+            popover.permittedArrowDirections = []
+        }
+        present(sheet, animated: true)
+    }
+
+    private func closeOtherTabsConfirmed(keeping keepID: UUID, idsToClose: [UUID]) {
+        guard allTabs.contains(where: { $0.id == keepID }) else { return }
+        let existing = Set(allTabs.map(\.id))
+        let confirmed = idsToClose.filter { $0 != keepID && existing.contains($0) }
+        guard !confirmed.isEmpty else { return }
+        let confirmedSet = Set(confirmed)
+        allTabs.removeAll(where: { confirmedSet.contains($0.id) })
+        for id in confirmed {
+            previews[id] = nil
+        }
+        if let current = selectedID, confirmedSet.contains(current) {
+            selectedID = keepID
+        }
+        updatePickerBar()
+        collectionView.reloadData()
+        updateEmptyState()
+        for id in confirmed {
+            delegate?.tabOverview(self, didCloseTab: id, replacementIfEmpty: nil)
+        }
+    }
+
+    private func makeCardContextMenu(for item: TabOverviewItem) -> UIMenu {
+        var actions: [UIMenuElement] = []
+
+        if let url = item.url {
+            actions.append(
+                UIAction(title: "Copy Link", image: UIImage(systemName: "doc.on.doc")) { _ in
+                    UIPasteboard.general.url = url
+                }
+            )
+        }
+
+        actions.append(moveToGroupMenu(forTab: item.id))
+
+        if Self.tabs(allTabs, in: mode).count > 1 {
+            actions.append(
+                UIAction(
+                    title: "Close Other Tabs",
+                    image: UIImage(systemName: "xmark.circle"),
+                    attributes: .destructive
+                ) { [weak self] _ in
+                    self?.closeOtherTabs(keeping: item.id)
+                }
+            )
+        }
+
+        actions.append(
+            UIAction(
+                title: "Close Tab",
+                image: UIImage(systemName: "xmark"),
+                attributes: .destructive
+            ) { [weak self] _ in
+                self?.closeTab(id: item.id)
+            }
+        )
+
+        return UIMenu(children: actions)
+    }
+
     func collectionView(
         _: UICollectionView,
         contextMenuConfigurationForItemAt indexPath: IndexPath,
@@ -763,7 +864,7 @@ extension TabOverviewViewController: UICollectionViewDataSource, UICollectionVie
         let item = visibleItems[indexPath.item]
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
             guard let self else { return UIMenu() }
-            return UIMenu(children: [self.moveToGroupMenu(forTab: item.id)])
+            return self.makeCardContextMenu(for: item)
         }
     }
 }
@@ -795,8 +896,9 @@ extension TabOverviewViewController: UICollectionViewDragDelegate, UICollectionV
         at indexPath: IndexPath
     ) -> [UIDragItem] {
         guard filterQuery.isEmpty, selectedGroupID == nil, indexPath.item < visibleItems.count else { return [] }
+        let tab = visibleItems[indexPath.item]
         let item = UIDragItem(itemProvider: NSItemProvider())
-        item.localObject = visibleItems[indexPath.item].id
+        item.localObject = tab.id
         return [item]
     }
 
@@ -812,54 +914,80 @@ extension TabOverviewViewController: UICollectionViewDragDelegate, UICollectionV
     }
 
     func collectionView(
-        _: UICollectionView,
+        _ collectionView: UICollectionView,
         performDropWith coordinator: UICollectionViewDropCoordinator
     ) {
         guard filterQuery.isEmpty, selectedGroupID == nil else {
-            Logger(subsystem: "com.volcrypt.OuterView", category: "TabOverview")
-                .info("performDropWith ignored: filter or group active")
             return
         }
+
+        let destinationIndexPath: IndexPath
+        if let dest = coordinator.destinationIndexPath {
+            destinationIndexPath = dest
+        } else {
+            let section = max(0, collectionView.numberOfSections - 1)
+            let row = collectionView.numberOfItems(inSection: section)
+            destinationIndexPath = IndexPath(item: row, section: section)
+        }
+
+        guard coordinator.proposal.operation == .move else {
+            return
+        }
+
         let localItems = coordinator.items.filter { $0.dragItem.localObject is UUID }
         guard !localItems.isEmpty else {
-            Logger(subsystem: "com.volcrypt.OuterView", category: "TabOverview")
-                .info("performDropWith ignored: no local items")
             return
         }
-        let draggedIDs = localItems.compactMap { $0.dragItem.localObject as? UUID }
+
         let ids = visibleItems.map(\.id)
         guard !ids.isEmpty else {
-            Logger(subsystem: "com.volcrypt.OuterView", category: "TabOverview")
-                .info("performDropWith ignored: empty grid")
             return
         }
-        // A nil destination means past the trailing edge: append.
-        let rawDestination = coordinator.destinationIndexPath?.item ?? ids.count
+
+        let draggedIDs = localItems.compactMap { $0.dragItem.localObject as? UUID }
+        let rawDestination = destinationIndexPath.item
         let orderedIDs = Self.reorderedIDs(
             currentIDs: ids,
             draggedIDs: draggedIDs,
             destinationIndex: rawDestination
         )
+
         if orderedIDs == ids {
-            // Order unchanged: still complete each drop so the lift animates back cleanly.
             for item in localItems {
-                guard let id = item.dragItem.localObject as? UUID,
-                      let current = ids.firstIndex(of: id) else { continue }
-                coordinator.drop(item.dragItem, toItemAt: IndexPath(item: current, section: 0))
+                if let source = item.sourceIndexPath {
+                    coordinator.drop(item.dragItem, toItemAt: source)
+                } else if let id = item.dragItem.localObject as? UUID,
+                          let current = ids.firstIndex(of: id)
+                {
+                    coordinator.drop(item.dragItem, toItemAt: IndexPath(item: current, section: 0))
+                }
             }
             return
         }
-        // Update the grid model first so drop targets resolve against the
-        // post-drop order, complete each drag animation at its final index,
-        // then notify the owner (whose setItems reloads to the same order).
-        applyLocalReorder(orderedIDs: orderedIDs)
-        for item in localItems {
-            guard let id = item.dragItem.localObject as? UUID,
-                  let final = orderedIDs.firstIndex(of: id) else { continue }
-            coordinator.drop(item.dragItem, toItemAt: IndexPath(item: final, section: 0))
+
+        if localItems.count == 1,
+           let item = localItems.first,
+           let sourceIndexPath = item.sourceIndexPath
+        {
+            let targetItem = min(destinationIndexPath.item, ids.count - 1)
+            let targetIndexPath = IndexPath(item: targetItem, section: destinationIndexPath.section)
+            collectionView.performBatchUpdates({
+                self.applyLocalReorder(orderedIDs: orderedIDs)
+                collectionView.deleteItems(at: [sourceIndexPath])
+                collectionView.insertItems(at: [targetIndexPath])
+            }, completion: { _ in
+                self.delegate?.tabOverview(self, didReorderTabs: orderedIDs)
+            })
+            coordinator.drop(item.dragItem, toItemAt: targetIndexPath)
+        } else {
+            applyLocalReorder(orderedIDs: orderedIDs)
+            collectionView.reloadData()
+            for item in localItems {
+                guard let id = item.dragItem.localObject as? UUID,
+                      let final = orderedIDs.firstIndex(of: id) else { continue }
+                coordinator.drop(item.dragItem, toItemAt: IndexPath(item: final, section: 0))
+            }
+            delegate?.tabOverview(self, didReorderTabs: orderedIDs)
         }
-        Logger(subsystem: "com.volcrypt.OuterView", category: "TabOverview")
-            .info("didReorder commit count: \(orderedIDs.count, privacy: .public)")
-        delegate?.tabOverview(self, didReorderTabs: orderedIDs)
     }
 }
