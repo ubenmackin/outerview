@@ -57,6 +57,19 @@ final class HistoryStore {
         try pruneIfNeeded()
     }
 
+    /// Repairs the newest row for `url` once the page title arrives; title-only
+    /// ticks must not duplicate the commit-time row.
+    func refreshTitle(url: URL, title: String) throws {
+        var descriptor = FetchDescriptor<HistoryEntry>(
+            predicate: #Predicate { $0.url == url },
+            sortBy: [SortDescriptor(\.visitedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        guard let match = try context.fetch(descriptor).first, match.title != title else { return }
+        match.title = title
+        try context.save()
+    }
+
     func fetchRecents(limit: Int) -> [HistoryEntry] {
         var descriptor = FetchDescriptor<HistoryEntry>(
             sortBy: [SortDescriptor(\.visitedAt, order: .reverse)]

@@ -141,6 +141,38 @@ final class PersistenceStoreTests: XCTestCase {
         XCTAssertTrue(store.fetchAll().isEmpty)
     }
 
+    func testHistoryRefreshTitleUpdatesStaleRow() throws {
+        let database = try makeDatabase()
+        let store = HistoryStore(database: database)
+        try store.record(visit: PageVisit(url: url("page"), title: "example.com", visitedAt: Date(timeIntervalSince1970: 1)))
+
+        try store.refreshTitle(url: url("page"), title: "Real Title")
+
+        XCTAssertEqual(store.fetchAll().map(\.title), ["Real Title"])
+    }
+
+    func testHistoryRefreshTitleUnknownURLIsNoOp() throws {
+        let database = try makeDatabase()
+        let store = HistoryStore(database: database)
+        try store.record(visit: PageVisit(url: url("page"), title: "Page"))
+
+        try store.refreshTitle(url: url("missing"), title: "Elsewhere")
+
+        XCTAssertEqual(store.fetchAll().count, 1)
+        XCTAssertEqual(store.fetchAll().map(\.title), ["Page"])
+    }
+
+    func testHistoryRefreshTitleSameTitleChangesNothing() throws {
+        let database = try makeDatabase()
+        let store = HistoryStore(database: database)
+        try store.record(visit: PageVisit(url: url("page"), title: "Page"))
+
+        try store.refreshTitle(url: url("page"), title: "Page")
+
+        XCTAssertEqual(store.fetchAll().count, 1)
+        XCTAssertEqual(store.fetchAll().map(\.title), ["Page"])
+    }
+
     // MARK: - Tab session
 
     func testSessionSaveLoadPreservesOrderAndSelection() throws {

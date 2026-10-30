@@ -22,15 +22,22 @@ enum HostFormatter: Sendable {
         return host.isEmpty ? url.absoluteString : host
     }
 
-    /// Stable hue fraction in [0, 1) for a host, independent of the
-    /// per-process hash seed so the same host renders the same hue
-    /// on every launch.
-    nonisolated static func stableHue(forHost host: String?) -> Double {
-        guard let host, !host.isEmpty else { return 0 }
+    /// Normalized host for dedupe and hue: lowercased with a single
+    /// leading www. stripped. Other subdomains stay distinct.
+    nonisolated static func normalizedHost(_ host: String?) -> String {
+        guard let host, !host.isEmpty else { return "" }
         var normalized = host.lowercased()
         if normalized.hasPrefix("www.") {
             normalized = String(normalized.dropFirst(4))
         }
+        return normalized
+    }
+
+    /// Stable hue fraction in [0, 1) for a host, independent of the
+    /// per-process hash seed so the same host renders the same hue
+    /// on every launch.
+    nonisolated static func stableHue(forHost host: String?) -> Double {
+        let normalized = normalizedHost(host)
         guard !normalized.isEmpty else { return 0 }
         var hash = 0
         for scalar in normalized.unicodeScalars {

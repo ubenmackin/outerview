@@ -8,7 +8,7 @@ Architectural blueprint for **OuterView**: a Safari-faithful web browser built f
 
 Stock Safari pins Duo web content to a narrow 382 pt strip beside a static side rail. OuterView claims the entire outer display edge-to-edge and replicates Safari's tactile feel while making chrome transient: controls disappear when reading starts.
 
-1. **Chrome is Transient**: Chrome steps aside for content. The side rail hides on drag began or the first downward scroll movement. The address pill minifies after 24 pt of accumulated downward scroll. An upward scroll of 32 pt restores the address pill and rail.
+1. **Chrome is Transient**: Chrome steps aside for content. The side rail hides after 8 pt of accumulated downward scroll; finger-down alone only resets the gesture accumulators and never hides visible chrome. The address pill minifies after 24 pt of accumulated downward scroll. An upward scroll of 32 pt restores the address pill and rail.
 2. **Quick-Access Menu Button**: When the rail collapses on downward scroll, a compact floating menu button drops down at the bottom right. Tapping it immediately pops the rail back out without requiring the user to scroll backwards.
 3. **Wall-to-Wall Content**: WKWebView fills the window edge-to-edge; liquid glass chrome floats above it and adjusts content insets dynamically.
 4. **Contextual Command Rail**: The 84 pt right system column is an adaptive command rail driven by `RailMode` (`.browsing`, `.startPage`, `.library`, `.bookmarkEditor`). Contextual actions (Cancel, Save, Edit, Clear, Done) are surfaced directly in the rail rather than crammed into top navigation headers. Tab overview bypasses `RailMode` and composes its own rail via `TabOverviewViewController.applyRailItems(to:)`.
@@ -56,7 +56,7 @@ Sources/
 │   ├── WebPage/          # WKWebView controller, tab pool, LRU eviction, element context menus
 │   ├── Reader/           # Reader-mode DOM transform engine (same WKWebView document)
 │   ├── StartPage/        # Unified start page, favorites grid, recently viewed list
-│   ├── Bookmarks/        # Four-tab library container (Favorites/Bookmarks/History/Reading List), browser, editor
+│   ├── Bookmarks/       # Four-tab library container (Favorites/Bookmarks/History/Reading List), browser, editor
 │   ├── Favorites/        # Large Safari-style favicon tiles & grid view
 │   ├── History/          # Chronologically segmented history list & segmentation logic
 │   └── TabOverview/      # Visual tab grid overview, groups sheet, card close/flick dismiss, search filtering
@@ -95,7 +95,7 @@ Sources/
 - **`WebPageController`**: Wraps `WKWebView`, manages navigation delegates, script injection, progress observation, pull-to-refresh, certificate verification, and snapshot caching. P1 adds: `WKUIDelegate` element context menus (links/images via `ElementContextMenu`), the download policy (downloadable navigation actions and responses return `.download` so WebKit drives the transfer with the original request; `DownloadsManager` completes each `WKDownload` via `didBecome` + `decideDestinationUsing`), find-in-page JS engine (`findText`/`findStep`/`clearFind`), reader-mode DOM transforms (`toggleReader`/`setReaderTheme`/`setReaderFontSize`, guarded by a document generation so stale extractions never touch a new document), and per-site `pageZoom` application (`SiteZoomStore`).
 - **`TabPool`**: Manages the lifecycle of live tab controllers. Enforces a 30-tab live memory cap using an LRU eviction policy (evicting inactive WKWebViews to disk snapshots while preserving tab state and navigation history).
 - **`TabOverviewViewController`**: Visual card grid (cols = `max(2, floor(width / 180))`) featuring snapshot previews, close buttons, real-time title search filtering, and **tab groups** (card context menu `makeCardContextMenu`: Copy Link + Move to Group + Close Other Tabs + Close Tab; zero-member groups hidden). Bottom chrome is ONE Safari-style glass capsule owned by **`TabGroupPickerBar`** (`Sources/Browser/TabOverview/TabGroupPickerBar.swift`): a segmented row — `Private`, `<N> Tabs`, and one named segment per non-empty tab group — with a `slidingPillView` marking the active selection; the capsule's accessibility value remains "<other mode> · <N> Tabs" via the shared `compactSegments`/`compactTitle` builder. Tapping the active segment opens the **`TabGroupsSheetController`** sheet (medium detent, grabber); tapping an inactive segment slides the pill over and applies that selection; a horizontal scrub slides the pill between segments with selection haptics, applies each hovered selection live, and commits on release. Mode/group application lives in **`TabOverviewViewController+Picker.swift`** (`updatePickerBar`, `applyPickerSelection`, `applySelectionBatched`, `showGroupsSheet` sheet presentation). Group membership management stays inside the sheet; the capsule exposes no separate groups capsule row.
-- **`TabGroupsSheetController`**: Standalone UIKit sheet (Sources/Browser/TabOverview/) listing All (Standard), Private, existing groups with counts and active checkmarks, and both create rows ("New Empty Tab Group", "New Tab Group with N Tabs" — the latter hidden at zero standard tabs). Under the header sits a `pillControl: UISegmentedControl` mirroring `LibraryTabBar`: segments are derived from the rows via `Segment(row:)` (All/Private/groups; create rows map to `nil` and have no pill equivalent), so the All/Private/group mapping lives in exactly one place. Tapping a pill segment or a table row selects that mode/group and dismisses the sheet; long-press (context menu) on a group row offers Rename/Delete, which keep the sheet open. A trailing blue checkmark button dismisses the sheet. It knows nothing of `TabOverviewViewController`'s internals: it consumes a `TabGroupsSheetState` snapshot via `stateProvider` and emits `Action`s. The sheet re-reads state on `viewWillAppear` and after actions that keep it open.
+- **`TabGroupsSheetController`**: Standalone UIKit sheet (Sources/Browser/TabOverview/) listing All (Standard), Private, existing groups with counts and active checkmarks, and both create rows ("New Empty Tab Group", "New Tab Group with N Tabs" — the latter hidden at zero standard tabs). Under the header sits a `pillControl: UISegmentedControl` mirroring `LibraryTabBar` (segments are derived from the rows via `Segment(row:)`, so the All/Private/group mapping lives in exactly one place). Tapping a pill segment or a table row selects that mode/group and dismisses the sheet; long-press (context menu) on a group row offers Rename/Delete, which keep the sheet open. A trailing blue checkmark button dismisses the sheet. It knows nothing of `TabOverviewViewController`'s internals: it consumes a `TabGroupsSheetState` snapshot via `stateProvider` and emits `Action`s. The sheet re-reads state on `viewWillAppear` and after actions that keep it open.
 - **Group delegate protocol**: `TabOverviewViewControllerDelegate.tabOverview(_:didCreateGroup:withTabIDs:)` is the single own-side batch creation method; the owner (`BrowserRootViewController+Overview.swift`) creates the group and assigns every listed standard tab (empty array = empty group). Private tabs are never assigned.
 - **`TabCardCell`**: Card with preview + favicon/title/host strip, a visible 28 pt close button at the preview's top-left, and horizontal-only immediate swipe (`isImmediateSwipe<0.30s`, `abs(vx)>abs(vy)*1.2`): the swipe drives a `cardContainer` transform with `cancelsTouchesInView=true` and `simultaneous=false`, dismissing via `shouldDismissSwipe`/`shouldBeginSwipe` thresholds.
 - **`ElementContextMenu`**: Pure UIMenu builder — the canonical item owner. Links: Open in New Tab, Add to Reading List, Copy Link, Share. Images: Open in New Tab, Save to Photos, Copy Image, Share. Photos saving declares `NSPhotoLibraryAddUsageDescription`.
@@ -107,7 +107,7 @@ Sources/
 - **`BookmarkEditorView` + `BookmarkEditorModel`**: Dedicated bookmark editing surface for modifying title, URL, and destination folder using `BookmarkLocationTree`. Directly integrated with side-rail Cancel/Save buttons.
 - **`FavoritesGridView` + `FavoriteTileCell`**: Safari-faithful grid displaying large custom-rendered favicon tiles with rounded corners.
 - **`HistoryListView` + `HistorySegmenter`**: Chronologically partitioned browsing history (Today Morning / Afternoon / Evening, Yesterday Morning / Afternoon / Evening, Previous 7 Days, Older) with swipe-to-delete and full clearance.
-- **`ReadingListView`**: Saved-pages list mirroring the History list pattern (insetGrouped rows, favicon, semibold unread titles, swipe-to-delete, display/filter/select via the rail ellipsis menu with batch deletion in selection mode). P1 loads saved pages as ordinary URLs; no offline snapshot cache.
+- **`ReadingListView`**: Saved-pages list mirroring the History list pattern (insetGrouped rows, favicon, semibold unread titles, swipe-to-delete, display/filter/select through the rail ellipsis menu with batch deletion in selection mode). P1 loads saved pages as ordinary URLs; no offline snapshot cache.
 
 ### 4.5 Reader Mode & Per-Site Zoom
 - **`ReaderMode`** (pure engine): extraction script (idempotent, `window.__outerviewReader` namespace; ≥ 60-char paragraph heuristic; not readerable when text < 200 chars), `replaceBodyScript` applying light/sepia/dark themes and 14–28 pt font (default 20) inline on the live document, restore via `webView.reload()`. Preferences persist in `UserDefaults` keys `readerTheme` / `readerFontSize`. Reader state clears on every navigation/reload.
@@ -116,7 +116,7 @@ Sources/
 ### 4.6 Data Persistence & Storage
 - **`OuterViewDatabase`**: Central SwiftData `@ModelContainer` wrapper providing thread-safe main-actor model contexts and in-memory options for unit testing.
 - **`BookmarkStore`**: Handles bookmark trees, folder management, deduplication, and favorites flags.
-- **`HistoryStore`**: Records visits, enforces a 10,000-entry retention cap, and performs date-range lookups.
+- **`HistoryStore`**: Records visits, refreshes the newest row's title when the page title arrives after the commit snapshot, enforces a 10,000-entry cap, and performs date-range lookups.
 - **`TabStore`**: Persists active tabs and session state; P1 adds tab-group CRUD (create/rename with 32-char clamp, delete orphans members to ungrouped, assign). Private tabs are strictly filtered out and never written to disk.
 - **`RecentSearchStore`**: Tracks recent search queries with individual or complete clearance.
 - **`ReadingListStore`**: URL-deduped (earliest wins, empty-title refresh), 2000-entry cap with prune-oldest, read-state flags, ordering, and clearance.
@@ -128,8 +128,10 @@ Sources/
 
 ### 5.1 Chrome Scroll State Machine
 ```
-[User Down-Scroll] ──> Accumulate Delta ≥ 0 pt  ──> Rail Collapses; Quick Menu Appears
-                   ──> Accumulate Delta ≥ 24 pt ──> Address Pill Minifies (30 pt)
+[Finger Down]      ──> Resets gesture accumulators only; visible chrome stays
+
+[User Down-Scroll] ──> Accumulate Delta ≥ 8 pt  ──> Rail Collapses; Quick Menu Appears
+                    ──> Accumulate Delta ≥ 24 pt ──> Address Pill Minifies (30 pt)
 
 [User Up-Scroll]   ──> Accumulate Delta ≥ 32 pt ──> Rail Expands; Address Pill Restores (44 pt)
 

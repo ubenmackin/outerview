@@ -59,34 +59,96 @@ final class StartPageViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.recents.first?.title, "New")
     }
 
-    func testDistinctPathsOnSameHostStaySeparate() throws {
-        let newerURL = try XCTUnwrap(URL(string: "https://example.com/a"))
-        let olderURL = try XCTUnwrap(URL(string: "https://example.com/b"))
+    func testSameHostDistinctURLsCollapseToNewestRow() throws {
+        let newerURL = try XCTUnwrap(URL(string: "https://news.google.com/article-new"))
+        let olderURL = try XCTUnwrap(URL(string: "https://news.google.com/article-old"))
         let newer = HistoryEntry(
-            title: "A",
+            title: "Newer",
             url: newerURL,
             visitedAt: Date(timeIntervalSince1970: 2)
         )
         let older = HistoryEntry(
-            title: "B",
+            title: "Older",
             url: olderURL,
             visitedAt: Date(timeIntervalSince1970: 1)
         )
 
-        let recents = StartPageViewModel.sortedRecents([newer, older])
+        let recents = StartPageViewModel.sortedRecents([older, newer])
 
-        XCTAssertEqual(recents.count, 2)
-        XCTAssertEqual(recents.map(\.title), ["A", "B"])
+        XCTAssertEqual(recents.count, 1)
+        XCTAssertEqual(recents.first?.title, "Newer")
+        XCTAssertEqual(recents.first?.url.absoluteString, "https://news.google.com/article-new")
     }
 
-    func testMoreThanEightUniqueVisitsShowsEightNewestRows() throws {
+    func testWwwStrippingCollapsesToSingleRow() throws {
+        let bareURL = try XCTUnwrap(URL(string: "https://example.com/article"))
+        let wwwURL = try XCTUnwrap(URL(string: "https://WWW.Example.com/other"))
+        let bare = HistoryEntry(
+            title: "Bare",
+            url: bareURL,
+            visitedAt: Date(timeIntervalSince1970: 1)
+        )
+        let www = HistoryEntry(
+            title: "WWW",
+            url: wwwURL,
+            visitedAt: Date(timeIntervalSince1970: 2)
+        )
+
+        let recents = StartPageViewModel.sortedRecents([bare, www])
+
+        XCTAssertEqual(recents.count, 1)
+        XCTAssertEqual(recents.first?.title, "WWW")
+    }
+
+    func testMobileSubdomainStaysSeparateFromBareHost() throws {
+        let bareURL = try XCTUnwrap(URL(string: "https://slashdot.org/story"))
+        let mobileURL = try XCTUnwrap(URL(string: "https://m.slashdot.org/story"))
+        let bare = HistoryEntry(
+            title: "Bare",
+            url: bareURL,
+            visitedAt: Date(timeIntervalSince1970: 1)
+        )
+        let mobile = HistoryEntry(
+            title: "Mobile",
+            url: mobileURL,
+            visitedAt: Date(timeIntervalSince1970: 2)
+        )
+
+        let recents = StartPageViewModel.sortedRecents([bare, mobile])
+
+        XCTAssertEqual(recents.count, 2)
+        XCTAssertEqual(recents.map(\.title), ["Mobile", "Bare"])
+    }
+
+    func testNewestRowWinsTitleAcrossDistinctURLs() throws {
+        let olderURL = try XCTUnwrap(URL(string: "https://example.com/a"))
+        let newerURL = try XCTUnwrap(URL(string: "https://example.com/b"))
+        let older = HistoryEntry(
+            title: "Old",
+            url: olderURL,
+            visitedAt: Date(timeIntervalSince1970: 1)
+        )
+        let newer = HistoryEntry(
+            title: "New",
+            url: newerURL,
+            visitedAt: Date(timeIntervalSince1970: 2)
+        )
+
+        let recents = StartPageViewModel.sortedRecents([older, newer])
+
+        XCTAssertEqual(recents.count, 1)
+        XCTAssertEqual(recents.first?.title, "New")
+        XCTAssertEqual(recents.first?.url.absoluteString, "https://example.com/b")
+    }
+
+    func testMoreThanEightUniqueHostsShowsEightNewestRows() throws {
         let database = try makeDatabase()
         let bookmarkStore = BookmarkStore(database: database)
         let historyStore = HistoryStore(database: database)
         for index in 0 ..< 12 {
             try record(
                 historyStore,
-                urlString: "https://example.com/\(index)",
+                urlString: "https://site\(index).com/page",
                 title: "Page \(index)",
                 at: TimeInterval(index)
             )
