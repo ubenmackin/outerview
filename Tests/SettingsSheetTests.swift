@@ -27,20 +27,20 @@ final class SettingsSheetTests: XCTestCase {
         return nil
     }
 
-    func testPresentSetsFlagShowsOverlayAndRailMode() throws {
+    func testPresentSetsFlagShowsContainerAndRailMode() throws {
         let root = try makeRoot()
         XCTAssertFalse(root.isSettingsVisible)
-        XCTAssertTrue(root.settingsOverlay.isHidden)
+        XCTAssertTrue(root.settingsContainer.isHidden)
 
         root.presentSettingsSheet()
 
         XCTAssertTrue(root.isSettingsVisible)
-        XCTAssertFalse(root.settingsOverlay.isHidden)
+        XCTAssertFalse(root.settingsContainer.isHidden)
         XCTAssertNotNil(root.settingsHosting)
         XCTAssertEqual(root.currentRailMode, .settings)
     }
 
-    func testDismissClearsFlagHidesOverlayAndRestoresRailMode() throws {
+    func testDismissClearsFlagHidesContainerAndRestoresRailMode() throws {
         let root = try makeRoot()
         root.presentSettingsSheet()
         XCTAssertEqual(root.currentRailMode, .settings)
@@ -48,7 +48,7 @@ final class SettingsSheetTests: XCTestCase {
         root.dismissSettingsSheet()
 
         XCTAssertFalse(root.isSettingsVisible)
-        XCTAssertTrue(root.settingsOverlay.isHidden)
+        XCTAssertTrue(root.settingsContainer.isHidden)
         XCTAssertNil(root.settingsHosting)
         XCTAssertEqual(root.currentRailMode, .browsing)
     }
@@ -102,7 +102,7 @@ final class SettingsSheetTests: XCTestCase {
         done.sendActions(for: .touchUpInside)
 
         XCTAssertFalse(root.isSettingsVisible)
-        XCTAssertTrue(root.settingsOverlay.isHidden)
+        XCTAssertTrue(root.settingsContainer.isHidden)
         XCTAssertNil(root.settingsHosting)
     }
 
@@ -111,14 +111,14 @@ final class SettingsSheetTests: XCTestCase {
         root.presentSettingsSheet()
         let hosting = try XCTUnwrap(root.settingsHosting)
         let hostedView: UIView = hosting.view
-        XCTAssertTrue(hostedView.superview === root.settingsOverlay.cardView)
+        XCTAssertTrue(hostedView.superview === root.settingsContainer)
 
         root.dismissSettingsSheet()
 
         XCTAssertNil(root.settingsHosting)
         XCTAssertNil(hostedView.superview)
         XCTAssertNil(hosting.parent)
-        XCTAssertTrue(root.settingsOverlay.isHidden)
+        XCTAssertTrue(root.settingsContainer.isHidden)
     }
 
     func testPresentSettingsDoesNotPresentModally() throws {
@@ -126,26 +126,42 @@ final class SettingsSheetTests: XCTestCase {
         root.presentSettings()
 
         XCTAssertTrue(root.isSettingsVisible)
-        XCTAssertFalse(root.settingsOverlay.isHidden)
+        XCTAssertFalse(root.settingsContainer.isHidden)
         XCTAssertNil(root.presentedViewController)
 
         root.dismissSettingsSheet()
         XCTAssertNil(root.presentedViewController)
     }
 
-    func testSettingsCardAvoidsRailColumn() throws {
+    func testSettingsContainerFillsDisplayEdgeToEdge() throws {
         let root = try makeRoot()
-        root.presentSettingsSheet()
-        root.settingsOverlay.layoutIfNeeded()
+        root.view.layoutIfNeeded()
+        XCTAssertEqual(root.settingsContainer.frame, root.view.bounds)
 
-        let card = root.settingsOverlay.cardView.frame
-        XCTAssertGreaterThan(card.width, 0)
-        let railX = SideRailView.columnOriginX(
-            boundsMaxX: root.view.bounds.maxX,
-            safeAreaRight: root.view.safeAreaInsets.right
-        )
-        XCTAssertGreaterThan(railX, card.maxX)
-        XCTAssertEqual(root.settingsOverlay.cardView.layer.cornerRadius, SheetCardOverlayView.cornerRadius)
+        root.presentSettingsSheet()
+        root.view.layoutIfNeeded()
+
+        XCTAssertEqual(root.settingsContainer.frame, root.view.bounds)
+        let hosting = try XCTUnwrap(root.settingsHosting)
+        XCTAssertTrue(hosting.view.superview === root.settingsContainer)
+        XCTAssertTrue(root.settingsContainer.subviews.contains(hosting.view))
+    }
+
+    func testLibraryFillsDisplayEdgeToEdge() throws {
+        let root = try makeRoot()
+        root.view.layoutIfNeeded()
+        XCTAssertTrue(root.bookmarksLibraryView.superview === root.view)
+        XCTAssertEqual(root.bookmarksLibraryView.frame, root.view.bounds)
+
+        root.openBookmarksLibrary(tab: .bookmarks)
+        root.view.layoutIfNeeded()
+
+        XCTAssertFalse(root.bookmarksLibraryView.isHidden)
+        XCTAssertEqual(root.bookmarksLibraryView.frame, root.view.bounds)
+        XCTAssertTrue(root.bookmarksLibraryView.superview === root.view)
+
+        root.closeBookmarksLibrary()
+        XCTAssertTrue(root.bookmarksLibraryView.isHidden)
     }
 
     func testSettingsCallbacksRemainWired() throws {

@@ -85,6 +85,53 @@ final class FavoritesReorderTests: XCTestCase {
     }
 
     @MainActor
+    func testApplyOrderedFavoritesMapping() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let store = BookmarkStore(database: database)
+        for (index, title) in ["A", "B", "C"].enumerated() {
+            let url = try XCTUnwrap(URL(string: "https://example.com/\(title.lowercased())"))
+            try store.add(
+                title: title,
+                url: url,
+                isFavorite: true,
+                addedDate: Date(timeIntervalSince1970: TimeInterval(index))
+            )
+        }
+        let grid = FavoritesGridView(bookmarkStore: store)
+        let initialIDs = grid.favorites.map(\.id)
+        XCTAssertEqual(initialIDs.count, 3)
+        let ordered = FavoritesGridView.reorderedIDs(
+            currentIDs: initialIDs,
+            draggedIDs: [initialIDs[0]],
+            destinationIndex: 2
+        )
+        XCTAssertTrue(grid.applyOrderedFavorites(ordered))
+        XCTAssertEqual(grid.favorites.map(\.id), ordered)
+    }
+
+    @MainActor
+    func testApplyOrderedFavoritesMissingIDReturnsFalse() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let store = BookmarkStore(database: database)
+        for (index, title) in ["A", "B", "C"].enumerated() {
+            let url = try XCTUnwrap(URL(string: "https://example.com/\(title.lowercased())"))
+            try store.add(
+                title: title,
+                url: url,
+                isFavorite: true,
+                addedDate: Date(timeIntervalSince1970: TimeInterval(index))
+            )
+        }
+        let grid = FavoritesGridView(bookmarkStore: store)
+        let initialIDs = grid.favorites.map(\.id)
+        XCTAssertEqual(initialIDs.count, 3)
+        var bad = initialIDs
+        bad[1] = UUID()
+        XCTAssertFalse(grid.applyOrderedFavorites(bad))
+        XCTAssertEqual(grid.favorites.map(\.id), initialIDs)
+    }
+
+    @MainActor
     func testStoreRoundTripReflectsReorder() throws {
         let database = try OuterViewDatabase(inMemory: true)
         let store = BookmarkStore(database: database)

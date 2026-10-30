@@ -13,7 +13,7 @@ final class FavoritesGridView: UIView {
     var onDeleteFavorite: ((UUID) -> Void)?
 
     private let bookmarkStore: BookmarkStore
-    private var favorites: [Bookmark] = []
+    private(set) var favorites: [Bookmark] = []
 
     private let collectionView: UICollectionView
     private let flowLayout: UICollectionViewFlowLayout
@@ -74,6 +74,18 @@ final class FavoritesGridView: UIView {
         collectionView.isHidden = favorites.isEmpty
         emptyLabel.isHidden = !favorites.isEmpty
         collectionView.reloadData()
+    }
+
+    func applyOrderedFavorites(_ ordered: [UUID]) -> Bool {
+        let byID = Dictionary(uniqueKeysWithValues: favorites.map { ($0.id, $0) })
+        var rebuilt: [Bookmark] = []
+        rebuilt.reserveCapacity(ordered.count)
+        for id in ordered {
+            guard let bookmark = byID[id] else { return false }
+            rebuilt.append(bookmark)
+        }
+        favorites = rebuilt
+        return true
     }
 
     override func layoutSubviews() {
@@ -219,7 +231,7 @@ extension FavoritesGridView: UICollectionViewDragDelegate, UICollectionViewDropD
             draggedIDs: draggedIDs,
             destinationIndex: rawDestination
         )
-        guard ordered != currentIDs else {
+        guard ordered != currentIDs, localItems.count == 1, let item = localItems.first else {
             for item in localItems {
                 if let source = item.sourceIndexPath {
                     coordinator.drop(item.dragItem, toItemAt: source)
@@ -227,36 +239,26 @@ extension FavoritesGridView: UICollectionViewDragDelegate, UICollectionViewDropD
             }
             return
         }
-        let byID = Dictionary(uniqueKeysWithValues: favorites.map { ($0.id, $0) })
-        var reordered: [Bookmark] = []
-        reordered.reserveCapacity(ordered.count)
-        for id in ordered {
-            guard let bookmark = byID[id] else {
-                reload()
-                return
-            }
-            reordered.append(bookmark)
-        }
-        favorites = reordered
-        do {
-            try bookmarkStore.reorderBookmarks(ordered)
-        } catch {
-            Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
-                .error("reorderFavorites failed: \(error.localizedDescription, privacy: .public)")
+        guard let sourceIndexPath = item.sourceIndexPath else {
             reload()
             return
         }
-        collectionView.reloadData()
-        let keptID = draggedIDs.first(where: { currentIDs.contains($0) })
-        for item in localItems {
-            guard let id = item.dragItem.localObject as? UUID else { continue }
-            if let kept = keptID, id == kept,
-               let final = ordered.firstIndex(of: id)
-            {
-                coordinator.drop(item.dragItem, toItemAt: IndexPath(item: final, section: 0))
-            } else if let source = item.sourceIndexPath {
-                coordinator.drop(item.dragItem, toItemAt: source)
+        let targetItem = min(max(rawDestination, 0), ordered.count - 1)
+        let targetIndexPath = IndexPath(item: targetItem, section: 0)
+        collectionView.performBatchUpdates({
+            _ = applyOrderedFavorites(ordered)
+            collectionView.deleteItems(at: [sourceIndexPath])
+            collectionView.insertItems(at: [targetIndexPath])
+        }, completion: { [weak self] _ in
+            guard let self else { return }
+            do {
+                try self.bookmarkStore.reorderBookmarks(ordered)
+            } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
+                    .error("reorderFavorites failed: \(error.localizedDescription, privacy: .public)")
+                self.reload()
             }
-        }
+        })
+        coordinator.drop(item.dragItem, toItemAt: targetIndexPath)
     }
 }

@@ -90,8 +90,7 @@ final class BrowserRootViewController: UIViewController {
     let findView = FindInPageView()
     let editorView = AddressEditorView()
     let bookmarksLibraryView: BookmarksLibraryView
-    let libraryOverlay = SheetCardOverlayView()
-    let settingsOverlay = SheetCardOverlayView()
+    let settingsContainer = UIView()
     private(set) var settingsHosting: UIViewController?
     private(set) var isSettingsVisible = false
     private let bookmarkEditorContainer = UIView()
@@ -285,8 +284,8 @@ final class BrowserRootViewController: UIViewController {
         view.bringSubviewToFront(pillView)
         view.bringSubviewToFront(findView)
         view.bringSubviewToFront(editorView)
-        view.bringSubviewToFront(libraryOverlay)
-        view.bringSubviewToFront(settingsOverlay)
+        view.bringSubviewToFront(bookmarksLibraryView)
+        view.bringSubviewToFront(settingsContainer)
         view.bringSubviewToFront(bookmarkEditorContainer)
         view.bringSubviewToFront(overviewView)
         view.bringSubviewToFront(railView)
@@ -372,16 +371,15 @@ final class BrowserRootViewController: UIViewController {
     }
 
     private func setupLibrary() {
-        libraryOverlay.translatesAutoresizingMaskIntoConstraints = false
-        libraryOverlay.isHidden = true
-        view.addSubview(libraryOverlay)
+        bookmarksLibraryView.translatesAutoresizingMaskIntoConstraints = false
+        bookmarksLibraryView.isHidden = true
+        view.addSubview(bookmarksLibraryView)
         NSLayoutConstraint.activate([
-            libraryOverlay.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            libraryOverlay.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            libraryOverlay.topAnchor.constraint(equalTo: view.topAnchor),
-            libraryOverlay.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            bookmarksLibraryView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bookmarksLibraryView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            bookmarksLibraryView.topAnchor.constraint(equalTo: view.topAnchor),
+            bookmarksLibraryView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
-        libraryOverlay.setContent(bookmarksLibraryView)
         if let bookmarkStore, let historyStore, let readingListStore {
             bookmarksLibraryView.configureStores(
                 bookmarkStore: bookmarkStore,
@@ -413,14 +411,15 @@ final class BrowserRootViewController: UIViewController {
     }
 
     private func setupSettings() {
-        settingsOverlay.translatesAutoresizingMaskIntoConstraints = false
-        settingsOverlay.isHidden = true
-        view.addSubview(settingsOverlay)
+        settingsContainer.translatesAutoresizingMaskIntoConstraints = false
+        settingsContainer.backgroundColor = .systemBackground
+        settingsContainer.isHidden = true
+        view.addSubview(settingsContainer)
         NSLayoutConstraint.activate([
-            settingsOverlay.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            settingsOverlay.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            settingsOverlay.topAnchor.constraint(equalTo: view.topAnchor),
-            settingsOverlay.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            settingsContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            settingsContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            settingsContainer.topAnchor.constraint(equalTo: view.topAnchor),
+            settingsContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
     }
 
@@ -429,11 +428,18 @@ final class BrowserRootViewController: UIViewController {
         settingsHosting?.view.removeFromSuperview()
         settingsHosting?.removeFromParent()
         addChild(hosting)
-        settingsOverlay.setContent(hosting.view)
+        hosting.view.translatesAutoresizingMaskIntoConstraints = false
+        settingsContainer.addSubview(hosting.view)
+        NSLayoutConstraint.activate([
+            hosting.view.leadingAnchor.constraint(equalTo: settingsContainer.leadingAnchor),
+            hosting.view.topAnchor.constraint(equalTo: settingsContainer.topAnchor),
+            hosting.view.bottomAnchor.constraint(equalTo: settingsContainer.bottomAnchor),
+            hosting.view.trailingAnchor.constraint(equalTo: settingsContainer.safeAreaLayoutGuide.trailingAnchor)
+        ])
         hosting.didMove(toParent: self)
         settingsHosting = hosting
         isSettingsVisible = true
-        settingsOverlay.isHidden = false
+        settingsContainer.isHidden = false
         bringChromeToFront()
         updateRailItems()
         applyRailViews(animated: true)
@@ -441,7 +447,7 @@ final class BrowserRootViewController: UIViewController {
 
     func dismissSettingsSheet() {
         isSettingsVisible = false
-        settingsOverlay.isHidden = true
+        settingsContainer.isHidden = true
         settingsHosting?.view.removeFromSuperview()
         settingsHosting?.removeFromParent()
         settingsHosting = nil
@@ -511,14 +517,14 @@ final class BrowserRootViewController: UIViewController {
         let resolved = tab ?? LibraryTabBar.storedTab(defaults: selectionDefaults)
         isLibraryVisible = true
         bookmarksLibraryView.open(tab: resolved)
-        libraryOverlay.isHidden = false
+        bookmarksLibraryView.isHidden = false
         updateLibraryRailItems(for: resolved)
         bringChromeToFront()
     }
 
     func closeBookmarksLibrary() {
         isLibraryVisible = false
-        libraryOverlay.isHidden = true
+        bookmarksLibraryView.isHidden = true
         updateRailItems()
     }
 
