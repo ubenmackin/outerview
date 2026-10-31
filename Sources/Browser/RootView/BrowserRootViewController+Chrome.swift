@@ -30,6 +30,7 @@ extension BrowserRootViewController {
             if commands.rail != nil || commands.pill != nil {
                 applyTopBarViews(animated: animated)
             }
+            applyContentInsets()
             return
         }
         if commands.pill != nil {
@@ -38,16 +39,19 @@ extension BrowserRootViewController {
         if commands.rail != nil || commands.pill != nil {
             applyRailViews(animated: animated)
         }
+        applyContentInsets()
     }
 
     func applyChromeViews(animated: Bool) {
         if chromePlacement == .regular {
             applyPillViews(animated: animated)
             applyTopBarViews(animated: animated)
+            applyContentInsets()
             return
         }
         applyPillViews(animated: animated)
         applyRailViews(animated: animated)
+        applyContentInsets()
     }
 
     /// Single owner for regular toolbar visibility: editing/overview shows
@@ -84,6 +88,9 @@ extension BrowserRootViewController {
 
     func applyTopBarViews(animated _: Bool) {
         updateToolbarVisibility(for: chromeController.state)
+        updateTopBarPinning(for: chromePlacement)
+        updateHeaderBackgrounds()
+        updateStartPageTop()
     }
 
     // MARK: - Chrome applier (single owner)
@@ -110,15 +117,127 @@ extension BrowserRootViewController {
     /// itself; web content keeps rendering under the chrome and only its
     /// scrollable range grows.
     func applyContentInsets() {
+        guard isViewLoaded else { return }
+        let placement = chromePlacement
+        let state = chromeController.state
+        let stripVisible = !tabStripView.isHidden
+        let newTop = Self.topContentInset(for: placement, state: state, stripVisible: stripVisible)
+        let newAdditionalTop = Self.additionalSafeAreaTopInset(for: placement, state: state)
+        if additionalSafeAreaInsets.top != newAdditionalTop {
+            additionalSafeAreaInsets.top = newAdditionalTop
+        }
         let systemBottom = view.safeAreaInsets.bottom
         let bottom = Self.contentBottomInset(systemBottomInset: systemBottom)
         if let webView = peekActivePage()?.webView {
-            let insets = UIEdgeInsets(top: 0, left: 0, bottom: bottom, right: 0)
+            let oldTop = webView.obscuredContentInsets.top
+            let insets = UIEdgeInsets(top: newTop, left: 0, bottom: bottom, right: 0)
             if webView.obscuredContentInsets != insets {
                 webView.obscuredContentInsets = insets
+                if oldTop != newTop {
+                    let current = webView.scrollView.contentOffset
+                    let compensated = Self.compensatedOffset(
+                        current: current,
+                        oldTop: oldTop,
+                        newTop: newTop
+                    )
+                    let scrollView = webView.scrollView
+                    let maxOffsetY = scrollView.contentSize.height - scrollView.bounds.height + bottom
+                    let clampedY = min(max(compensated.y, -newTop), max(maxOffsetY, -newTop))
+                    webView.scrollView.contentOffset = CGPoint(x: compensated.x, y: clampedY)
+                }
             }
         }
         startPageView?.setBottomChromeInset(max(0, bottom - systemBottom))
+    }
+
+    var isHeaderCollapsed: Bool {
+        guard chromePlacement == .regular else { return false }
+        if chromeController.state.pill == .editing {
+            return false
+        }
+        return chromeController.state.rail == .hidden
+    }
+
+    func updateTopBarPinning(for placement: ChromePlacement) {
+        guard isViewLoaded else { return }
+        if placement == .regular {
+            topBarTopToSafeAreaConstraint?.isActive = false
+            topBarTopToViewConstraint?.isActive = true
+            if let toView = topBarTopToViewConstraint {
+                topBarTopConstraint = toView
+            }
+            topBarTrailingConstraint.constant = -Self.regularTrailingClearance
+        } else {
+            topBarTopToViewConstraint?.isActive = false
+            topBarTopToSafeAreaConstraint?.isActive = true
+            if let toSafe = topBarTopToSafeAreaConstraint {
+                topBarTopConstraint = toSafe
+            }
+            topBarTrailingConstraint.constant = 0
+        }
+    }
+
+    func updateHeaderBackgrounds() {
+        guard isViewLoaded else { return }
+        let collapsed = isHeaderCollapsed
+        topBarView.applyHeaderBackground(isCollapsed: collapsed)
+        tabStripView.applyHeaderBackground(isCollapsed: collapsed)
+        ensureHeaderRemnant()
+        headerRemnantView?.isHidden = !collapsed || chromePlacement != .regular
+    }
+
+    private func ensureHeaderRemnant() {
+        if headerRemnantView == nil {
+            let remnant = UIVisualEffectView(effect: GlassEffect.make())
+            remnant.translatesAutoresizingMaskIntoConstraints = false
+            remnant.isHidden = true
+            remnant.isUserInteractionEnabled = false
+            view.addSubview(remnant)
+            NSLayoutConstraint.activate([
+                remnant.topAnchor.constraint(equalTo: view.topAnchor),
+                remnant.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                remnant.trailingAnchor.constraint(
+                    equalTo: view.trailingAnchor,
+                    constant: -Self.regularTrailingClearance
+                ),
+                remnant.heightAnchor.constraint(equalToConstant: TopBarView.barHeight)
+            ])
+            headerRemnantView = remnant
+            bringChromeToFront()
+        }
+    }
+
+    func updateStartPageTop() {
+        guard isViewLoaded else { return }
+        if startPageTopToStripConstraint == nil {
+            let toStrip = startPageContainer.topAnchor.constraint(equalTo: tabStripView.bottomAnchor)
+            toStrip.isActive = false
+            startPageTopToStripConstraint = toStrip
+        }
+        if startPageTopToBarConstraint == nil {
+            let toBar = startPageContainer.topAnchor.constraint(equalTo: topBarView.bottomAnchor)
+            toBar.isActive = false
+            startPageTopToBarConstraint = toBar
+        }
+        guard let toContent = startPageTopToContentConstraint,
+              let toStrip = startPageTopToStripConstraint,
+              let toBar = startPageTopToBarConstraint
+        else { return }
+        if chromePlacement != .regular {
+            toStrip.isActive = false
+            toBar.isActive = false
+            toContent.isActive = true
+            return
+        }
+        if !tabStripView.isHidden {
+            toContent.isActive = false
+            toBar.isActive = false
+            toStrip.isActive = true
+        } else {
+            toContent.isActive = false
+            toStrip.isActive = false
+            toBar.isActive = true
+        }
     }
 
     func updatePillBottomOffset() {
@@ -209,6 +328,9 @@ extension BrowserRootViewController {
         }
         topBarView.isHidden = true
         railView.isHidden = false
+        updateTopBarPinning(for: .compact)
+        updateHeaderBackgrounds()
+        updateStartPageTop()
         var state = chromeController.state
         if currentRailMode == .startPage
             || currentRailMode == .bookmarkEditor

@@ -23,10 +23,12 @@ extension BrowserRootViewController {
         startPageContainer.translatesAutoresizingMaskIntoConstraints = false
         startPageContainer.backgroundColor = .systemBackground
         contentContainer.addSubview(startPageContainer)
+        let startTop = startPageContainer.topAnchor.constraint(equalTo: contentContainer.topAnchor)
+        startPageTopToContentConstraint = startTop
         NSLayoutConstraint.activate([
             startPageContainer.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             startPageContainer.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            startPageContainer.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            startTop,
             startPageContainer.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor)
         ])
 
@@ -116,11 +118,15 @@ extension BrowserRootViewController {
         topBarView.translatesAutoresizingMaskIntoConstraints = false
         topBarView.isHidden = true
         view.addSubview(topBarView)
-        topBarTopConstraint = topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
+        let toSafeArea = topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
+        let toViewTop = topBarView.topAnchor.constraint(equalTo: view.topAnchor)
+        topBarTopToSafeAreaConstraint = toSafeArea
+        topBarTopToViewConstraint = toViewTop
+        topBarTopConstraint = toSafeArea
         topBarLeadingConstraint = topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor)
         topBarTrailingConstraint = topBarView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
         NSLayoutConstraint.activate([
-            topBarTopConstraint,
+            toSafeArea,
             topBarLeadingConstraint,
             topBarTrailingConstraint
         ])
@@ -198,6 +204,9 @@ extension BrowserRootViewController {
     func setupEditor() {
         editorView.translatesAutoresizingMaskIntoConstraints = false
         editorView.isHidden = true
+        // Injected toolbar reference so the regular panel tracks the toolbar's
+        // bottom edge instead of assuming safeArea.top equals the toolbar origin.
+        editorView.toolbarAnchorView = topBarView
         view.addSubview(editorView)
         NSLayoutConstraint.activate([
             editorView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -208,6 +217,7 @@ extension BrowserRootViewController {
         editorView.onSubmit = { [weak self] text in self?.submitAddressText(text) }
         editorView.onTextChanged = { [weak self] text in self?.refreshSuggestions(for: text) }
         editorView.onSelectSuggestion = { [weak self] suggestion in self?.openSuggestion(suggestion) }
+        editorView.onDone = { [weak self] in self?.dismissStartPageOrEditing() }
     }
 
     func setupLibrary() {
@@ -421,62 +431,62 @@ extension BrowserRootViewController {
 
     func updateLibraryRailItems(for tab: LibraryTab) {
         guard isLibraryVisible else { return }
+        // Single-owner composition: the per-tab branching lives in
+        // `LibraryTabCommands.make` and both the rail and the inline header
+        // render from it, mirroring `overviewMenuActions`.
+        let readingMenu = bookmarksLibraryView.makeReadingListMenu()
+        let commands = LibraryTabCommands.make(
+            for: tab,
+            isEditingBookmarks: bookmarksLibraryView.isEditingBookmarks,
+            canClearHistory: bookmarksLibraryView.canClearHistory,
+            isInSelection: tab == .readingList && bookmarksLibraryView.isReadingListInSelectionMode,
+            canDeleteSelection: bookmarksLibraryView.canDeleteReadingListSelection,
+            hasReadingListMenu: readingMenu != nil
+        )
         var prefix: [RailAction] = []
-        var suffix: [RailAction] = [
-            .done { [weak self] in
-                self?.closeBookmarksLibrary()
-            }
-        ]
-        switch tab {
-        case .bookmarks:
-            let isEditing = bookmarksLibraryView.isEditingBookmarks
-            prefix = [
-                .addFolder { [weak self] in
-                    self?.bookmarksLibraryView.promptNewFolder()
-                },
-                .edit(isEditing: isEditing) { [weak self] in
-                    self?.bookmarksLibraryView.toggleBookmarksEdit()
-                    self?.updateLibraryRailItems(for: .bookmarks)
+        let suffix: [RailAction] = if commands.doneExitsSelection {
+            // No Library-exit action while selecting: the blue check ends
+            // selection mode first; rail exit returns once it ends.
+            [
+                .done { [weak self] in
+                    self?.bookmarksLibraryView.exitReadingListSelectionMode()
+                    self?.updateLibraryRailItems(for: .readingList)
                 }
             ]
-        case .history:
-            let canClear = bookmarksLibraryView.canClearHistory
-            prefix = [
-                .clear(isEnabled: canClear) { [weak self] in
-                    self?.bookmarksLibraryView.promptClearHistory()
+        } else {
+            [
+                .done { [weak self] in
+                    self?.closeBookmarksLibrary()
                 }
             ]
-        case .readingList:
-            if bookmarksLibraryView.isReadingListInSelectionMode {
-                let canDelete = bookmarksLibraryView.canDeleteReadingListSelection
-                // No Library-exit action while selecting: the blue check ends
-                // selection mode first; rail exit returns once it ends.
-                prefix = [
-                    .deleteSelected(isEnabled: canDelete) { [weak self] in
-                        self?.bookmarksLibraryView.deleteReadingListSelectedItems()
-                        self?.updateLibraryRailItems(for: .readingList)
-                    }
-                ]
-                suffix = [
-                    .done { [weak self] in
-                        self?.bookmarksLibraryView.exitReadingListSelectionMode()
-                        self?.updateLibraryRailItems(for: .readingList)
-                    }
-                ]
-            } else {
-                if let menu = bookmarksLibraryView.makeReadingListMenu() {
-                    prefix = [
-                        .readingListMenu(menu: menu)
-                    ]
-                }
-                suffix = [
-                    .done { [weak self] in
-                        self?.closeBookmarksLibrary()
-                    }
-                ]
-            }
-        case .favorites:
-            prefix = []
+        }
+        if commands.showsAdd {
+            prefix.append(.addFolder { [weak self] in
+                self?.bookmarksLibraryView.promptNewFolder()
+            })
+        }
+        if commands.showsEdit {
+            let isEditing = commands.isEditingBookmarks
+            prefix.append(.edit(isEditing: isEditing) { [weak self] in
+                self?.bookmarksLibraryView.toggleBookmarksEdit()
+                self?.updateLibraryRailItems(for: .bookmarks)
+            })
+        }
+        if commands.showsClear {
+            let canClear = commands.canClearHistory
+            prefix.append(.clear(isEnabled: canClear) { [weak self] in
+                self?.bookmarksLibraryView.promptClearHistory()
+            })
+        }
+        if commands.showsMenu, let menu = readingMenu {
+            prefix.append(.readingListMenu(menu: menu))
+        }
+        if commands.showsDelete {
+            let canDelete = commands.canDeleteSelection
+            prefix.append(.deleteSelected(isEnabled: canDelete) { [weak self] in
+                self?.bookmarksLibraryView.deleteReadingListSelectedItems()
+                self?.updateLibraryRailItems(for: .readingList)
+            })
         }
 
         setChromeItems(prefix: prefix, suffix: suffix)

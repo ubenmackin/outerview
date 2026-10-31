@@ -28,6 +28,12 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     var onRequestEdit: ((BookmarkEditorTarget) -> Void)?
     var onDone: (() -> Void)?
     var onTabChanged: ((LibraryTab) -> Void)?
+    var onInlineAddFolder: (() -> Void)?
+    var onInlineToggleEdit: (() -> Void)?
+    var onInlineClearHistory: (() -> Void)?
+    var onInlineDelete: (() -> Void)?
+    var inlineMenu: UIMenu?
+    var onInlineDone: (() -> Void)?
 
     var chromePlacement: ChromePlacement = .compact {
         didSet {
@@ -38,19 +44,76 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     }
 
     private let doneButton = UIButton(type: .system)
+    private let addButton = UIButton(type: .system)
+    private let editButton = UIButton(type: .system)
+    private let clearButton = UIButton(type: .system)
+    private let menuButton = UIButton(type: .system)
+    private let deleteButton = UIButton(type: .system)
+    private let inlineStack = UIStackView()
     private var topBarTrailingToHeader: NSLayoutConstraint?
-    private var topBarTrailingToDone: NSLayoutConstraint?
+    private var topBarTrailingToStack: NSLayoutConstraint?
+    private var stackTrailingToDone: NSLayoutConstraint?
+    private var inlineStackCompactTrailing: NSLayoutConstraint?
+    private var inlineStackCompactWidth: NSLayoutConstraint?
 
-    /// Read-only Done visibility for tests; the button itself stays private
-    /// so owners cannot mutate or hide the inline control.
     var isDoneVisible: Bool {
         !doneButton.isHidden
     }
 
-    /// Behavioural Done activation for tests; wires through the button so
-    /// the control wiring stays covered without exposing the button.
+    var isInlineAddVisible: Bool {
+        !addButton.isHidden
+    }
+
+    var isInlineEditVisible: Bool {
+        !editButton.isHidden
+    }
+
+    var isInlineClearVisible: Bool {
+        !clearButton.isHidden
+    }
+
+    var isInlineMenuVisible: Bool {
+        !menuButton.isHidden
+    }
+
+    var isInlineDeleteVisible: Bool {
+        !deleteButton.isHidden
+    }
+
+    var isInlineClearEnabled: Bool {
+        clearButton.isEnabled
+    }
+
+    var isInlineDeleteEnabled: Bool {
+        deleteButton.isEnabled
+    }
+
+    var inlineEditAccessibilityLabel: String? {
+        editButton.accessibilityLabel
+    }
+
     func performDone() {
         doneButton.sendActions(for: .touchUpInside)
+    }
+
+    func performInlineAdd() {
+        addButton.sendActions(for: .touchUpInside)
+    }
+
+    func performInlineToggleEdit() {
+        editButton.sendActions(for: .touchUpInside)
+    }
+
+    func performInlineClear() {
+        clearButton.sendActions(for: .touchUpInside)
+    }
+
+    func performInlineDelete() {
+        deleteButton.sendActions(for: .touchUpInside)
+    }
+
+    func performInlineDone() {
+        performDone()
     }
 
     private let headerContainer = UIView()
@@ -144,10 +207,16 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
             self?.onOpenURL?(url)
         }
         readingView.onStateChanged = { [weak self] in
-            self?.onReadingListStateChanged?()
+            guard let self else { return }
+            self.inlineMenu = self.makeReadingListMenu()
+            self.updateInlineCommands()
+            self.onReadingListStateChanged?()
         }
         readingView.onSelectionModeChanged = { [weak self] _ in
-            self?.onReadingListStateChanged?()
+            guard let self else { return }
+            self.inlineMenu = self.makeReadingListMenu()
+            self.updateInlineCommands()
+            self.onReadingListStateChanged?()
         }
         self.readingListView = readingView
 
@@ -169,6 +238,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         favoritesGridView?.reload()
         historyListView?.reload()
         readingListView?.reload()
+        updateInlineCommands()
     }
 
     func promptNewFolder() {
@@ -176,7 +246,9 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     }
 
     func toggleBookmarksEdit() {
-        bookmarksBrowserView?.toggleEditMode()
+        guard let bookmarksBrowserView else { return }
+        bookmarksBrowserView.toggleEditMode()
+        updateInlineCommands()
     }
 
     func promptClearHistory() {
@@ -189,17 +261,71 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
 
     func exitReadingListSelectionMode() {
         readingListView?.exitSelectionMode()
+        inlineMenu = makeReadingListMenu()
+        updateInlineCommands()
+    }
+
+    func enterReadingListSelectionMode() {
+        readingListView?.enterSelectionMode()
+        updateInlineCommands()
     }
 
     func deleteReadingListSelectedItems() {
         readingListView?.deleteSelectedItems()
+        updateInlineCommands()
     }
 
     func applyPlacement() {
         let isRegular = chromePlacement == .regular
         doneButton.isHidden = !isRegular
         topBarTrailingToHeader?.isActive = !isRegular
-        topBarTrailingToDone?.isActive = isRegular
+        topBarTrailingToStack?.isActive = isRegular
+        stackTrailingToDone?.isActive = isRegular
+        inlineStackCompactTrailing?.isActive = !isRegular
+        inlineStackCompactWidth?.isActive = !isRegular
+        updateInlineCommands()
+    }
+
+    func updateInlineCommands() {
+        let isRegular = chromePlacement == .regular
+        guard isRegular else {
+            addButton.isHidden = true
+            editButton.isHidden = true
+            clearButton.isHidden = true
+            menuButton.isHidden = true
+            deleteButton.isHidden = true
+            inlineStack.isHidden = true
+            return
+        }
+        let menu = makeReadingListMenu()
+        inlineMenu = menu
+        inlineStack.isHidden = false
+        let commands = LibraryTabCommands.make(
+            for: activeTab,
+            isEditingBookmarks: isEditingBookmarks,
+            canClearHistory: canClearHistory,
+            isInSelection: activeTab == .readingList && isReadingListInSelectionMode,
+            canDeleteSelection: canDeleteReadingListSelection,
+            hasReadingListMenu: menu != nil
+        )
+        addButton.isHidden = !commands.showsAdd
+        editButton.isHidden = !commands.showsEdit
+        clearButton.isHidden = !commands.showsClear
+        menuButton.isHidden = !commands.showsMenu
+        deleteButton.isHidden = !commands.showsDelete
+        if commands.showsEdit {
+            editButton.setTitle(commands.isEditingBookmarks ? "Done" : "Edit", for: .normal)
+            editButton.accessibilityLabel = commands.isEditingBookmarks ? "Done Editing" : "Edit Bookmarks"
+        }
+        if commands.showsClear {
+            clearButton.isEnabled = commands.canClearHistory
+        }
+        if commands.showsMenu {
+            menuButton.menu = menu
+        }
+        if commands.showsDelete {
+            deleteButton.isEnabled = commands.canDeleteSelection
+        }
     }
 
     // MARK: - Private
@@ -207,7 +333,6 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     private func setup() {
         backgroundColor = .systemBackground
 
-        // Header container (safeArea protected)
         headerContainer.translatesAutoresizingMaskIntoConstraints = false
         addSubview(headerContainer)
 
@@ -221,22 +346,120 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         }
         headerContainer.addSubview(topTabBar)
 
+        setupActionButtons()
+        setupContainersAndConstraints()
+        topBarTrailingToHeader?.isActive = true
+        applyPlacement()
+    }
+
+    private func setupActionButtons() {
+        addButton.translatesAutoresizingMaskIntoConstraints = false
+        addButton.setTitle("Add", for: .normal)
+        addButton.accessibilityLabel = "New Folder"
+        addButton.addAction(UIAction { [weak self] _ in
+            if let callback = self?.onInlineAddFolder {
+                callback()
+            } else {
+                self?.promptNewFolder()
+            }
+        }, for: .touchUpInside)
+
+        editButton.translatesAutoresizingMaskIntoConstraints = false
+        editButton.setTitle("Edit", for: .normal)
+        editButton.accessibilityLabel = "Edit Bookmarks"
+        editButton.addAction(UIAction { [weak self] _ in
+            if let callback = self?.onInlineToggleEdit {
+                callback()
+            } else {
+                self?.toggleBookmarksEdit()
+            }
+        }, for: .touchUpInside)
+
+        clearButton.translatesAutoresizingMaskIntoConstraints = false
+        clearButton.setTitle("Clear", for: .normal)
+        clearButton.accessibilityLabel = "Clear History"
+        clearButton.addAction(UIAction { [weak self] _ in
+            if let callback = self?.onInlineClearHistory {
+                callback()
+            } else {
+                self?.promptClearHistory()
+            }
+        }, for: .touchUpInside)
+
+        menuButton.translatesAutoresizingMaskIntoConstraints = false
+        menuButton.setImage(UIImage(systemName: "ellipsis"), for: .normal)
+        menuButton.accessibilityLabel = "Reading List Options"
+        menuButton.showsMenuAsPrimaryAction = true
+
+        deleteButton.translatesAutoresizingMaskIntoConstraints = false
+        deleteButton.setImage(UIImage(systemName: "trash"), for: .normal)
+        deleteButton.accessibilityLabel = "Delete Selected"
+        deleteButton.addAction(UIAction { [weak self] _ in
+            if let callback = self?.onInlineDelete {
+                callback()
+            } else {
+                self?.deleteReadingListSelectedItems()
+            }
+        }, for: .touchUpInside)
+
+        inlineStack.translatesAutoresizingMaskIntoConstraints = false
+        inlineStack.axis = .horizontal
+        inlineStack.alignment = .center
+        inlineStack.spacing = 8
+        inlineStack.addArrangedSubview(addButton)
+        inlineStack.addArrangedSubview(editButton)
+        inlineStack.addArrangedSubview(clearButton)
+        inlineStack.addArrangedSubview(menuButton)
+        inlineStack.addArrangedSubview(deleteButton)
+        headerContainer.addSubview(inlineStack)
+
         doneButton.translatesAutoresizingMaskIntoConstraints = false
         doneButton.setTitle("Done", for: .normal)
         doneButton.accessibilityLabel = "Done"
         doneButton.isHidden = true
-        doneButton.addAction(UIAction { [weak self] _ in self?.onDone?() }, for: .touchUpInside)
+        doneButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            let commands = LibraryTabCommands.make(
+                for: self.activeTab,
+                isEditingBookmarks: self.isEditingBookmarks,
+                canClearHistory: self.canClearHistory,
+                isInSelection: self.activeTab == .readingList && self.isReadingListInSelectionMode,
+                canDeleteSelection: self.canDeleteReadingListSelection,
+                hasReadingListMenu: self.inlineMenu != nil || self.makeReadingListMenu() != nil
+            )
+            if commands.doneExitsSelection {
+                self.exitReadingListSelectionMode()
+                return
+            }
+            if let inlineDone = self.onInlineDone {
+                inlineDone()
+            } else {
+                self.onDone?()
+            }
+        }, for: .touchUpInside)
         headerContainer.addSubview(doneButton)
+    }
 
+    private func setupContainersAndConstraints() {
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
         addSubview(contentContainer)
 
         topBarTrailingToHeader = topTabBar.trailingAnchor.constraint(
             equalTo: headerContainer.trailingAnchor, constant: -16
         )
-        topBarTrailingToDone = topTabBar.trailingAnchor.constraint(
+        topBarTrailingToStack = topTabBar.trailingAnchor.constraint(
+            equalTo: inlineStack.leadingAnchor, constant: -8
+        )
+        stackTrailingToDone = inlineStack.trailingAnchor.constraint(
             equalTo: doneButton.leadingAnchor, constant: -8
         )
+        // Compact fallback: the stack is hidden but must keep a defined
+        // horizontal position. Pinning trailing plus a zero width collapses it
+        // without ambiguity while the regular chain is deactivated.
+        inlineStackCompactTrailing = inlineStack.trailingAnchor.constraint(
+            equalTo: headerContainer.trailingAnchor, constant: -16
+        )
+        inlineStackCompactWidth = inlineStack.widthAnchor.constraint(equalToConstant: 0)
 
         NSLayoutConstraint.activate([
             headerContainer.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor),
@@ -248,6 +471,8 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
             topTabBar.centerYAnchor.constraint(equalTo: headerContainer.centerYAnchor),
             topTabBar.heightAnchor.constraint(equalToConstant: 40),
 
+            inlineStack.centerYAnchor.constraint(equalTo: headerContainer.centerYAnchor),
+
             doneButton.trailingAnchor.constraint(equalTo: headerContainer.trailingAnchor, constant: -16),
             doneButton.centerYAnchor.constraint(equalTo: headerContainer.centerYAnchor),
 
@@ -256,8 +481,6 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
             contentContainer.topAnchor.constraint(equalTo: headerContainer.bottomAnchor),
             contentContainer.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
-        topBarTrailingToHeader?.isActive = true
-        applyPlacement()
     }
 
     private func setupContentSubviews() {
@@ -297,6 +520,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         favoritesGridView?.isHidden = (activeTab != .favorites)
         historyListView?.isHidden = (activeTab != .history)
         readingListView?.isHidden = (activeTab != .readingList)
+        updateInlineCommands()
         reassertVisibleSearchTuck()
     }
 

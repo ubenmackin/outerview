@@ -17,3 +17,11 @@ enum GlassEffect {
         }
     }
 }
+
+/// Single owner for the heavy-blur sheet dim alpha shared by overlay cards
+/// and the address editor panel. Both surfaces consume this value so the dim
+/// can never drift apart.
+@MainActor
+enum SheetDim {
+    nonisolated static let alpha: CGFloat = 0.2
+}

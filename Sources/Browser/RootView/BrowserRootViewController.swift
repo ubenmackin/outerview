@@ -63,6 +63,39 @@ final class BrowserRootViewController: UIViewController {
             + contentBottomGap
     }
 
+    nonisolated static var regularRemnantHeight: CGFloat {
+        TopBarView.barHeight
+    }
+
+    nonisolated static var regularTrailingClearance: CGFloat {
+        TopBarView.trailingClearance
+    }
+
+    nonisolated static func topContentInset(
+        for placement: ChromePlacement,
+        state: ChromeState,
+        stripVisible: Bool
+    ) -> CGFloat {
+        guard placement == .regular, state.pill == .editing || state.rail == .visible else { return 0 }
+        return TopBarView.barHeight + (stripVisible ? TabStripView.stripHeight : 0)
+    }
+
+    nonisolated static func additionalSafeAreaTopInset(
+        for placement: ChromePlacement,
+        state: ChromeState
+    ) -> CGFloat {
+        guard placement == .regular else { return 0 }
+        if state.pill == .editing {
+            return 0
+        }
+        return state.rail == .hidden ? TopBarView.barHeight : 0
+    }
+
+    nonisolated static func compensatedOffset(current: CGPoint, oldTop: CGFloat, newTop: CGFloat) -> CGPoint {
+        let shiftedY = current.y + (newTop - oldTop)
+        return CGPoint(x: current.x, y: max(-newTop, shiftedY))
+    }
+
     /// Bounds width the minified capsule measures against. The minified pill
     /// centers on the full view because the rail is out of the way whenever
     /// the user is scrolling.
@@ -77,6 +110,16 @@ final class BrowserRootViewController: UIViewController {
 
     nonisolated static func placement(for sizeClass: UIUserInterfaceSizeClass) -> ChromePlacement {
         sizeClass == .regular ? .regular : .compact
+    }
+
+    /// Regular disables the vertical bar so status moves to the top axis;
+    /// compact keeps automatic so the outer column inset is never at risk.
+    nonisolated static func verticalBarBehavior(for placement: ChromePlacement) -> UIVerticalBarBehavior {
+        placement == .regular ? .disabled : .automatic
+    }
+
+    override var preferredVerticalBarBehavior: UIVerticalBarBehavior {
+        Self.verticalBarBehavior(for: chromePlacement)
     }
 
     /// Moves the shared pill between the bottom anchors and the toolbar slot.
@@ -144,6 +187,9 @@ final class BrowserRootViewController: UIViewController {
         }
         editorView.applyPlacement(for: placement)
         updateTabStrip()
+        updateTopBarPinning(for: placement)
+        updateHeaderBackgrounds()
+        updateStartPageTop()
         bringChromeToFront()
     }
 
@@ -243,11 +289,21 @@ final class BrowserRootViewController: UIViewController {
     var pillSlotTrailingConstraint: NSLayoutConstraint!
     var pillSlotCenterYConstraint: NSLayoutConstraint!
     var topBarTopConstraint: NSLayoutConstraint!
+    var topBarTopToViewConstraint: NSLayoutConstraint?
+    var topBarTopToSafeAreaConstraint: NSLayoutConstraint?
     var topBarLeadingConstraint: NSLayoutConstraint!
     var topBarTrailingConstraint: NSLayoutConstraint!
+    var startPageTopToContentConstraint: NSLayoutConstraint?
+    var startPageTopToStripConstraint: NSLayoutConstraint?
+    var startPageTopToBarConstraint: NSLayoutConstraint?
+    var headerRemnantView: UIVisualEffectView?
     var pillAnimator: UIViewPropertyAnimator?
     private var structuralTask: Task<Void, Never>?
     private var horizontalSizeClassRegistration: UITraitChangeRegistration?
+    private var lastVerticalBarPlacement: ChromePlacement?
+    /// Poke count for the vertical-bar configuration; tests observe it to
+    /// confirm a placement change invalidated the system configuration.
+    var verticalBarConfigurationUpdateCount = 0
     var suggestionTask: Task<Void, Never>?
     var findQueryTask: Task<Void, Never>?
     var findStepTask: Task<Void, Never>?
@@ -349,8 +405,10 @@ final class BrowserRootViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
         setupHierarchy()
+        wireLibraryInlineCommands()
         setupStartPageContent()
         applyChromePlacement()
+        lastVerticalBarPlacement = chromePlacement
         updateRailItems()
         loadInitialTabs()
         applyContentInsets()
@@ -358,6 +416,29 @@ final class BrowserRootViewController: UIViewController {
         subscribeToDownloadProgress()
         updateDownloadProgress()
         observeHorizontalSizeClass()
+    }
+
+    func wireLibraryInlineCommands() {
+        bookmarksLibraryView.onInlineAddFolder = { [weak self] in
+            self?.bookmarksLibraryView.promptNewFolder()
+        }
+        bookmarksLibraryView.onInlineToggleEdit = { [weak self] in
+            guard let self else { return }
+            self.bookmarksLibraryView.toggleBookmarksEdit()
+            self.updateLibraryRailItems(for: .bookmarks)
+        }
+        bookmarksLibraryView.onInlineClearHistory = { [weak self] in
+            self?.bookmarksLibraryView.promptClearHistory()
+        }
+        bookmarksLibraryView.onInlineDelete = { [weak self] in
+            guard let self else { return }
+            self.bookmarksLibraryView.deleteReadingListSelectedItems()
+            self.updateLibraryRailItems(for: .readingList)
+        }
+        bookmarksLibraryView.onInlineDone = { [weak self] in
+            self?.closeBookmarksLibrary()
+        }
+        bookmarksLibraryView.updateInlineCommands()
     }
 
     override func viewSafeAreaInsetsDidChange() {
@@ -560,8 +641,14 @@ extension BrowserRootViewController {
 
     func applyStructuralLayout() {
         let placement = chromePlacement
+        if lastVerticalBarPlacement != placement {
+            lastVerticalBarPlacement = placement
+            verticalBarConfigurationUpdateCount += 1
+            setNeedsUpdateOfVerticalBarConfiguration()
+        }
         applyChromePlacement(for: placement)
         editorView.chromePlacement = placement
+        overviewController.showsInlineCommands = (placement == .regular)
         for overlay in [libraryOverlay, settingsOverlay, downloadsOverlay, bookmarkEditorOverlay]
             where overlay.isHidden
         {
@@ -571,8 +658,12 @@ extension BrowserRootViewController {
             bookmarksLibraryView.applyPlacement(for: placement)
         }
         updateTabStrip()
+        updateTopBarPinning(for: placement)
+        updateHeaderBackgrounds()
+        updateStartPageTop()
         refreshForActiveSnapshot()
         applyChromeViews(animated: false)
+        applyContentInsets()
         view.setNeedsLayout()
     }
 

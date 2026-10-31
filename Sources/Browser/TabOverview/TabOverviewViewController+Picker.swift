@@ -75,6 +75,26 @@ extension TabOverviewViewController {
         }
     }
 
+    /// Synchronous overview actions backing both the rail deferred menu and the inline bar menu.
+    func overviewMenuActions(includesCloseAll: Bool) -> [UIAction] {
+        var actions: [UIAction] = [
+            UIAction(title: "Manage Tab Groups", image: UIImage(systemName: "list.bullet.rectangle")) { [weak self] _ in
+                self?.showGroupsSheet()
+            },
+            UIAction(title: "New Group…", image: UIImage(systemName: "folder.badge.plus")) { [weak self] _ in
+                self?.promptNewGroupCreation(withTabIDs: [])
+            }
+        ]
+        if includesCloseAll {
+            actions.append(
+                UIAction(title: "Close All Tabs", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
+                    self?.showCloseAllSheet()
+                }
+            )
+        }
+        return actions
+    }
+
     /// Overview commands shared by the rail ellipsis menu.
     func makeOverviewMenu(includesCloseAll: Bool) -> UIMenu {
         UIMenu(children: [
@@ -83,24 +103,13 @@ extension TabOverviewViewController {
                     completion([])
                     return
                 }
-                var children: [UIMenuElement] = [
-                    UIAction(title: "Manage Tab Groups", image: UIImage(systemName: "list.bullet.rectangle")) { [weak self] _ in
-                        self?.showGroupsSheet()
-                    },
-                    UIAction(title: "New Group…", image: UIImage(systemName: "folder.badge.plus")) { [weak self] _ in
-                        self?.promptNewGroupCreation(withTabIDs: [])
-                    }
-                ]
-                if includesCloseAll {
-                    children.append(
-                        UIAction(title: "Close All Tabs", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
-                            self?.showCloseAllSheet()
-                        }
-                    )
-                }
-                completion(children)
+                completion(self.overviewMenuActions(includesCloseAll: includesCloseAll))
             }
         ])
+    }
+
+    func makeInlineOverviewMenu() -> UIMenu {
+        UIMenu(children: overviewMenuActions(includesCloseAll: true))
     }
 
     func moveToGroupMenu(forTab id: UUID) -> UIMenu {
@@ -133,6 +142,7 @@ extension TabOverviewViewController {
     }
 
     func promptNewGroupCreation(withTabIDs tabIDs: [UUID]) {
+        guard presentedViewController == nil else { return }
         let alert = UIAlertController(title: "New Group", message: "Enter a name for this group.", preferredStyle: .alert)
         alert.addTextField { field in
             field.placeholder = "Group Name"
@@ -157,6 +167,7 @@ extension TabOverviewViewController {
     /// One Safari-style sheet for mode + group selection. The sheet re-reads
     /// `stateProvider` itself, so the owner only applies emitted actions.
     func showGroupsSheet() {
+        guard presentedViewController == nil else { return }
         let sheet = TabGroupsSheetController(stateProvider: { [weak self] in
             guard let self else {
                 return TabGroupsSheetState(

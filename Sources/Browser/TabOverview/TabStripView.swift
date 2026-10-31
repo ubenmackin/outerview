@@ -21,6 +21,15 @@ final class TabStripView: UIView {
     let collectionView: UICollectionView
     let newTabButton = UIButton(type: .system)
     private let flowLayout = UICollectionViewFlowLayout()
+    private let blurView = UIVisualEffectView(effect: GlassEffect.make())
+
+    var isBlurVisible: Bool {
+        !blurView.isHidden
+    }
+
+    func applyHeaderBackground(isCollapsed: Bool) {
+        RegularHeaderBackground.apply(to: self, blurView: blurView, isCollapsed: isCollapsed)
+    }
 
     override init(frame: CGRect) {
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: flowLayout)
@@ -44,8 +53,8 @@ final class TabStripView: UIView {
     }
 
     private func setup() {
-        backgroundColor = .clear
-        isOpaque = false
+        RegularHeaderBackground.pinBlur(blurView, in: self)
+        applyHeaderBackground(isCollapsed: false)
 
         flowLayout.scrollDirection = .horizontal
         flowLayout.minimumInteritemSpacing = 8

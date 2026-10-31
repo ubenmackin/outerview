@@ -5,11 +5,21 @@
 
 import UIKit
 
+// Shared Contract SHEET-FIT: regular card content insets 16 on all sides;
+// dim is heavy blur with black 0.2 overlay; Library header shows trailing Done
+// plus per-tab inline controls on regular only through callbacks onInlineAddFolder,
+// onInlineToggleEdit, onInlineClearHistory, onInlineDelete, inlineMenu, and
+// onDone/onInlineDone wired by the root to the existing rail handlers.
+
 @MainActor
 final class OverlayCardView: UIView, ChromePlacementDriven {
     nonisolated static let maxWidth: CGFloat = 560
     nonisolated static let cornerRadius: CGFloat = 16
-    nonisolated static let dimAlpha: CGFloat = 0.4
+    nonisolated static var dimAlpha: CGFloat {
+        SheetDim.alpha
+    }
+
+    nonisolated static let contentPadding: CGFloat = 16
 
     var chromePlacement: ChromePlacement = .compact {
         didSet {
@@ -20,6 +30,8 @@ final class OverlayCardView: UIView, ChromePlacementDriven {
     }
 
     let dimView = UIView()
+    let dimBlurView = UIVisualEffectView(effect: GlassEffect.make())
+    let dimOverlayView = UIView()
     let cardView = UIView()
     private(set) var hostedContent: UIView?
 
@@ -43,11 +55,13 @@ final class OverlayCardView: UIView, ChromePlacementDriven {
         NSLayoutConstraint.activate(isRegular ? regularConstraints : compactConstraints)
         dimView.isHidden = !isRegular
         cardView.layer.cornerRadius = isRegular ? Self.cornerRadius : 0
+        updateContentPadding()
         setNeedsLayout()
     }
 
     func setContent(_ view: UIView) {
         if hostedContent === view, view.superview === cardView {
+            updateContentPadding()
             return
         }
         clearContent()
@@ -61,6 +75,21 @@ final class OverlayCardView: UIView, ChromePlacementDriven {
         ]
         NSLayoutConstraint.activate(contentConstraints)
         hostedContent = view
+        updateContentPadding()
+    }
+
+    func updateContentPadding() {
+        let pad = chromePlacement == .regular ? Self.contentPadding : 0
+        for constraint in contentConstraints {
+            switch constraint.firstAttribute {
+            case .leading, .top:
+                constraint.constant = pad
+            case .trailing, .bottom:
+                constraint.constant = -pad
+            default:
+                break
+            }
+        }
     }
 
     func clearContent() {
@@ -75,10 +104,30 @@ final class OverlayCardView: UIView, ChromePlacementDriven {
         backgroundColor = .clear
 
         dimView.translatesAutoresizingMaskIntoConstraints = false
-        dimView.backgroundColor = UIColor.black.withAlphaComponent(Self.dimAlpha)
+        dimView.backgroundColor = .clear
         dimView.isHidden = true
         dimView.isUserInteractionEnabled = false
         addSubview(dimView)
+
+        dimBlurView.translatesAutoresizingMaskIntoConstraints = false
+        dimBlurView.isUserInteractionEnabled = false
+        dimView.addSubview(dimBlurView)
+
+        dimOverlayView.translatesAutoresizingMaskIntoConstraints = false
+        dimOverlayView.backgroundColor = UIColor.black.withAlphaComponent(Self.dimAlpha)
+        dimOverlayView.isUserInteractionEnabled = false
+        dimView.addSubview(dimOverlayView)
+
+        NSLayoutConstraint.activate([
+            dimBlurView.leadingAnchor.constraint(equalTo: dimView.leadingAnchor),
+            dimBlurView.trailingAnchor.constraint(equalTo: dimView.trailingAnchor),
+            dimBlurView.topAnchor.constraint(equalTo: dimView.topAnchor),
+            dimBlurView.bottomAnchor.constraint(equalTo: dimView.bottomAnchor),
+            dimOverlayView.leadingAnchor.constraint(equalTo: dimView.leadingAnchor),
+            dimOverlayView.trailingAnchor.constraint(equalTo: dimView.trailingAnchor),
+            dimOverlayView.topAnchor.constraint(equalTo: dimView.topAnchor),
+            dimOverlayView.bottomAnchor.constraint(equalTo: dimView.bottomAnchor)
+        ])
 
         cardView.translatesAutoresizingMaskIntoConstraints = false
         cardView.backgroundColor = .systemBackground

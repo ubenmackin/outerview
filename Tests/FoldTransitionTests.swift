@@ -146,6 +146,39 @@ final class FoldTransitionTests: XCTestCase {
         XCTAssertTrue(root.pillView.superview === root.view)
         XCTAssertTrue(root.topBarView.isHidden)
     }
+
+    func testVerticalBarBehaviorMapping() {
+        XCTAssertEqual(BrowserRootViewController.verticalBarBehavior(for: .regular), .disabled)
+        XCTAssertEqual(BrowserRootViewController.verticalBarBehavior(for: .compact), .automatic)
+    }
+
+    func testVerticalBarConfigurationUpdatesOnPlacementChange() throws {
+        let fixture = try makeRootWithParent(tabCount: 2)
+        let root = fixture.root
+        root.traitOverrides.horizontalSizeClass = .compact
+        root.view.layoutIfNeeded()
+        root.applyStructuralLayout()
+        XCTAssertEqual(root.preferredVerticalBarBehavior, .automatic)
+        XCTAssertTrue(root.pillView.superview === root.view)
+        let baseline = root.verticalBarConfigurationUpdateCount
+        root.traitOverrides.horizontalSizeClass = .regular
+        root.view.layoutIfNeeded()
+        root.applyStructuralLayout()
+        XCTAssertEqual(root.preferredVerticalBarBehavior, .disabled)
+        XCTAssertGreaterThan(root.verticalBarConfigurationUpdateCount, baseline)
+        XCTAssertTrue(root.pillView.superview === root.topBarView.pillSlotView)
+        XCTAssertTrue(root.railView.isHidden)
+        XCTAssertFalse(root.topBarView.isHidden)
+        let afterRegular = root.verticalBarConfigurationUpdateCount
+        root.applyStructuralLayout()
+        XCTAssertEqual(root.verticalBarConfigurationUpdateCount, afterRegular)
+        root.traitOverrides.horizontalSizeClass = .compact
+        root.view.layoutIfNeeded()
+        root.applyStructuralLayout()
+        XCTAssertEqual(root.preferredVerticalBarBehavior, .automatic)
+        XCTAssertTrue(root.pillView.superview === root.view)
+        XCTAssertFalse(root.railView.isHidden)
+    }
 }
 
 extension BrowserRootViewController {
