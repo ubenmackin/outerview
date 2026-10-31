@@ -30,6 +30,97 @@ enum LibraryTab: Int, CaseIterable, Sendable {
     }
 }
 
+/// Single owner for per-tab library commands. Both the regular inline header
+/// (`BookmarksLibraryView.updateInlineCommands`) and the compact rail
+/// (`BrowserRootViewController.updateLibraryRailItems`) render from this model
+/// so per-tab branching (bookmarks add/edit, history clear, reading-list
+/// menu/delete/selection, favorites empty plus Done/exit-selection semantics)
+/// can never drift apart.
+struct LibraryTabCommands: Sendable, Equatable {
+    var showsAdd: Bool
+    var showsEdit: Bool
+    var isEditingBookmarks: Bool
+    var showsClear: Bool
+    var canClearHistory: Bool
+    var showsMenu: Bool
+    var showsDelete: Bool
+    var canDeleteSelection: Bool
+    var doneExitsSelection: Bool
+
+    static func make(
+        for tab: LibraryTab,
+        isEditingBookmarks: Bool,
+        canClearHistory: Bool,
+        isInSelection: Bool,
+        canDeleteSelection: Bool,
+        hasReadingListMenu: Bool
+    ) -> LibraryTabCommands {
+        switch tab {
+        case .bookmarks:
+            return LibraryTabCommands(
+                showsAdd: true,
+                showsEdit: true,
+                isEditingBookmarks: isEditingBookmarks,
+                showsClear: false,
+                canClearHistory: false,
+                showsMenu: false,
+                showsDelete: false,
+                canDeleteSelection: false,
+                doneExitsSelection: false
+            )
+        case .history:
+            return LibraryTabCommands(
+                showsAdd: false,
+                showsEdit: false,
+                isEditingBookmarks: false,
+                showsClear: true,
+                canClearHistory: canClearHistory,
+                showsMenu: false,
+                showsDelete: false,
+                canDeleteSelection: false,
+                doneExitsSelection: false
+            )
+        case .readingList:
+            if isInSelection {
+                return LibraryTabCommands(
+                    showsAdd: false,
+                    showsEdit: false,
+                    isEditingBookmarks: false,
+                    showsClear: false,
+                    canClearHistory: false,
+                    showsMenu: false,
+                    showsDelete: true,
+                    canDeleteSelection: canDeleteSelection,
+                    doneExitsSelection: true
+                )
+            }
+            return LibraryTabCommands(
+                showsAdd: false,
+                showsEdit: false,
+                isEditingBookmarks: false,
+                showsClear: false,
+                canClearHistory: false,
+                showsMenu: hasReadingListMenu,
+                showsDelete: false,
+                canDeleteSelection: false,
+                doneExitsSelection: false
+            )
+        case .favorites:
+            return LibraryTabCommands(
+                showsAdd: false,
+                showsEdit: false,
+                isEditingBookmarks: false,
+                showsClear: false,
+                canClearHistory: false,
+                showsMenu: false,
+                showsDelete: false,
+                canDeleteSelection: false,
+                doneExitsSelection: false
+            )
+        }
+    }
+}
+
 /// Top tab bar for the Bookmarks & History library overlay, letting users switch
 /// between Favorites, Bookmarks, History, and Reading List.
 /// UserDefaults keys libraryTab as Int, overviewMode as String, and overviewGroup as String.

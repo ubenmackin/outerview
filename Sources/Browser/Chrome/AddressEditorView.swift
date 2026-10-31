@@ -61,10 +61,18 @@ struct SuggestionRowViewModel: Hashable, Sendable {
 /// - Initial tap: text field focuses over the underlying unified Start Page.
 /// - Typing text: reveals live suggestions in `suggestionsTableView`.
 /// - Bottom bar: Full-width capsule field docked above the keyboard. Exit/close is handled by the side rail Done button.
+/// - Regular: dropdown panel below the toolbar over heavy-blur dim with inline blue-check Done.
 @MainActor
 final class AddressEditorView: UIView, ChromePlacementDriven {
-    static let fieldHeight: CGFloat = 44
+    nonisolated static let fieldHeight: CGFloat = 44
     nonisolated static let suggestionsMaxHeight: CGFloat = 420
+    nonisolated static let panelMargin: CGFloat = 24
+    nonisolated static let panelRadius: CGFloat = 16
+    nonisolated static var dimAlpha: CGFloat {
+        SheetDim.alpha
+    }
+
+    nonisolated static let doneDiameter: CGFloat = 36
 
     var chromePlacement: ChromePlacement = .compact {
         didSet {
@@ -77,6 +85,7 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     var onSelectSuggestion: ((Suggestion) -> Void)?
     var onSubmit: ((String) -> Void)?
     var onTextChanged: ((String) -> Void)?
+    var onDone: (() -> Void)?
 
     private(set) var suggestions: [Suggestion] = []
     private var searchEngine: SearchEngine = .google
@@ -90,15 +99,31 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
 
     private let bottomBarContainer = UIView()
     private let dimView = UIView()
+    private let dimBlurView = UIVisualEffectView(effect: GlassEffect.make())
+    private let dimOverlayView = UIView()
     private let fieldRowStack = UIStackView()
     private let capsuleView = UIView()
     private let capsuleBackground = UIVisualEffectView(effect: GlassEffect.make())
     private let textField = UITextField()
+    private let doneButton = UIButton(type: .system)
     private let inputErrorLabel = UILabel()
 
     private var compactConstraints: [NSLayoutConstraint] = []
     private var regularConstraints: [NSLayoutConstraint] = []
     private var suggestionsMaxHeightConstraint: NSLayoutConstraint!
+    private var inputErrorTopConstraint: NSLayoutConstraint!
+    private var inputErrorBottomConstraint: NSLayoutConstraint!
+    private var inputErrorHeightConstraint: NSLayoutConstraint!
+    private var regularBarTopConstraint: NSLayoutConstraint?
+    /// Injected toolbar reference so the regular panel tracks the toolbar's
+    /// bottom edge instead of assuming safeArea.top equals the toolbar origin.
+    weak var toolbarAnchorView: UIView? {
+        didSet {
+            if oldValue !== toolbarAnchorView {
+                refreshRegularTopConstraint()
+            }
+        }
+    }
 
     private var initialLoadedText: String = ""
     private var isTypingMode: Bool = false
@@ -120,6 +145,11 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         if #available(iOS 26.0, *) {
             capsuleBackground.cornerConfiguration = .capsule()
         }
+    }
+
+    override func didMoveToSuperview() {
+        super.didMoveToSuperview()
+        refreshRegularTopConstraint()
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
@@ -173,12 +203,14 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     func showInputError(_ message: String) {
         inputErrorLabel.text = message
         inputErrorLabel.isHidden = false
+        updateInputErrorConstraints()
         UIAccessibility.post(notification: .announcement, argument: message)
     }
 
     func clearInputError() {
         inputErrorLabel.text = nil
         inputErrorLabel.isHidden = true
+        updateInputErrorConstraints()
     }
 
     var fieldText: String {
@@ -189,7 +221,7 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     /// visibility, and which layout set is active. Read-only so tests verify
     /// behaviour without mutating layout internals.
     var isDimVisible: Bool {
-        !dimView.isHidden
+        !dimView.isHidden && !isHidden
     }
 
     var areSuggestionsVisible: Bool {
@@ -212,28 +244,99 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         suggestionsMaxHeightConstraint?.constant ?? Self.suggestionsMaxHeight
     }
 
+    var isDoneVisible: Bool {
+        !doneButton.isHidden
+    }
+
+    func performDone() {
+        doneButton.sendActions(for: .touchUpInside)
+    }
+
+    var isClearWhileEditing: Bool {
+        textField.clearButtonMode == .whileEditing
+    }
+
+    var panelFrame: CGRect {
+        bottomBarContainer.frame
+    }
+
+    var panelCornerRadius: CGFloat {
+        bottomBarContainer.layer.cornerRadius
+    }
+
+    var isDimInteractionDisabled: Bool {
+        !dimView.isUserInteractionEnabled
+    }
+
+    override var isHidden: Bool {
+        didSet {
+            updateDimVisibility()
+        }
+    }
+
     func applyPlacement() {
+        refreshRegularTopConstraint()
         let isRegular = chromePlacement == .regular
         NSLayoutConstraint.deactivate(isRegular ? compactConstraints : regularConstraints)
         NSLayoutConstraint.activate(isRegular ? regularConstraints : compactConstraints)
-        dimView.isHidden = !isRegular
-        if isRegular {
+        updateDimVisibility()
+        doneButton.isHidden = !isRegular
+        bottomBarContainer.backgroundColor = isRegular ? .systemBackground : .clear
+        bottomBarContainer.layer.cornerRadius = isRegular ? Self.panelRadius : 0
+        bottomBarContainer.clipsToBounds = isRegular
+        updateVisibleContent()
+    }
+
+    private func updateDimVisibility() {
+        let isRegular = chromePlacement == .regular
+        dimView.isHidden = !(isRegular && !isHidden)
+        if isRegular, !dimView.isHidden {
             sendSubviewToBack(dimView)
         }
-        updateVisibleContent()
     }
 
     // MARK: - Private
 
     private func setup() {
         backgroundColor = .clear
+        setupDimHierarchy()
+        setupContentHierarchy()
+        setupCapsuleHierarchy()
+        setupTextFieldHierarchy()
+        setupDoneHierarchy()
+        setupStaticConstraints()
+        setupPlacementConstraints()
+    }
 
+    private func setupDimHierarchy() {
         dimView.translatesAutoresizingMaskIntoConstraints = false
-        dimView.backgroundColor = UIColor.black.withAlphaComponent(0.4)
+        dimView.backgroundColor = .clear
         dimView.isHidden = true
         dimView.isUserInteractionEnabled = false
         addSubview(dimView)
 
+        dimBlurView.translatesAutoresizingMaskIntoConstraints = false
+        dimBlurView.isUserInteractionEnabled = false
+        dimView.addSubview(dimBlurView)
+
+        dimOverlayView.translatesAutoresizingMaskIntoConstraints = false
+        dimOverlayView.backgroundColor = UIColor.black.withAlphaComponent(Self.dimAlpha)
+        dimOverlayView.isUserInteractionEnabled = false
+        dimView.addSubview(dimOverlayView)
+
+        NSLayoutConstraint.activate([
+            dimBlurView.leadingAnchor.constraint(equalTo: dimView.leadingAnchor),
+            dimBlurView.trailingAnchor.constraint(equalTo: dimView.trailingAnchor),
+            dimBlurView.topAnchor.constraint(equalTo: dimView.topAnchor),
+            dimBlurView.bottomAnchor.constraint(equalTo: dimView.bottomAnchor),
+            dimOverlayView.leadingAnchor.constraint(equalTo: dimView.leadingAnchor),
+            dimOverlayView.trailingAnchor.constraint(equalTo: dimView.trailingAnchor),
+            dimOverlayView.topAnchor.constraint(equalTo: dimView.topAnchor),
+            dimOverlayView.bottomAnchor.constraint(equalTo: dimView.bottomAnchor)
+        ])
+    }
+
+    private func setupContentHierarchy() {
         contentAreaContainer.translatesAutoresizingMaskIntoConstraints = false
         contentAreaContainer.backgroundColor = .clear
         addSubview(contentAreaContainer)
@@ -247,8 +350,12 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         suggestionsTableView.delegate = self
         suggestionsTableView.register(UITableViewCell.self, forCellReuseIdentifier: "SuggestionCell")
         contentAreaContainer.addSubview(suggestionsTableView)
+    }
 
+    private func setupCapsuleHierarchy() {
         bottomBarContainer.translatesAutoresizingMaskIntoConstraints = false
+        bottomBarContainer.backgroundColor = .clear
+        bottomBarContainer.layer.cornerRadius = 0
         addSubview(bottomBarContainer)
 
         fieldRowStack.axis = .horizontal
@@ -270,7 +377,9 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
             capsuleBackground.topAnchor.constraint(equalTo: capsuleView.topAnchor),
             capsuleBackground.bottomAnchor.constraint(equalTo: capsuleView.bottomAnchor)
         ])
+    }
 
+    private func setupTextFieldHierarchy() {
         textField.translatesAutoresizingMaskIntoConstraints = false
         textField.clearButtonMode = .whileEditing
         textField.returnKeyType = .go
@@ -301,6 +410,26 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         ])
 
         fieldRowStack.addArrangedSubview(capsuleView)
+    }
+
+    private func setupDoneHierarchy() {
+        doneButton.translatesAutoresizingMaskIntoConstraints = false
+        doneButton.setImage(
+            UIImage(systemName: "checkmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .bold)),
+            for: .normal
+        )
+        doneButton.tintColor = .white
+        doneButton.backgroundColor = .systemBlue
+        doneButton.accessibilityLabel = "Done"
+        doneButton.layer.cornerRadius = Self.doneDiameter / 2
+        doneButton.clipsToBounds = true
+        doneButton.isHidden = true
+        doneButton.addAction(UIAction { [weak self] _ in self?.handleDone() }, for: .touchUpInside)
+        NSLayoutConstraint.activate([
+            doneButton.widthAnchor.constraint(equalToConstant: Self.doneDiameter),
+            doneButton.heightAnchor.constraint(equalToConstant: Self.doneDiameter)
+        ])
+        fieldRowStack.addArrangedSubview(doneButton)
 
         inputErrorLabel.translatesAutoresizingMaskIntoConstraints = false
         inputErrorLabel.font = .preferredFont(forTextStyle: .footnote)
@@ -309,7 +438,16 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         inputErrorLabel.numberOfLines = 2
         inputErrorLabel.isHidden = true
         bottomBarContainer.addSubview(inputErrorLabel)
+    }
 
+    private func setupStaticConstraints() {
+        inputErrorTopConstraint = inputErrorLabel.topAnchor.constraint(
+            equalTo: bottomBarContainer.topAnchor
+        )
+        inputErrorBottomConstraint = inputErrorLabel.bottomAnchor.constraint(
+            equalTo: fieldRowStack.topAnchor, constant: -4
+        )
+        inputErrorHeightConstraint = inputErrorLabel.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             dimView.leadingAnchor.constraint(equalTo: leadingAnchor),
             dimView.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -318,9 +456,6 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
 
             contentAreaContainer.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor),
             contentAreaContainer.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor),
-
-            bottomBarContainer.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 8),
-            bottomBarContainer.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -8),
 
             suggestionsTableView.leadingAnchor.constraint(equalTo: contentAreaContainer.leadingAnchor),
             suggestionsTableView.trailingAnchor.constraint(equalTo: contentAreaContainer.trailingAnchor),
@@ -332,12 +467,63 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
             capsuleView.heightAnchor.constraint(equalToConstant: Self.fieldHeight),
 
             inputErrorLabel.leadingAnchor.constraint(equalTo: bottomBarContainer.leadingAnchor, constant: 8),
-            inputErrorLabel.trailingAnchor.constraint(equalTo: bottomBarContainer.trailingAnchor, constant: -8),
-            inputErrorLabel.bottomAnchor.constraint(equalTo: fieldRowStack.topAnchor, constant: -4),
-            inputErrorLabel.topAnchor.constraint(equalTo: bottomBarContainer.topAnchor)
+            inputErrorLabel.trailingAnchor.constraint(equalTo: bottomBarContainer.trailingAnchor, constant: -8)
         ])
+        updateInputErrorConstraints()
+    }
 
-        setupPlacementConstraints()
+    /// Collapses the error label (and its 4 pt gap) when hidden so the panel
+    /// does not retain label height with nil text. When visible the label pins
+    /// top-to-bottomBar and bottom-to-field with the standard gap.
+    private func updateInputErrorConstraints() {
+        guard inputErrorTopConstraint != nil else { return }
+        let hasError = !inputErrorLabel.isHidden
+        if hasError {
+            inputErrorHeightConstraint.isActive = false
+            inputErrorBottomConstraint.constant = -4
+            inputErrorTopConstraint.isActive = true
+            inputErrorBottomConstraint.isActive = true
+        } else {
+            inputErrorTopConstraint.isActive = false
+            inputErrorBottomConstraint.constant = 0
+            inputErrorBottomConstraint.isActive = true
+            inputErrorHeightConstraint.isActive = true
+        }
+    }
+
+    private func resolveToolbarView() -> UIView? {
+        if let toolbarAnchorView {
+            return toolbarAnchorView
+        }
+        guard let parent = superview else { return nil }
+        for subview in parent.subviews where subview is TopBarView {
+            return subview
+        }
+        return nil
+    }
+
+    /// Tracks the toolbar's bottom edge on regular so the panel follows the
+    /// pinned toolbar (physical top) instead of assuming safeArea.top origin.
+    /// Falls back to the safe-area plus bar-height anchor when no toolbar is
+    /// in the hierarchy (isolated unit tests).
+    private func refreshRegularTopConstraint() {
+        guard let current = regularBarTopConstraint, let toolbar = resolveToolbarView() else { return }
+        if let second = current.secondItem as? UIView, second === toolbar {
+            return
+        }
+        let wasActive = current.isActive
+        current.isActive = false
+        if let index = regularConstraints.firstIndex(where: { $0 === current }) {
+            regularConstraints.remove(at: index)
+        }
+        let replacement = bottomBarContainer.topAnchor.constraint(
+            equalTo: toolbar.bottomAnchor, constant: 8
+        )
+        regularBarTopConstraint = replacement
+        regularConstraints.append(replacement)
+        if wasActive, chromePlacement == .regular {
+            replacement.isActive = true
+        }
     }
 
     private func setupPlacementConstraints() {
@@ -350,16 +536,30 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         let compactBarBottom = bottomBarContainer.bottomAnchor.constraint(
             equalTo: keyboardLayoutGuide.topAnchor, constant: -8
         )
+        let compactBarLeading = bottomBarContainer.leadingAnchor.constraint(
+            equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 8
+        )
+        let compactBarTrailing = bottomBarContainer.trailingAnchor.constraint(
+            equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -8
+        )
         let compactTableBottom = suggestionsTableView.bottomAnchor.constraint(
             equalTo: contentAreaContainer.bottomAnchor
         )
         compactConstraints = [
-            compactContentTop, compactContentBottom, compactBarBottom, compactTableBottom
+            compactContentTop, compactContentBottom, compactBarBottom,
+            compactBarLeading, compactBarTrailing, compactTableBottom
         ]
 
         let regularBarTop = bottomBarContainer.topAnchor.constraint(
             equalTo: safeAreaLayoutGuide.topAnchor,
             constant: TopBarView.barHeight + 8
+        )
+        regularBarTopConstraint = regularBarTop
+        let regularBarLeading = bottomBarContainer.leadingAnchor.constraint(
+            equalTo: safeAreaLayoutGuide.leadingAnchor, constant: Self.panelMargin
+        )
+        let regularBarTrailing = bottomBarContainer.trailingAnchor.constraint(
+            equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -Self.panelMargin
         )
         let regularContentTop = contentAreaContainer.topAnchor.constraint(
             equalTo: bottomBarContainer.bottomAnchor, constant: 8
@@ -375,7 +575,8 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
             lessThanOrEqualToConstant: Self.suggestionsMaxHeight
         )
         regularConstraints = [
-            regularBarTop, regularContentTop, regularContentBottom,
+            regularBarTop, regularBarLeading, regularBarTrailing,
+            regularContentTop, regularContentBottom,
             regularTableBottom, suggestionsMaxHeightConstraint
         ]
 
@@ -407,6 +608,11 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
 
     @objc private func handleCapsuleTap() {
         textField.becomeFirstResponder()
+    }
+
+    @objc private func handleDone() {
+        textField.resignFirstResponder()
+        onDone?()
     }
 }
 

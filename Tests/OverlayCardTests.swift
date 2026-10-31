@@ -25,7 +25,8 @@ final class OverlayCardTests: XCTestCase {
     func testStaticsMatchContract() {
         XCTAssertEqual(OverlayCardView.maxWidth, 560)
         XCTAssertEqual(OverlayCardView.cornerRadius, 16)
-        XCTAssertEqual(OverlayCardView.dimAlpha, 0.4, accuracy: 0.001)
+        XCTAssertEqual(OverlayCardView.dimAlpha, 0.2, accuracy: 0.001)
+        XCTAssertEqual(OverlayCardView.contentPadding, 16)
     }
 
     func testCompactFillsScreenWithNoDimAndNoRadius() {
@@ -81,7 +82,10 @@ final class OverlayCardTests: XCTestCase {
         card.applyPlacement(for: .regular)
         card.layoutIfNeeded()
         XCTAssertTrue(content.superview === card.cardView)
-        XCTAssertEqual(content.frame, card.cardView.bounds)
+        XCTAssertEqual(content.frame.minX, OverlayCardView.contentPadding, accuracy: 1.0)
+        XCTAssertEqual(content.frame.minY, OverlayCardView.contentPadding, accuracy: 1.0)
+        XCTAssertEqual(content.frame.width, card.cardView.bounds.width - 32, accuracy: 1.0)
+        XCTAssertEqual(content.frame.height, card.cardView.bounds.height - 32, accuracy: 1.0)
     }
 
     func testLibraryDoneVisibilityPerPlacement() {

@@ -31,16 +31,63 @@ extension ChromePlacementDriven {
     }
 }
 
+/// Single owner for the regular header opaque-vs-translucent switch.
+/// Both `TopBarView` and `TabStripView` delegate here so the collapsed
+/// translucent remnant and the expanded opaque bar can never drift apart.
+@MainActor
+enum RegularHeaderBackground {
+    static func apply(to view: UIView, blurView: UIVisualEffectView, isCollapsed: Bool) {
+        if isCollapsed {
+            view.backgroundColor = .clear
+            view.isOpaque = false
+            blurView.isHidden = false
+        } else {
+            view.backgroundColor = .systemBackground
+            view.isOpaque = true
+            blurView.isHidden = true
+        }
+    }
+
+    static func pinBlur(_ blurView: UIVisualEffectView, in view: UIView) {
+        blurView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(blurView)
+        NSLayoutConstraint.activate([
+            blurView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            blurView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            blurView.topAnchor.constraint(equalTo: view.topAnchor),
+            blurView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+    }
+}
+
 /// Regular-width toolbar owning button clusters flanking the shared pill slot.
+/// Shared Contract REGULAR-HEADER: toolbar height TopBarView.barHeight,
+/// strip height TabStripView.stripHeight, remnant height equals toolbar height,
+/// trailing status clearance 96, expanded top inset equals toolbar plus visible strip,
+/// collapsed top inset zero with additionalSafeAreaInsets top equal to remnant,
+/// compact top inset zero with no additional insets.
 @MainActor
 final class TopBarView: UIView {
     nonisolated static let barHeight: CGFloat = 56
     nonisolated static let horizontalInset: CGFloat = 12
     nonisolated static let clusterSpacing: CGFloat = 8
+    nonisolated static let trailingClearance: CGFloat = 96
+    nonisolated static var remnantHeight: CGFloat {
+        barHeight
+    }
 
     let leadingStack = UIStackView()
     let trailingStack = UIStackView()
     let pillSlotView = UIView()
+    private let blurView = UIVisualEffectView(effect: GlassEffect.make())
+
+    var isBlurVisible: Bool {
+        !blurView.isHidden
+    }
+
+    func applyHeaderBackground(isCollapsed: Bool) {
+        RegularHeaderBackground.apply(to: self, blurView: blurView, isCollapsed: isCollapsed)
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -59,8 +106,8 @@ final class TopBarView: UIView {
     }
 
     private func setup() {
-        backgroundColor = .clear
-        isOpaque = false
+        RegularHeaderBackground.pinBlur(blurView, in: self)
+        applyHeaderBackground(isCollapsed: false)
         for stack in [leadingStack, trailingStack] {
             stack.axis = .horizontal
             stack.alignment = .center

@@ -333,6 +333,13 @@ final class TabOverviewViewController: UIViewController {
     var isDragReordering = false
     var pendingPreviewIDs = Set<UUID>()
 
+    var showsInlineCommands = false {
+        didSet {
+            guard isViewLoaded, oldValue != showsInlineCommands else { return }
+            applyInlineCommandsVisibility()
+        }
+    }
+
     var visibleItems: [TabOverviewItem] {
         Self.visibleTabs(allTabs, mode: mode, query: filterQuery, groupId: selectedGroupID)
     }
@@ -344,8 +351,38 @@ final class TabOverviewViewController: UIViewController {
     private let filterRow = UIView()
     private let filterField = UITextField()
     private var filterHeightConstraint: NSLayoutConstraint!
+    private let inlineBar = UIView()
+    let inlineSearchField = UITextField()
+    private let inlineMenuButton = UIButton(type: .system)
+    private let inlineDoneButton = UIButton(type: .system)
+    private let inlineStack = UIStackView()
+    private var inlineBarHeightConstraint: NSLayoutConstraint!
     let pickerBar = TabGroupPickerBar()
     private let emptyLabel = UILabel()
+
+    var isInlineBarVisible: Bool {
+        isViewLoaded && !inlineBar.isHidden
+    }
+
+    var isInlineSearchVisible: Bool {
+        isInlineBarVisible && !inlineSearchField.isHidden
+    }
+
+    var isInlineMenuVisible: Bool {
+        isInlineBarVisible && !inlineMenuButton.isHidden
+    }
+
+    var isInlineDoneVisible: Bool {
+        isInlineBarVisible && !inlineDoneButton.isHidden
+    }
+
+    var inlineMenu: UIMenu? {
+        inlineMenuButton.menu
+    }
+
+    func performInlineDone() {
+        inlineDoneButton.sendActions(for: .touchUpInside)
+    }
 
     override init(nibName nibNameOrNil: String?, bundle nibBundleOrNil: Bundle?) {
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: flowLayout)
@@ -364,6 +401,7 @@ final class TabOverviewViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         setupHierarchy()
+        applyInlineCommandsVisibility()
         updateAppearance()
         updatePickerBar()
         updateItemSize()
@@ -435,11 +473,27 @@ final class TabOverviewViewController: UIViewController {
 
     func setFilterVisible(_ visible: Bool) {
         isFilterVisible = visible
+        if showsInlineCommands {
+            filterRow.isHidden = true
+            filterHeightConstraint.constant = 0
+            if !visible {
+                filterQuery = ""
+                filterField.text = ""
+                inlineSearchField.text = ""
+            } else {
+                inlineSearchField.becomeFirstResponder()
+            }
+            collectionView.reloadData()
+            updateEmptyState()
+            view.setNeedsLayout()
+            return
+        }
         filterRow.isHidden = !visible
         filterHeightConstraint.constant = visible ? 44 : 0
         if !visible {
             filterQuery = ""
             filterField.text = ""
+            inlineSearchField.text = ""
         } else {
             filterField.becomeFirstResponder()
         }
@@ -478,7 +532,67 @@ final class TabOverviewViewController: UIViewController {
 
     private func setupHierarchy() {
         view.backgroundColor = .systemBackground
+        setupInlineBarViews()
+        setupFilterViews()
+        setupGridViews()
+        activateHierarchyConstraints()
+    }
 
+    private func setupInlineBarViews() {
+        inlineBar.isHidden = true
+        inlineBar.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(inlineBar)
+
+        inlineSearchField.placeholder = "Search Tabs"
+        inlineSearchField.accessibilityLabel = "Search open tabs"
+        inlineSearchField.adjustsFontForContentSizeCategory = true
+        inlineSearchField.borderStyle = .roundedRect
+        inlineSearchField.clearButtonMode = .whileEditing
+        inlineSearchField.autocapitalizationType = .none
+        inlineSearchField.autocorrectionType = .no
+        inlineSearchField.translatesAutoresizingMaskIntoConstraints = false
+        inlineSearchField.accessibilityIdentifier = "TabOverview.InlineSearchField"
+        inlineSearchField.addAction(
+            UIAction { [weak self] _ in
+                guard let self else { return }
+                self.filterQuery = self.inlineSearchField.text ?? ""
+                self.filterField.text = self.inlineSearchField.text
+                self.collectionView.reloadData()
+                self.updateEmptyState()
+            },
+            for: .editingChanged
+        )
+
+        inlineMenuButton.setImage(UIImage(systemName: "ellipsis"), for: .normal)
+        inlineMenuButton.accessibilityLabel = "Overview Menu"
+        inlineMenuButton.accessibilityIdentifier = "TabOverview.InlineMenu"
+        inlineMenuButton.showsMenuAsPrimaryAction = true
+        inlineMenuButton.menu = makeInlineOverviewMenu()
+        inlineMenuButton.translatesAutoresizingMaskIntoConstraints = false
+
+        inlineDoneButton.setTitle("Done", for: .normal)
+        inlineDoneButton.accessibilityLabel = "Done"
+        inlineDoneButton.accessibilityIdentifier = "TabOverview.InlineDone"
+        inlineDoneButton.addAction(
+            UIAction { [weak self] _ in
+                guard let self else { return }
+                self.delegate?.tabOverviewDidFinish(self)
+            },
+            for: .touchUpInside
+        )
+        inlineDoneButton.translatesAutoresizingMaskIntoConstraints = false
+
+        inlineStack.axis = .horizontal
+        inlineStack.alignment = .center
+        inlineStack.spacing = 8
+        inlineStack.translatesAutoresizingMaskIntoConstraints = false
+        inlineBar.addSubview(inlineStack)
+        inlineStack.addArrangedSubview(inlineSearchField)
+        inlineStack.addArrangedSubview(inlineMenuButton)
+        inlineStack.addArrangedSubview(inlineDoneButton)
+    }
+
+    private func setupFilterViews() {
         filterRow.isHidden = true
         filterRow.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(filterRow)
@@ -496,13 +610,16 @@ final class TabOverviewViewController: UIViewController {
             UIAction { [weak self] _ in
                 guard let self else { return }
                 self.filterQuery = self.filterField.text ?? ""
+                self.inlineSearchField.text = self.filterField.text
                 self.collectionView.reloadData()
                 self.updateEmptyState()
             },
             for: .editingChanged
         )
         filterRow.addSubview(filterField)
+    }
 
+    private func setupGridViews() {
         flowLayout.scrollDirection = .vertical
         flowLayout.minimumInteritemSpacing = Self.cellSpacing
         flowLayout.minimumLineSpacing = Self.lineSpacing
@@ -536,12 +653,25 @@ final class TabOverviewViewController: UIViewController {
         pickerBar.onScrubSelect = { [weak self] in self?.applyPickerSelection($0) }
         pickerBar.onScrubEnd = { [weak self] in self?.applyPickerSelection($0) }
         updatePickerBar()
+    }
 
+    private func activateHierarchyConstraints() {
         filterHeightConstraint = filterRow.heightAnchor.constraint(equalToConstant: 0)
+        inlineBarHeightConstraint = inlineBar.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
+            inlineBar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            inlineBar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            inlineBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            inlineBarHeightConstraint,
+
+            inlineStack.leadingAnchor.constraint(equalTo: inlineBar.leadingAnchor),
+            inlineStack.trailingAnchor.constraint(equalTo: inlineBar.trailingAnchor),
+            inlineStack.topAnchor.constraint(equalTo: inlineBar.topAnchor),
+            inlineStack.bottomAnchor.constraint(equalTo: inlineBar.bottomAnchor),
+
             filterRow.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             filterRow.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
-            filterRow.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            filterRow.topAnchor.constraint(equalTo: inlineBar.bottomAnchor),
             filterHeightConstraint,
 
             filterField.leadingAnchor.constraint(equalTo: filterRow.leadingAnchor),
@@ -567,9 +697,45 @@ final class TabOverviewViewController: UIViewController {
                 lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16
             )
         ])
+        let filterHeight = filterField.heightAnchor.constraint(equalToConstant: 36)
+        filterHeight.priority = .defaultHigh
+        let inlineSearchHeight = inlineSearchField.heightAnchor.constraint(equalToConstant: 36)
+        inlineSearchHeight.priority = .defaultHigh
+        let inlineMenuWidth = inlineMenuButton.widthAnchor.constraint(equalToConstant: 44)
+        inlineMenuWidth.priority = .defaultHigh
+        let inlineMenuHeight = inlineMenuButton.heightAnchor.constraint(equalToConstant: 44)
+        inlineMenuHeight.priority = .defaultHigh
+        let inlineDoneHeight = inlineDoneButton.heightAnchor.constraint(equalToConstant: 44)
+        inlineDoneHeight.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            filterField.heightAnchor.constraint(equalToConstant: 36)
+            filterHeight,
+            inlineSearchHeight,
+            inlineMenuWidth,
+            inlineMenuHeight,
+            inlineDoneHeight
         ])
+    }
+
+    private func applyInlineCommandsVisibility() {
+        guard isViewLoaded else { return }
+        let showsInline = showsInlineCommands
+        inlineBar.isHidden = !showsInline
+        inlineBarHeightConstraint.constant = showsInline ? 44 : 0
+        inlineMenuButton.menu = makeInlineOverviewMenu()
+        if showsInline {
+            filterRow.isHidden = true
+            filterHeightConstraint.constant = 0
+            inlineSearchField.text = filterQuery
+            filterField.text = filterQuery
+        } else {
+            filterRow.isHidden = !isFilterVisible
+            filterHeightConstraint.constant = isFilterVisible ? 44 : 0
+            filterField.text = filterQuery
+            inlineSearchField.text = filterQuery
+        }
+        collectionView.reloadData()
+        updateEmptyState()
+        view.setNeedsLayout()
     }
 
     private func adoptItems(_ tabs: [TabOverviewItem]) {
@@ -728,6 +894,7 @@ final class TabOverviewViewController: UIViewController {
     /// Confirm sheet for closing all tabs in the current mode. Internal
     /// because the picker extension presents it from the rail ellipsis menu.
     func showCloseAllSheet() {
+        guard presentedViewController == nil else { return }
         let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
         sheet.addAction(UIAlertAction(title: "Close All Tabs", style: .destructive) { [weak self] _ in
             guard let self else { return }
