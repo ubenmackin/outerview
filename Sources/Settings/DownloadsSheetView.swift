@@ -7,6 +7,21 @@ import SwiftUI
 
 struct DownloadsSheetView: View {
     @ObservedObject var manager: DownloadsManager
+    var inlineCommands = false
+    var onDone: (() -> Void)?
+    @Environment(\.dismiss) private var dismiss
+
+    var showsInlineDone: Bool {
+        inlineCommands
+    }
+
+    func performInlineDone() {
+        if let onDone {
+            onDone()
+        } else {
+            dismiss()
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -49,6 +64,15 @@ struct DownloadsSheetView: View {
             }
             .navigationTitle("Downloads")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if inlineCommands {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") {
+                            performInlineDone()
+                        }
+                    }
+                }
+            }
         }
     }
 

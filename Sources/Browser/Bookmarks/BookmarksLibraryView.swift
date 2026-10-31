@@ -2,7 +2,6 @@
 //  BookmarksLibraryView.swift
 //  OuterView
 //
-//
 
 import os
 import UIKit
@@ -13,7 +12,7 @@ import UIKit
 /// written and restores as standard. Unparseable values fall back to bookmarks, standard,
 /// and nil; a stored group id resolving to no existing group restores as nil.
 @MainActor
-final class BookmarksLibraryView: UIView {
+final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     nonisolated static let libraryTabDefaultsKey = "libraryTab"
 
     nonisolated static func storedTab(defaults: UserDefaults = .standard) -> LibraryTab {
@@ -29,6 +28,30 @@ final class BookmarksLibraryView: UIView {
     var onRequestEdit: ((BookmarkEditorTarget) -> Void)?
     var onDone: (() -> Void)?
     var onTabChanged: ((LibraryTab) -> Void)?
+
+    var chromePlacement: ChromePlacement = .compact {
+        didSet {
+            if oldValue != chromePlacement {
+                applyPlacement()
+            }
+        }
+    }
+
+    private let doneButton = UIButton(type: .system)
+    private var topBarTrailingToHeader: NSLayoutConstraint?
+    private var topBarTrailingToDone: NSLayoutConstraint?
+
+    /// Read-only Done visibility for tests; the button itself stays private
+    /// so owners cannot mutate or hide the inline control.
+    var isDoneVisible: Bool {
+        !doneButton.isHidden
+    }
+
+    /// Behavioural Done activation for tests; wires through the button so
+    /// the control wiring stays covered without exposing the button.
+    func performDone() {
+        doneButton.sendActions(for: .touchUpInside)
+    }
 
     private let headerContainer = UIView()
     private let topTabBar: LibraryTabBar
@@ -172,6 +195,13 @@ final class BookmarksLibraryView: UIView {
         readingListView?.deleteSelectedItems()
     }
 
+    func applyPlacement() {
+        let isRegular = chromePlacement == .regular
+        doneButton.isHidden = !isRegular
+        topBarTrailingToHeader?.isActive = !isRegular
+        topBarTrailingToDone?.isActive = isRegular
+    }
+
     // MARK: - Private
 
     private func setup() {
@@ -191,8 +221,22 @@ final class BookmarksLibraryView: UIView {
         }
         headerContainer.addSubview(topTabBar)
 
+        doneButton.translatesAutoresizingMaskIntoConstraints = false
+        doneButton.setTitle("Done", for: .normal)
+        doneButton.accessibilityLabel = "Done"
+        doneButton.isHidden = true
+        doneButton.addAction(UIAction { [weak self] _ in self?.onDone?() }, for: .touchUpInside)
+        headerContainer.addSubview(doneButton)
+
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
         addSubview(contentContainer)
+
+        topBarTrailingToHeader = topTabBar.trailingAnchor.constraint(
+            equalTo: headerContainer.trailingAnchor, constant: -16
+        )
+        topBarTrailingToDone = topTabBar.trailingAnchor.constraint(
+            equalTo: doneButton.leadingAnchor, constant: -8
+        )
 
         NSLayoutConstraint.activate([
             headerContainer.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor),
@@ -201,15 +245,19 @@ final class BookmarksLibraryView: UIView {
             headerContainer.heightAnchor.constraint(equalToConstant: 48),
 
             topTabBar.leadingAnchor.constraint(equalTo: headerContainer.leadingAnchor, constant: 16),
-            topTabBar.trailingAnchor.constraint(equalTo: headerContainer.trailingAnchor, constant: -16),
             topTabBar.centerYAnchor.constraint(equalTo: headerContainer.centerYAnchor),
             topTabBar.heightAnchor.constraint(equalToConstant: 40),
+
+            doneButton.trailingAnchor.constraint(equalTo: headerContainer.trailingAnchor, constant: -16),
+            doneButton.centerYAnchor.constraint(equalTo: headerContainer.centerYAnchor),
 
             contentContainer.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor),
             contentContainer.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor),
             contentContainer.topAnchor.constraint(equalTo: headerContainer.bottomAnchor),
             contentContainer.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
+        topBarTrailingToHeader?.isActive = true
+        applyPlacement()
     }
 
     private func setupContentSubviews() {

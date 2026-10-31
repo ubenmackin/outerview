@@ -113,6 +113,9 @@ final class BookmarkEditorModel {
 struct BookmarkEditorView: View {
     @Bindable var model: BookmarkEditorModel
     let bookmarkStore: BookmarkStore
+    var inlineCommands = false
+    var onCancel: (() -> Void)?
+    var onSave: (() -> Void)?
 
     @State private var locationOptions: [BookmarkLocationOption] = []
 
@@ -129,6 +132,22 @@ struct BookmarkEditorView: View {
 
     private var selectedLocationTitle: String {
         locationOptions.first { $0.location == model.selectedLocation }?.title ?? "Bookmarks"
+    }
+
+    var showsInlineCancel: Bool {
+        inlineCommands
+    }
+
+    var showsInlineSave: Bool {
+        inlineCommands
+    }
+
+    func performInlineCancel() {
+        onCancel?()
+    }
+
+    func performInlineSave() {
+        onSave?()
     }
 
     var body: some View {
@@ -168,6 +187,20 @@ struct BookmarkEditorView: View {
             }
             .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if inlineCommands {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") {
+                            performInlineCancel()
+                        }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") {
+                            performInlineSave()
+                        }
+                    }
+                }
+            }
             .onAppear(perform: loadLocationOptions)
         }
     }

@@ -62,8 +62,17 @@ struct SuggestionRowViewModel: Hashable, Sendable {
 /// - Typing text: reveals live suggestions in `suggestionsTableView`.
 /// - Bottom bar: Full-width capsule field docked above the keyboard. Exit/close is handled by the side rail Done button.
 @MainActor
-final class AddressEditorView: UIView {
+final class AddressEditorView: UIView, ChromePlacementDriven {
     static let fieldHeight: CGFloat = 44
+    nonisolated static let suggestionsMaxHeight: CGFloat = 420
+
+    var chromePlacement: ChromePlacement = .compact {
+        didSet {
+            if oldValue != chromePlacement {
+                applyPlacement()
+            }
+        }
+    }
 
     var onSelectSuggestion: ((Suggestion) -> Void)?
     var onSubmit: ((String) -> Void)?
@@ -80,11 +89,16 @@ final class AddressEditorView: UIView {
     // MARK: - Bottom Bar (docked above keyboard)
 
     private let bottomBarContainer = UIView()
+    private let dimView = UIView()
     private let fieldRowStack = UIStackView()
     private let capsuleView = UIView()
     private let capsuleBackground = UIVisualEffectView(effect: GlassEffect.make())
     private let textField = UITextField()
     private let inputErrorLabel = UILabel()
+
+    private var compactConstraints: [NSLayoutConstraint] = []
+    private var regularConstraints: [NSLayoutConstraint] = []
+    private var suggestionsMaxHeightConstraint: NSLayoutConstraint!
 
     private var initialLoadedText: String = ""
     private var isTypingMode: Bool = false
@@ -171,17 +185,59 @@ final class AddressEditorView: UIView {
         textField.text ?? ""
     }
 
+    /// Behavioural placement state for tests: dim visibility, suggestion
+    /// visibility, and which layout set is active. Read-only so tests verify
+    /// behaviour without mutating layout internals.
+    var isDimVisible: Bool {
+        !dimView.isHidden
+    }
+
+    var areSuggestionsVisible: Bool {
+        !suggestionsTableView.isHidden
+    }
+
+    var isCompactLayoutActive: Bool {
+        compactConstraints.allSatisfy(\.isActive) && !regularConstraints.contains(where: \.isActive)
+    }
+
+    var isRegularLayoutActive: Bool {
+        regularConstraints.allSatisfy(\.isActive) && !compactConstraints.contains(where: \.isActive)
+    }
+
+    var isSuggestionsHeightCapped: Bool {
+        suggestionsMaxHeightConstraint?.isActive ?? false
+    }
+
+    var suggestionsMaxHeight: CGFloat {
+        suggestionsMaxHeightConstraint?.constant ?? Self.suggestionsMaxHeight
+    }
+
+    func applyPlacement() {
+        let isRegular = chromePlacement == .regular
+        NSLayoutConstraint.deactivate(isRegular ? compactConstraints : regularConstraints)
+        NSLayoutConstraint.activate(isRegular ? regularConstraints : compactConstraints)
+        dimView.isHidden = !isRegular
+        if isRegular {
+            sendSubviewToBack(dimView)
+        }
+        updateVisibleContent()
+    }
+
     // MARK: - Private
 
     private func setup() {
         backgroundColor = .clear
 
-        // 1. Content Area Container (directly beneath top safe area)
+        dimView.translatesAutoresizingMaskIntoConstraints = false
+        dimView.backgroundColor = UIColor.black.withAlphaComponent(0.4)
+        dimView.isHidden = true
+        dimView.isUserInteractionEnabled = false
+        addSubview(dimView)
+
         contentAreaContainer.translatesAutoresizingMaskIntoConstraints = false
         contentAreaContainer.backgroundColor = .clear
         addSubview(contentAreaContainer)
 
-        // Suggestions Table View
         suggestionsTableView.translatesAutoresizingMaskIntoConstraints = false
         suggestionsTableView.backgroundColor = .systemBackground
         suggestionsTableView.keyboardDismissMode = .onDrag
@@ -191,9 +247,7 @@ final class AddressEditorView: UIView {
         suggestionsTableView.delegate = self
         suggestionsTableView.register(UITableViewCell.self, forCellReuseIdentifier: "SuggestionCell")
         contentAreaContainer.addSubview(suggestionsTableView)
-        pinViewToEdges(suggestionsTableView, inside: contentAreaContainer)
 
-        // 2. Bottom Bar Container (docked above keyboard)
         bottomBarContainer.translatesAutoresizingMaskIntoConstraints = false
         addSubview(bottomBarContainer)
 
@@ -256,16 +310,21 @@ final class AddressEditorView: UIView {
         inputErrorLabel.isHidden = true
         bottomBarContainer.addSubview(inputErrorLabel)
 
-        // Constraints
         NSLayoutConstraint.activate([
+            dimView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            dimView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            dimView.topAnchor.constraint(equalTo: topAnchor),
+            dimView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
             contentAreaContainer.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor),
             contentAreaContainer.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor),
-            contentAreaContainer.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 8),
-            contentAreaContainer.bottomAnchor.constraint(equalTo: bottomBarContainer.topAnchor, constant: -8),
 
             bottomBarContainer.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 8),
             bottomBarContainer.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -8),
-            bottomBarContainer.bottomAnchor.constraint(equalTo: keyboardLayoutGuide.topAnchor, constant: -8),
+
+            suggestionsTableView.leadingAnchor.constraint(equalTo: contentAreaContainer.leadingAnchor),
+            suggestionsTableView.trailingAnchor.constraint(equalTo: contentAreaContainer.trailingAnchor),
+            suggestionsTableView.topAnchor.constraint(equalTo: contentAreaContainer.topAnchor),
 
             fieldRowStack.leadingAnchor.constraint(equalTo: bottomBarContainer.leadingAnchor),
             fieldRowStack.trailingAnchor.constraint(equalTo: bottomBarContainer.trailingAnchor),
@@ -277,37 +336,73 @@ final class AddressEditorView: UIView {
             inputErrorLabel.bottomAnchor.constraint(equalTo: fieldRowStack.topAnchor, constant: -4),
             inputErrorLabel.topAnchor.constraint(equalTo: bottomBarContainer.topAnchor)
         ])
+
+        setupPlacementConstraints()
+    }
+
+    private func setupPlacementConstraints() {
+        let compactContentTop = contentAreaContainer.topAnchor.constraint(
+            equalTo: safeAreaLayoutGuide.topAnchor, constant: 8
+        )
+        let compactContentBottom = contentAreaContainer.bottomAnchor.constraint(
+            equalTo: bottomBarContainer.topAnchor, constant: -8
+        )
+        let compactBarBottom = bottomBarContainer.bottomAnchor.constraint(
+            equalTo: keyboardLayoutGuide.topAnchor, constant: -8
+        )
+        let compactTableBottom = suggestionsTableView.bottomAnchor.constraint(
+            equalTo: contentAreaContainer.bottomAnchor
+        )
+        compactConstraints = [
+            compactContentTop, compactContentBottom, compactBarBottom, compactTableBottom
+        ]
+
+        let regularBarTop = bottomBarContainer.topAnchor.constraint(
+            equalTo: safeAreaLayoutGuide.topAnchor,
+            constant: TopBarView.barHeight + 8
+        )
+        let regularContentTop = contentAreaContainer.topAnchor.constraint(
+            equalTo: bottomBarContainer.bottomAnchor, constant: 8
+        )
+        let regularContentBottom = contentAreaContainer.bottomAnchor.constraint(
+            equalTo: keyboardLayoutGuide.topAnchor, constant: -8
+        )
+        let regularTableBottom = suggestionsTableView.bottomAnchor.constraint(
+            equalTo: contentAreaContainer.bottomAnchor
+        )
+        regularTableBottom.priority = .defaultHigh
+        suggestionsMaxHeightConstraint = suggestionsTableView.heightAnchor.constraint(
+            lessThanOrEqualToConstant: Self.suggestionsMaxHeight
+        )
+        regularConstraints = [
+            regularBarTop, regularContentTop, regularContentBottom,
+            regularTableBottom, suggestionsMaxHeightConstraint
+        ]
+
+        NSLayoutConstraint.activate(compactConstraints)
     }
 
     private func updateVisibleContent() {
         let currentText = textField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let hasText = !currentText.isEmpty
+        let shouldShowSuggestions = (isTypingMode && hasText) || (!hasText && !suggestions.isEmpty)
 
-        if isTypingMode, hasText {
-            // Typing mode: show live suggestions over a solid background
-            suggestionsTableView.isHidden = false
-            contentAreaContainer.backgroundColor = .systemBackground
-            backgroundColor = .systemBackground
-        } else if !hasText, !suggestions.isEmpty {
-            // Empty input with recent searches: surface recents over a solid backdrop.
+        if chromePlacement == .regular {
+            suggestionsTableView.isHidden = !shouldShowSuggestions
+            contentAreaContainer.backgroundColor = .clear
+            backgroundColor = .clear
+            return
+        }
+
+        if shouldShowSuggestions {
             suggestionsTableView.isHidden = false
             contentAreaContainer.backgroundColor = .systemBackground
             backgroundColor = .systemBackground
         } else {
-            // Empty or unmodified: hide suggestions so underlying StartPageView shows through
             suggestionsTableView.isHidden = true
             contentAreaContainer.backgroundColor = .clear
             backgroundColor = .clear
         }
-    }
-
-    private func pinViewToEdges(_ subview: UIView, inside parent: UIView) {
-        NSLayoutConstraint.activate([
-            subview.leadingAnchor.constraint(equalTo: parent.leadingAnchor),
-            subview.trailingAnchor.constraint(equalTo: parent.trailingAnchor),
-            subview.topAnchor.constraint(equalTo: parent.topAnchor),
-            subview.bottomAnchor.constraint(equalTo: parent.bottomAnchor)
-        ])
     }
 
     @objc private func handleCapsuleTap() {

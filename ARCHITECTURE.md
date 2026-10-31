@@ -11,9 +11,9 @@ Stock Safari pins Duo web content to a narrow 382 pt strip beside a static side 
 1. **Chrome is Transient**: Chrome steps aside for content. The side rail hides after 8 pt of accumulated downward scroll; finger-down alone only resets the gesture accumulators and never hides visible chrome. The address pill minifies after 24 pt of accumulated downward scroll. An upward scroll of 32 pt restores the address pill and rail.
 2. **Quick-Access Menu Button**: When the rail collapses on downward scroll, a compact floating menu button drops down at the bottom right. Tapping it immediately pops the rail back out without requiring the user to scroll backwards.
 3. **Wall-to-Wall Content**: WKWebView fills the window edge-to-edge; liquid glass chrome floats above it and adjusts content insets dynamically.
-4. **Contextual Command Rail**: The 84 pt right system column is an adaptive command rail driven by `RailMode` (`.browsing`, `.startPage`, `.library`, `.bookmarkEditor`, `.settings`, `.downloads`). Contextual actions (Cancel, Save, Edit, Clear, Done) are surfaced directly in the rail rather than crammed into top navigation headers. Tab overview bypasses `RailMode` and composes its own rail via `TabOverviewViewController.applyRailItems(to:)`.
+4. **Contextual Command Rail**: The 84 pt right system column is an adaptive command rail driven by `RailMode` (`.browsing`, `.startPage`, `.library`, `.bookmarkEditor`, `.settings`, `.downloads`). Contextual actions (Cancel, Save, Edit, Clear, Done) are surfaced directly in the rail rather than crammed into top navigation headers. On regular width the identical `RailMode` composition renders into the top toolbar and the rail hides. Tab overview bypasses `RailMode` and composes its own chrome via `TabOverviewViewController.overviewChromeItems()` consumed by `BrowserRootViewController.applyOverviewChromeItems()` → `setChromeItems()`.
 5. **Unified Start Page**: A single `StartPageView` serves empty tabs, menu-triggered home access, and the address bar editing backdrop. Large high-res site favicons, recent visits, and Safari import actions live in this single surface.
-6. **Multi-Screen Migration**: The app migrates dynamically between the Duo's outer portrait display (466 × 678 pt) and inner landscape display (951 × 669 pt). Layout is always derived from window and safe-area geometry, never from static screen instances, orientation flags, or device idioms.
+6. **Dual-Placement Chrome**: Compact width (outer display) uses the bottom pill plus right rail. Regular width (inner display, either orientation) uses a top toolbar with the centered pill, a live tab strip, and no rail. One `ChromePlacement` value resolved from the horizontal size class drives the swap; unfolding is a trait change with no state loss.
 7. **Swift 6 Concurrency**: Built from day one with strict concurrency, `@MainActor` UI isolation, and immutable `Sendable` value types.
 8. **Reuse over Reinvention (P1)**: New features extend the shipped architecture rather than adding parallel subsystems. Reader mode and Find in Page transform the SAME `WKWebView` document; the chrome FSM is untouched by P1 overlays.
 
@@ -37,11 +37,12 @@ Stock Safari pins Duo web content to a narrow 382 pt strip beside a static side 
 | :--- | :--- | :--- | :--- | :--- |
 | **Outer Portrait** | 466 × 678 | @3x (radius 59) | top: 0, left: 0, right: 84, bottom: 34 | Right 84 pt column hosts system status & camera spot; bottom 34 pt home indicator |
 | **Inner Landscape** | 951 × 669 | @3x | top: 0, left: 0, right: 84, bottom: 34 | Expanded widescreen canvas; right column reserved for controls |
+| **Inner Portrait** | 669 × 951 | @3x | top: 0, left: 0, right: 84, bottom: 34 | Regular width portrait; horizontal top bars like landscape |
 
 ### Safe Area Strategy
-- **Right System Column (84 pt)**: Hosts the system status cluster (time, cellular, battery) and camera occlusion (an ~84 × 174 pt region containing the camera hardware). OuterView centers its 60 pt interactive command rail (`SideRailView`) within this 84 pt column, positioning buttons below the camera region.
+- **Right System Column (84 pt)**: Hosts the system status cluster (time, cellular, battery) and camera occlusion (an ~84 × 174 pt region containing the camera hardware). OuterView centers its 60 pt interactive command rail (`SideRailView`) within this 84 pt column, positioning buttons below the camera region. The column carries system status only on regular width.
 - **Bottom Bar Spacing (34 pt)**: In browsing mode, the address capsule floats 4 pt above the bottom safe area (`38 pt` total offset from screen bottom). In address editing mode, the field docks cleanly above the active `keyboardLayoutGuide`.
-- **Dynamic Transition Handling**: When migrating between displays, transition frames are handled through `viewWillTransition(to:with:)` and `viewDidLayoutSubviews`. Size classes transition between compact-width/regular-height (outer) and regular/regular (inner).
+- **Dynamic Transition Handling**: When migrating between displays, transition frames are handled through `viewWillTransition(to:with:)` and `layoutSubviews`. Size classes transition between compact-width/regular-height (outer) and regular/regular (inner). Folded landscape (compact/compact) keeps compact chrome with no new work.
 
 ---
 
@@ -76,12 +77,16 @@ Sources/
   - `.bookmarkEditor`: Cancel (`xmark`) at top; Save (`checkmark`) at bottom.
   - `.settings`: Blue-check Done dismissing the embedded full-screen Settings sheet.
   - `.downloads`: Files opener and Clear All on top; blue-check Done dismissing the embedded full-screen Downloads sheet.
-  - Tab overview bypasses `RailMode`: `TabOverviewViewController.applyRailItems(to:)` puts Search and an ellipsis menu (Manage Tab Groups, New Group…, Close All Tabs behind a confirm sheet) on top, New Tab and Done at the bottom.
+   - Tab overview bypasses `RailMode`: `TabOverviewViewController.overviewChromeItems()` composes Search and an ellipsis menu (Manage Tab Groups, New Group…, Close All Tabs behind a confirm sheet) on top, New Tab and Done at the bottom; `BrowserRootViewController.applyOverviewChromeItems()` forwards that single composition through `setChromeItems()` so compact and regular never diverge.
   - *Quick Menu*: When collapsed, a compact circular button remains at `(402, 600)` to restore the rail on tap.
-- **Sheet presentation**: Library, Settings, and Downloads are full-bleed overlay containers pinned to the root view edges. Their command buttons stay rail commands composed by `RailMode` at rail coordinates above the sheet; the sheets own no buttons, dim, or grabber. Explicit Done and close actions are the only dismissal paths.
+  - On regular width the rail hides and the same composition renders into `TopBarView`.
+- **`TopBarView`**: Regular-width toolbar owning button clusters flanking the shared pill slot. Consumes the identical `RailAction` prefix and suffix arrays as the rail through `setItems(prefix:suffix:)`, so compact and regular never diverge in available commands.
+- **`TabStripView`**: Regular-width live tab strip beneath the toolbar showing the active mode tabs with favicon, title, and close affordance. Visible with two or more tabs; hidden otherwise. Tap switches through `selectTab`, close removes through `closeTab`; the strip never reorders and never shows the inactive mode.
+- **Sheet presentation**: Library, Settings, and Downloads are overlay containers pinned to the root view edges on compact. On regular they render inside `OverlayCardView` centered cards with dim. Their command buttons stay rail commands composed by `RailMode` at rail coordinates above the sheet on compact; on regular the sheets carry HIG-standard inline Done, Cancel, and Save controls and the rail stays hidden. Explicit Done and close actions are the only dismissal paths on either placement.
+- **`OverlayCardView`**: Placement-driven card scaffold owning dim, centered max-width card, corner radius, and content pinning. Library, Settings, Downloads, and BookmarkEditor supply content only. Folding with a sheet open keeps the old sheet chrome until reopened.
 - **`AddressBarView`**: Liquid glass floating capsule displaying security status (lock icon), page domain/title, reload/stop action, and page menu anchor. Morphs between expanded (44 pt height) and minified (30 pt height). Shows a download progress ring in the action slot while downloads run and the page is idle; tapping the ring opens Downloads. While Find in Page is active, the find capsule (`FindInPageView`) occupies the pill's exact frame — the FSM is not involved; the overlay is independent like `errorContainer`.
-- **`AddressEditorView`**: Full-bleed editing overlay docked above `keyboardLayoutGuide`. Features an integrated `UITextField` inside a glass capsule and a suggestions `UITableView` with `automaticDimension` row height to eliminate any text clipping.
-- **`ChromeStateController`**: Pure, deterministic finite state machine driving chrome transitions from scroll offsets, drag events, and editing lifecycle changes. P1 introduces no new FSM inputs or states.
+- **`AddressEditorView`**: Full-bleed editing overlay docked above `keyboardLayoutGuide` on compact and dropping from the toolbar with dimmed backdrop on regular. Features an integrated `UITextField` inside a glass capsule and a suggestions `UITableView` with `automaticDimension` row height to eliminate any text clipping.
+- **`ChromeStateController`**: Pure, deterministic finite state machine driving chrome transitions from scroll offsets, drag events, and editing lifecycle changes. Thresholds (8, 24, 32) are shared across placements; the root maps rail outputs to toolbar plus strip visibility on regular. P1 introduces no new FSM inputs or states.
 
 ### 4.2 Address Editing & Suggestions Pipeline
 - **`SuggestionEngine`**: High-performance multi-source candidate ranking pipeline:
@@ -104,10 +109,10 @@ Sources/
 - **`ElementContextMenu`**: Pure UIMenu builder — the canonical item owner. Links: Open in New Tab, Add to Reading List, Copy Link, Share. Images: Open in New Tab, Save to Photos, Copy Image, Share. Photos saving declares `NSPhotoLibraryAddUsageDescription`.
 
 ### 4.4 Library, Bookmarks, Favorites, History & Reading List
-- **`BookmarksLibraryView`**: Full-screen overlay for Bookmarks, Favorites, History, and Reading List library (matching Safari).
+- **`BookmarksLibraryView`**: Full-screen overlay for Bookmarks, Favorites, History, and Reading List library on compact; centered card content with an inline Done header button on regular (matching Safari).
 - **Library search tuck contract**: In all three searchable lists the search bar is **hidden by default** and revealed only by pulling down from the top. `LibrarySearchTuckController` (Sources/Browser/Bookmarks/LibrarySearchHeaderView.swift) is the SOLE tuck decider: every host list re-asserts the hidden state via `reassert` immediately after every `tableReload` (`reassert` detaches the header via `requiresCollapse` on short lists that cannot tuck, otherwise re-attaches the header and tucks via `enforceTuck`); first-layout tuck stays in `layoutTuckIfNeeded`; re-exposure on reload is a bug. The spacing between the revealed search bar and list content is owned by the header view's internal padding (`defaultHeight` 64 with ~14 pt bottom padding), never by per-list constants.
 - **`BookmarksBrowserView`**: Hierarchical bookmark navigator supporting nested folders, section-bound drag-and-drop reordering, and context-menu operations.
-- **`BookmarkEditorView` + `BookmarkEditorModel`**: Dedicated bookmark editing surface for modifying title, URL, and destination folder using `BookmarkLocationTree`. Directly integrated with side-rail Cancel/Save buttons.
+- **`BookmarkEditorView` + `BookmarkEditorModel`**: Dedicated bookmark editing surface for modifying title, URL, and destination folder using `BookmarkLocationTree`. Directly integrated with side-rail Cancel/Save buttons on compact and inline toolbar items on regular.
 - **`FavoritesGridView` + `FavoriteTileCell`**: Safari-faithful grid displaying large custom-rendered favicon tiles with rounded corners. Press-drag reorders tiles through the collection drag and drop delegates with persistence through `BookmarkStore.reorderBookmarks`; drops commit with batch delete plus insert and never reload inside the drop.
 - **`HistoryListView` + `HistorySegmenter`**: Chronologically partitioned browsing history (Today Morning / Afternoon / Evening, Yesterday Morning / Afternoon / Evening, Previous 7 Days, Older) with swipe-to-delete and full clearance.
 - **`ReadingListView`**: Saved-pages list mirroring the History list pattern (insetGrouped rows, favicon, semibold unread titles, swipe-to-delete, display/filter/select through the rail ellipsis menu with batch deletion in selection mode). Opening a row marks it read so Unread Only filters work. P1 loads saved pages as ordinary URLs; no offline snapshot cache.
@@ -140,6 +145,7 @@ Sources/
 
 [Quick Menu Tap]   ──> Immediate Override       ──> Rail Expands Instantly
 ```
+On regular width the same thresholds collapse the toolbar plus tab strip, minify the centered pill capsule, and restore both; rail outputs never animate.
 
 ### 5.2 Address Editing & Start Page Coordination
 1. **Initiation**: Tapping the address bar or selecting "Open Start Page" invokes `beginEditing()`:

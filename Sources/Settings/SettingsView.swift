@@ -15,6 +15,9 @@ struct SettingsView: View {
     let siteZoomStore: SiteZoomStore
     var onDidClearHistory: (() -> Void)?
     var onDidClearTabs: (() -> Void)?
+    var inlineCommands = false
+    var onDone: (() -> Void)?
+    @Environment(\.dismiss) private var dismiss
 
     @State private var showingImporter = false
     @State private var importSummary: ImportSummary?
@@ -29,21 +32,45 @@ struct SettingsView: View {
         bookmarkStore: BookmarkStore,
         historyStore: HistoryStore,
         tabStore: TabStore,
-        siteZoomStore: SiteZoomStore = SiteZoomStore()
+        siteZoomStore: SiteZoomStore = SiteZoomStore(),
+        inlineCommands: Bool = false,
+        onDone: (() -> Void)? = nil
     ) {
         self.viewModel = viewModel
         self.bookmarkStore = bookmarkStore
         self.historyStore = historyStore
         self.tabStore = tabStore
         self.siteZoomStore = siteZoomStore
+        self.inlineCommands = inlineCommands
+        self.onDone = onDone
     }
 
-    init(database: OuterViewDatabase, viewModel: SettingsViewModel = SettingsViewModel(), siteZoomStore: SiteZoomStore = SiteZoomStore()) {
+    init(
+        database: OuterViewDatabase,
+        viewModel: SettingsViewModel = SettingsViewModel(),
+        siteZoomStore: SiteZoomStore = SiteZoomStore(),
+        inlineCommands: Bool = false,
+        onDone: (() -> Void)? = nil
+    ) {
         self.viewModel = viewModel
         self.bookmarkStore = BookmarkStore(database: database)
         self.historyStore = HistoryStore(database: database)
         self.tabStore = TabStore(database: database)
         self.siteZoomStore = siteZoomStore
+        self.inlineCommands = inlineCommands
+        self.onDone = onDone
+    }
+
+    var showsInlineDone: Bool {
+        inlineCommands
+    }
+
+    func performInlineDone() {
+        if let onDone {
+            onDone()
+        } else {
+            dismiss()
+        }
     }
 
     var body: some View {
@@ -88,6 +115,15 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if inlineCommands {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") {
+                            performInlineDone()
+                        }
+                    }
+                }
+            }
             .sheet(isPresented: $showingImporter) {
                 BookmarksDocumentPicker(
                     onPick: handlePickedURL,

@@ -207,6 +207,22 @@ final class RailButton: UIButton {
     }
 }
 
+/// Single owner for rail-button stack rebuilds. Both `SideRailView` and
+/// `TopBarView` compose the same `RailAction` arrays, so they share this
+/// helper instead of triplicating the remove-and-rebuild loop.
+@MainActor
+extension UIStackView {
+    func rebuild(with items: [RailAction]) {
+        for arranged in arrangedSubviews {
+            removeArrangedSubview(arranged)
+            arranged.removeFromSuperview()
+        }
+        for item in items {
+            addArrangedSubview(RailButton(action: item))
+        }
+    }
+}
+
 /// Vertical rail overlay. The view itself is pinned full-bleed by its owner so
 /// its safe area always matches the window; the two button stacks render as a
 /// 60 pt column centered in the right system column (the reported right
@@ -314,8 +330,8 @@ final class SideRailView: UIView {
     }
 
     func setItems(prefix: [RailAction], suffix: [RailAction]) {
-        rebuild(stack: topStack, with: prefix)
-        rebuild(stack: bottomStack, with: suffix)
+        topStack.rebuild(with: prefix)
+        bottomStack.rebuild(with: suffix)
         setNeedsLayout()
     }
 
@@ -407,15 +423,5 @@ final class SideRailView: UIView {
         addSubview(quickMenuButton)
         quickMenuButton.alpha = 0
         quickMenuButton.transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
-    }
-
-    private func rebuild(stack: UIStackView, with items: [RailAction]) {
-        for arranged in stack.arrangedSubviews {
-            stack.removeArrangedSubview(arranged)
-            arranged.removeFromSuperview()
-        }
-        for item in items {
-            stack.addArrangedSubview(RailButton(action: item))
-        }
     }
 }

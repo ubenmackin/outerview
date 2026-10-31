@@ -9,6 +9,10 @@ import Photos
 import SwiftUI
 import UIKit
 
+// swiftlint:disable file_length
+// Central coordinator owns chrome, tabs, sheets, and overview;
+// size reflects single-owner composition, not feature sprawl.
+
 /// Failure kind distinguishing Photos permission denial, which is surfaced to
 /// the user, from ordinary save errors, which are only logged.
 private enum PhotoSaveFailure: Error {
@@ -23,6 +27,7 @@ private enum PhotoSaveFailure: Error {
 /// written and restores as standard. Unparseable values fall back to bookmarks, standard,
 /// and nil; a stored group id resolving to no existing group restores as nil.
 @MainActor
+// swiftlint:disable:next type_body_length
 final class BrowserRootViewController: UIViewController {
     nonisolated static let railHideDuration: TimeInterval = 0.25
     nonisolated static let pillMorphDuration: TimeInterval = 0.3
@@ -71,6 +76,83 @@ final class BrowserRootViewController: UIViewController {
         view.bounds.width
     }
 
+    /// Regular width uses the top toolbar with the centered pill and no rail.
+    var chromePlacement: ChromePlacement {
+        Self.placement(for: traitCollection.horizontalSizeClass)
+    }
+
+    nonisolated static func placement(for sizeClass: UIUserInterfaceSizeClass) -> ChromePlacement {
+        sizeClass == .regular ? .regular : .compact
+    }
+
+    /// Moves the shared pill between the bottom anchors and the toolbar slot.
+    func applyChromePlacement() {
+        applyChromePlacement(for: chromePlacement)
+    }
+
+    func applyChromePlacement(for placement: ChromePlacement) {
+        let isRegular = placement == .regular
+        topBarView.isHidden = !isRegular
+        railView.isHidden = isRegular
+        if isRegular {
+            updateToolbarVisibility(for: chromeController.state)
+            if pillView.superview !== topBarView.pillSlotView {
+                NSLayoutConstraint.deactivate([
+                    pillBottomConstraint,
+                    pillLeadingConstraint,
+                    pillTrailingConstraint,
+                    pillCenterXConstraint,
+                    pillWidthConstraint
+                ])
+                pillView.removeFromSuperview()
+                pillView.translatesAutoresizingMaskIntoConstraints = false
+                topBarView.pillSlotView.addSubview(pillView)
+                NSLayoutConstraint.activate([
+                    pillSlotLeadingConstraint,
+                    pillSlotTrailingConstraint,
+                    pillSlotCenterYConstraint
+                ])
+            } else {
+                pillBottomConstraint.isActive = false
+                pillLeadingConstraint.isActive = false
+                pillTrailingConstraint.isActive = false
+                pillCenterXConstraint.isActive = false
+                pillWidthConstraint.isActive = false
+                pillSlotLeadingConstraint.isActive = true
+                pillSlotTrailingConstraint.isActive = true
+                pillSlotCenterYConstraint.isActive = true
+            }
+        } else {
+            if pillView.superview !== view {
+                NSLayoutConstraint.deactivate([
+                    pillSlotLeadingConstraint,
+                    pillSlotTrailingConstraint,
+                    pillSlotCenterYConstraint
+                ])
+                pillView.removeFromSuperview()
+                pillView.translatesAutoresizingMaskIntoConstraints = false
+                view.addSubview(pillView)
+            } else {
+                pillSlotLeadingConstraint.isActive = false
+                pillSlotTrailingConstraint.isActive = false
+                pillSlotCenterYConstraint.isActive = false
+            }
+            let isMinified = chromeController.state.pill == .minified
+            pillBottomConstraint.isActive = true
+            pillHeightConstraint.isActive = true
+            pillLeadingConstraint.isActive = !isMinified
+            pillTrailingConstraint.isActive = !isMinified
+            pillCenterXConstraint.isActive = isMinified
+            pillWidthConstraint.isActive = isMinified
+            if isMinified {
+                pillWidthConstraint.constant = AddressBarView.widthForBounds(pillReferenceWidth)
+            }
+        }
+        editorView.applyPlacement(for: placement)
+        updateTabStrip()
+        bringChromeToFront()
+    }
+
     // MARK: - Layers
 
     let contentContainer = UIView()
@@ -88,6 +170,8 @@ final class BrowserRootViewController: UIViewController {
     var errorCopyText = ""
     let railView = SideRailView()
     let pillView = AddressBarView()
+    let topBarView = TopBarView()
+    let tabStripView = TabStripView()
     let findView = FindInPageView()
     let editorView = AddressEditorView()
     let bookmarksLibraryView: BookmarksLibraryView
@@ -97,6 +181,12 @@ final class BrowserRootViewController: UIViewController {
     let downloadsContainer = UIView()
     var downloadsHosting: UIViewController?
     var isDownloadsVisible = false
+
+    let libraryOverlay = OverlayCardView()
+    let settingsOverlay = OverlayCardView()
+    let downloadsOverlay = OverlayCardView()
+    let bookmarkEditorOverlay = OverlayCardView()
+    var libraryCompactConstraints: [NSLayoutConstraint] = []
     /// Last Files picker issued by the downloads rail. Retained so the
     /// wiring stays observable when the host blocks modal presentation.
     var presentedDownloadsPicker: UIDocumentPickerViewController?
@@ -104,12 +194,49 @@ final class BrowserRootViewController: UIViewController {
     private var bookmarkEditorHosting: UIHostingController<BookmarkEditorView>?
     private var activeBookmarkEditorModel: BookmarkEditorModel?
     private(set) var isBookmarkEditorVisible = false
+
+    /// Read-only inline-command state for the bookmark editor sheet. Tests
+    /// verify behaviour through this accessor instead of reaching the hosting
+    /// controller directly.
+    var bookmarkEditorInlineCommands: Bool? {
+        bookmarkEditorHosting?.rootView.inlineCommands
+    }
+
+    var bookmarkEditorShowsInlineCancel: Bool? {
+        bookmarkEditorHosting?.rootView.showsInlineCancel
+    }
+
+    var bookmarkEditorShowsInlineSave: Bool? {
+        bookmarkEditorHosting?.rootView.showsInlineSave
+    }
+
+    func performBookmarkEditorCancel() {
+        bookmarkEditorHosting?.rootView.performInlineCancel()
+    }
+
+    func performBookmarkEditorSave() {
+        bookmarkEditorHosting?.rootView.performInlineSave()
+    }
+
+    /// Any library/settings/downloads/editor sheet is on screen. On regular
+    /// width the toolbar suppresses its duplicated Done/Cancel/Save items
+    /// while this is true, leaving only the sheet's inline controls.
+    var isSheetOverlayVisible: Bool {
+        isLibraryVisible || isSettingsVisible || isDownloadsVisible || isBookmarkEditorVisible
+    }
+
     var isEditingAddress = false
     var isFindActive = false
     var findBottomConstraint: NSLayoutConstraint?
     let overviewView = UIView()
     let overviewController: TabOverviewViewController
-    var overviewMode: TabOverviewMode
+    var overviewMode: TabOverviewMode {
+        didSet {
+            guard isViewLoaded else { return }
+            updateTabStrip()
+        }
+    }
+
     let selectionDefaults: UserDefaults
 
     var pillHeightConstraint: NSLayoutConstraint!
@@ -118,8 +245,15 @@ final class BrowserRootViewController: UIViewController {
     var pillTrailingConstraint: NSLayoutConstraint!
     var pillWidthConstraint: NSLayoutConstraint!
     var pillCenterXConstraint: NSLayoutConstraint!
+    var pillSlotLeadingConstraint: NSLayoutConstraint!
+    var pillSlotTrailingConstraint: NSLayoutConstraint!
+    var pillSlotCenterYConstraint: NSLayoutConstraint!
+    var topBarTopConstraint: NSLayoutConstraint!
+    var topBarLeadingConstraint: NSLayoutConstraint!
+    var topBarTrailingConstraint: NSLayoutConstraint!
     var pillAnimator: UIViewPropertyAnimator?
     private var structuralTask: Task<Void, Never>?
+    private var horizontalSizeClassRegistration: UITraitChangeRegistration?
     var suggestionTask: Task<Void, Never>?
     var findQueryTask: Task<Void, Never>?
     var findStepTask: Task<Void, Never>?
@@ -128,8 +262,20 @@ final class BrowserRootViewController: UIViewController {
     // MARK: - State
 
     var chromeController = ChromeStateController()
-    var tabs: [TabRecord] = []
-    var selectedTabID: UUID?
+    var tabs: [TabRecord] = [] {
+        didSet {
+            guard isViewLoaded else { return }
+            updateTabStrip()
+        }
+    }
+
+    var selectedTabID: UUID? {
+        didSet {
+            guard isViewLoaded else { return }
+            updateTabStrip()
+        }
+    }
+
     var isOverviewVisible = false
     var isLibraryVisible = false
 
@@ -211,12 +357,14 @@ final class BrowserRootViewController: UIViewController {
         view.backgroundColor = .systemBackground
         setupHierarchy()
         setupStartPageContent()
+        applyChromePlacement()
         updateRailItems()
         loadInitialTabs()
         applyContentInsets()
         applyChromeViews(animated: false)
         subscribeToDownloadProgress()
         updateDownloadProgress()
+        observeHorizontalSizeClass()
     }
 
     override func viewSafeAreaInsetsDidChange() {
@@ -251,6 +399,18 @@ final class BrowserRootViewController: UIViewController {
         scheduleStructuralUpdate()
     }
 
+    private func observeHorizontalSizeClass() {
+        // Fold state follows size class; bounds-driven sizing stays
+        // in layoutSubviews and viewWillTransition.
+        horizontalSizeClassRegistration = registerForTraitChanges([UITraitHorizontalSizeClass.self]) { (owner: BrowserRootViewController, previous: UITraitCollection) in
+            MainActor.assumeIsolated {
+                if previous.horizontalSizeClass != owner.traitCollection.horizontalSizeClass {
+                    owner.scheduleStructuralUpdate()
+                }
+            }
+        }
+    }
+
     // MARK: - Setup
 
     private func setupHierarchy() {
@@ -274,6 +434,8 @@ final class BrowserRootViewController: UIViewController {
         ])
 
         setupErrorOverlay()
+        setupTopBar()
+        setupTabStrip()
         setupPill()
         setupFind()
         setupRail()
@@ -282,8 +444,23 @@ final class BrowserRootViewController: UIViewController {
         setupSettings()
         setupDownloads()
         setupBookmarkEditor()
+        setupOverlays()
         setupOverview()
         bringChromeToFront()
+    }
+
+    private func setupOverlays() {
+        for overlay in [libraryOverlay, settingsOverlay, downloadsOverlay, bookmarkEditorOverlay] {
+            overlay.translatesAutoresizingMaskIntoConstraints = false
+            overlay.isHidden = true
+            view.addSubview(overlay)
+            NSLayoutConstraint.activate([
+                overlay.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                overlay.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                overlay.topAnchor.constraint(equalTo: view.topAnchor),
+                overlay.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            ])
+        }
     }
 
     /// Single z-order for the floating layers. The rail is topmost so the
@@ -292,14 +469,22 @@ final class BrowserRootViewController: UIViewController {
     /// and is skipped by hit testing.
     func bringChromeToFront() {
         view.bringSubviewToFront(errorContainer)
-        view.bringSubviewToFront(pillView)
+        if pillView.superview == view {
+            view.bringSubviewToFront(pillView)
+        }
         view.bringSubviewToFront(findView)
         view.bringSubviewToFront(editorView)
         view.bringSubviewToFront(bookmarksLibraryView)
         view.bringSubviewToFront(settingsContainer)
         view.bringSubviewToFront(downloadsContainer)
         view.bringSubviewToFront(bookmarkEditorContainer)
+        view.bringSubviewToFront(libraryOverlay)
+        view.bringSubviewToFront(settingsOverlay)
+        view.bringSubviewToFront(downloadsOverlay)
+        view.bringSubviewToFront(bookmarkEditorOverlay)
         view.bringSubviewToFront(overviewView)
+        view.bringSubviewToFront(tabStripView)
+        view.bringSubviewToFront(topBarView)
         view.bringSubviewToFront(railView)
     }
 
@@ -330,6 +515,42 @@ final class BrowserRootViewController: UIViewController {
         ])
     }
 
+    private func setupTopBar() {
+        topBarView.translatesAutoresizingMaskIntoConstraints = false
+        topBarView.isHidden = true
+        view.addSubview(topBarView)
+        topBarTopConstraint = topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
+        topBarLeadingConstraint = topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor)
+        topBarTrailingConstraint = topBarView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+        NSLayoutConstraint.activate([
+            topBarTopConstraint,
+            topBarLeadingConstraint,
+            topBarTrailingConstraint
+        ])
+    }
+
+    private func setupTabStrip() {
+        tabStripView.translatesAutoresizingMaskIntoConstraints = false
+        tabStripView.isHidden = true
+        tabStripView.onSelectTab = { [weak self] id in
+            self?.selectTab(id: id)
+        }
+        tabStripView.onCloseTab = { [weak self] id in
+            self?.closeTab(id: id, replacementIfEmpty: nil)
+        }
+        tabStripView.onNewTab = { [weak self] in
+            guard let self else { return }
+            self.createNewTab(isPrivate: self.overviewMode.isPrivate)
+        }
+        view.addSubview(tabStripView)
+        NSLayoutConstraint.activate([
+            tabStripView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
+            tabStripView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tabStripView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tabStripView.heightAnchor.constraint(equalToConstant: TabStripView.stripHeight)
+        ])
+    }
+
     private func setupPill() {
         pillView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(pillView)
@@ -351,6 +572,15 @@ final class BrowserRootViewController: UIViewController {
         pillBottomConstraint = pillView.bottomAnchor.constraint(
             equalTo: view.bottomAnchor,
             constant: -Self.pillBottomOffset(for: .expanded, systemBottomInset: view.safeAreaInsets.bottom)
+        )
+        pillSlotLeadingConstraint = pillView.leadingAnchor.constraint(
+            equalTo: topBarView.pillSlotView.leadingAnchor
+        )
+        pillSlotTrailingConstraint = pillView.trailingAnchor.constraint(
+            equalTo: topBarView.pillSlotView.trailingAnchor
+        )
+        pillSlotCenterYConstraint = pillView.centerYAnchor.constraint(
+            equalTo: topBarView.pillSlotView.centerYAnchor
         )
         NSLayoutConstraint.activate([
             pillBottomConstraint,
@@ -387,12 +617,13 @@ final class BrowserRootViewController: UIViewController {
         bookmarksLibraryView.translatesAutoresizingMaskIntoConstraints = false
         bookmarksLibraryView.isHidden = true
         view.addSubview(bookmarksLibraryView)
-        NSLayoutConstraint.activate([
+        libraryCompactConstraints = [
             bookmarksLibraryView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bookmarksLibraryView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bookmarksLibraryView.topAnchor.constraint(equalTo: view.topAnchor),
             bookmarksLibraryView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        ])
+        ]
+        NSLayoutConstraint.activate(libraryCompactConstraints)
         if let bookmarkStore, let historyStore, let readingListStore {
             bookmarksLibraryView.configureStores(
                 bookmarkStore: bookmarkStore,
@@ -436,23 +667,57 @@ final class BrowserRootViewController: UIViewController {
         ])
     }
 
+    /// Single present path for settings/downloads/bookmark-editor sheets:
+    /// regular renders inside a centered `OverlayCardView`, compact pins
+    /// full-bleed inside the container with the trailing edge at the safe
+    /// area so the rail column stays clear.
+    func presentOverlay(_ overlay: OverlayCardView, newHosting: UIViewController, currentHosting: UIViewController?, container: UIView) {
+        let placement = chromePlacement
+        overlay.applyPlacement(for: placement)
+        currentHosting?.view.removeFromSuperview()
+        currentHosting?.removeFromParent()
+        if overlay.hostedContent != nil {
+            overlay.clearContent()
+        }
+        addChild(newHosting)
+        newHosting.view.translatesAutoresizingMaskIntoConstraints = false
+        if placement == .regular {
+            overlay.setContent(newHosting.view)
+            overlay.isHidden = false
+            container.isHidden = true
+        } else {
+            overlay.isHidden = true
+            container.addSubview(newHosting.view)
+            NSLayoutConstraint.activate([
+                newHosting.view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                newHosting.view.topAnchor.constraint(equalTo: container.topAnchor),
+                newHosting.view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+                newHosting.view.trailingAnchor.constraint(equalTo: container.safeAreaLayoutGuide.trailingAnchor)
+            ])
+            container.isHidden = false
+        }
+        newHosting.didMove(toParent: self)
+    }
+
+    /// Single dismiss path mirroring `presentOverlay`: clears card content
+    /// when the hosted view lives in the overlay, otherwise detaches it
+    /// from the compact container.
+    func dismissOverlay(_ overlay: OverlayCardView, hosting: UIViewController?, container: UIView) {
+        container.isHidden = true
+        overlay.isHidden = true
+        if let hosted = hosting?.view, overlay.hostedContent === hosted {
+            overlay.clearContent()
+        } else {
+            hosting?.view.removeFromSuperview()
+        }
+        hosting?.removeFromParent()
+    }
+
     func presentSettingsSheet() {
         guard let hosting = makeSettingsController() else { return }
-        settingsHosting?.view.removeFromSuperview()
-        settingsHosting?.removeFromParent()
-        addChild(hosting)
-        hosting.view.translatesAutoresizingMaskIntoConstraints = false
-        settingsContainer.addSubview(hosting.view)
-        NSLayoutConstraint.activate([
-            hosting.view.leadingAnchor.constraint(equalTo: settingsContainer.leadingAnchor),
-            hosting.view.topAnchor.constraint(equalTo: settingsContainer.topAnchor),
-            hosting.view.bottomAnchor.constraint(equalTo: settingsContainer.bottomAnchor),
-            hosting.view.trailingAnchor.constraint(equalTo: settingsContainer.safeAreaLayoutGuide.trailingAnchor)
-        ])
-        hosting.didMove(toParent: self)
+        presentOverlay(settingsOverlay, newHosting: hosting, currentHosting: settingsHosting, container: settingsContainer)
         settingsHosting = hosting
         isSettingsVisible = true
-        settingsContainer.isHidden = false
         bringChromeToFront()
         updateRailItems()
         applyRailViews(animated: true)
@@ -460,9 +725,7 @@ final class BrowserRootViewController: UIViewController {
 
     func dismissSettingsSheet() {
         isSettingsVisible = false
-        settingsContainer.isHidden = true
-        settingsHosting?.view.removeFromSuperview()
-        settingsHosting?.removeFromParent()
+        dismissOverlay(settingsOverlay, hosting: settingsHosting, container: settingsContainer)
         settingsHosting = nil
         updateRailItems()
         applyRailViews(animated: true)
@@ -470,28 +733,21 @@ final class BrowserRootViewController: UIViewController {
 
     func presentBookmarkEditor(for target: BookmarkEditorTarget) {
         guard let bookmarkStore else { return }
+        let placement = chromePlacement
         let model = BookmarkEditorModel(target: target)
         activeBookmarkEditorModel = model
-        let editor = BookmarkEditorView(model: model, bookmarkStore: bookmarkStore)
+        let editor = BookmarkEditorView(
+            model: model,
+            bookmarkStore: bookmarkStore,
+            inlineCommands: placement == .regular,
+            onCancel: { [weak self] in self?.dismissBookmarkEditor() },
+            onSave: { [weak self] in self?.saveBookmarkEditor() }
+        )
         let hosting = UIHostingController(rootView: editor)
-
-        bookmarkEditorHosting?.view.removeFromSuperview()
-        bookmarkEditorHosting?.removeFromParent()
-
-        addChild(hosting)
-        hosting.view.translatesAutoresizingMaskIntoConstraints = false
-        bookmarkEditorContainer.addSubview(hosting.view)
-        NSLayoutConstraint.activate([
-            hosting.view.leadingAnchor.constraint(equalTo: bookmarkEditorContainer.leadingAnchor),
-            hosting.view.trailingAnchor.constraint(equalTo: bookmarkEditorContainer.safeAreaLayoutGuide.trailingAnchor),
-            hosting.view.topAnchor.constraint(equalTo: bookmarkEditorContainer.topAnchor),
-            hosting.view.bottomAnchor.constraint(equalTo: bookmarkEditorContainer.bottomAnchor)
-        ])
-        hosting.didMove(toParent: self)
+        presentOverlay(bookmarkEditorOverlay, newHosting: hosting, currentHosting: bookmarkEditorHosting, container: bookmarkEditorContainer)
         bookmarkEditorHosting = hosting
 
         isBookmarkEditorVisible = true
-        bookmarkEditorContainer.isHidden = false
         bringChromeToFront()
         updateRailItems()
         applyRailViews(animated: true)
@@ -499,9 +755,7 @@ final class BrowserRootViewController: UIViewController {
 
     func dismissBookmarkEditor() {
         isBookmarkEditorVisible = false
-        bookmarkEditorContainer.isHidden = true
-        bookmarkEditorHosting?.view.removeFromSuperview()
-        bookmarkEditorHosting?.removeFromParent()
+        dismissOverlay(bookmarkEditorOverlay, hosting: bookmarkEditorHosting, container: bookmarkEditorContainer)
         bookmarkEditorHosting = nil
         activeBookmarkEditorModel = nil
         updateRailItems()
@@ -528,17 +782,44 @@ final class BrowserRootViewController: UIViewController {
 
     func openBookmarksLibrary(tab: LibraryTab? = nil) {
         let resolved = tab ?? LibraryTabBar.storedTab(defaults: selectionDefaults)
+        let placement = chromePlacement
+        bookmarksLibraryView.applyPlacement(for: placement)
+        libraryOverlay.applyPlacement(for: placement)
         isLibraryVisible = true
+        if placement == .regular {
+            if libraryOverlay.hostedContent !== bookmarksLibraryView {
+                NSLayoutConstraint.deactivate(libraryCompactConstraints)
+                bookmarksLibraryView.removeFromSuperview()
+                libraryOverlay.setContent(bookmarksLibraryView)
+            }
+            libraryOverlay.isHidden = false
+            bookmarksLibraryView.isHidden = false
+        } else {
+            if bookmarksLibraryView.superview !== view {
+                libraryOverlay.clearContent()
+                view.addSubview(bookmarksLibraryView)
+                NSLayoutConstraint.activate(libraryCompactConstraints)
+            }
+            libraryOverlay.isHidden = true
+            bookmarksLibraryView.isHidden = false
+        }
         bookmarksLibraryView.open(tab: resolved)
-        bookmarksLibraryView.isHidden = false
         updateLibraryRailItems(for: resolved)
+        applyChromeViews(animated: false)
         bringChromeToFront()
     }
 
     func closeBookmarksLibrary() {
         isLibraryVisible = false
+        libraryOverlay.isHidden = true
         bookmarksLibraryView.isHidden = true
+        // Mirror dismissOverlay: detach the hosted library from the card so
+        // a hidden overlay never retains it; compact re-attaches on next open.
+        if libraryOverlay.hostedContent === bookmarksLibraryView {
+            libraryOverlay.clearContent()
+        }
         updateRailItems()
+        applyChromeViews(animated: false)
     }
 
     func updateLibraryRailItems(for tab: LibraryTab) {
@@ -601,7 +882,7 @@ final class BrowserRootViewController: UIViewController {
             prefix = []
         }
 
-        railView.setItems(prefix: prefix, suffix: suffix)
+        setChromeItems(prefix: prefix, suffix: suffix)
     }
 
     private func setupOverview() {
@@ -829,6 +1110,24 @@ extension BrowserRootViewController {
         }
     }
 
+    func applyStructuralLayout() {
+        let placement = chromePlacement
+        applyChromePlacement(for: placement)
+        editorView.chromePlacement = placement
+        for overlay in [libraryOverlay, settingsOverlay, downloadsOverlay, bookmarkEditorOverlay]
+            where overlay.isHidden
+        {
+            overlay.applyPlacement(for: placement)
+        }
+        if !isLibraryVisible {
+            bookmarksLibraryView.applyPlacement(for: placement)
+        }
+        updateTabStrip()
+        refreshForActiveSnapshot()
+        applyChromeViews(animated: false)
+        view.setNeedsLayout()
+    }
+
     // MARK: - Bridges for same-type extensions
 
     /// Single gateway for the browsing-resumed FSM input so extensions never
@@ -870,9 +1169,14 @@ extension BrowserRootViewController {
 
     func makeSettingsController() -> UIViewController? {
         guard let database else { return nil }
-        var settingsView = SettingsView(database: database, siteZoomStore: siteZoomStore)
+        var settingsView = SettingsView(
+            database: database,
+            siteZoomStore: siteZoomStore,
+            inlineCommands: chromePlacement == .regular
+        )
         settingsView.onDidClearHistory = { [weak self] in self?.refreshStartPageAfterHistoryClear() }
         settingsView.onDidClearTabs = { [weak self] in self?.resetAllTabsToSingleEmptyTab() }
+        settingsView.onDone = { [weak self] in self?.dismissSettingsSheet() }
         return UIHostingController(rootView: settingsView)
     }
 
