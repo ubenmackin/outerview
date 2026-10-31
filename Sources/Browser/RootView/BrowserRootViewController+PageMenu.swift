@@ -355,11 +355,6 @@ extension BrowserRootViewController {
         activePage()?.setTextZoom(SiteZoomStore.defaultZoom)
     }
 
-    func presentDownloadsFromMenu() {
-        let hosting = UIHostingController(rootView: DownloadsSheetView(manager: downloadsManager))
-        presentPopover(hosting)
-    }
-
     func setupFind() {
         findView.translatesAutoresizingMaskIntoConstraints = false
         findView.isHidden = true

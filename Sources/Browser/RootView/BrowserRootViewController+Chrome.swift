@@ -125,7 +125,14 @@ extension BrowserRootViewController {
 
     func applyRailViews(animated: Bool) {
         var state = chromeController.state
-        if currentRailMode == .startPage || currentRailMode == .bookmarkEditor || currentRailMode == .settings || isLibraryVisible || isSettingsVisible {
+        if currentRailMode == .startPage
+            || currentRailMode == .bookmarkEditor
+            || currentRailMode == .settings
+            || currentRailMode == .downloads
+            || isLibraryVisible
+            || isSettingsVisible
+            || isDownloadsVisible
+        {
             state.rail = .visible
         }
         railView.transform = .identity
@@ -139,6 +146,7 @@ extension BrowserRootViewController {
         case startPage
         case bookmarkEditor
         case settings
+        case downloads
     }
 
     var currentRailMode: RailMode {
@@ -147,6 +155,9 @@ extension BrowserRootViewController {
         }
         if isSettingsVisible {
             return .settings
+        }
+        if isDownloadsVisible {
+            return .downloads
         }
         if isLibraryVisible {
             return .library(bookmarksLibraryView.currentTab)
@@ -194,6 +205,23 @@ extension BrowserRootViewController {
                 suffix: [
                     .done { [weak self] in
                         self?.dismissSettingsSheet()
+                    }
+                ]
+            )
+        case .downloads:
+            railView.setItems(
+                prefix: [
+                    .files { [weak self] in
+                        self?.presentDownloadsFilesPicker()
+                    },
+                    .clear(label: "Clear All", isEnabled: !downloadsManager.rows.isEmpty) { [weak self] in
+                        self?.downloadsManager.deleteAll()
+                        self?.updateRailItems()
+                    }
+                ],
+                suffix: [
+                    .done { [weak self] in
+                        self?.dismissDownloadsSheet()
                     }
                 ]
             )

@@ -4,6 +4,8 @@
 //
 
 @testable import OuterView
+import UIKit
+import WebKit
 import XCTest
 
 @MainActor
@@ -174,10 +176,235 @@ final class DownloadsTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
+    func testDeleteAllClearsRows() throws {
+        let (manager, root) = try makeManager()
+        defer { tearDownDirectory(root) }
+
+        let first = manager.registerRow(name: "a.zip", fileURL: nil)
+        manager.applyProgress(0.4, for: first)
+        let second = manager.registerRow(name: "b.zip", fileURL: nil)
+        manager.completeDownload(id: second)
+        let third = manager.registerRow(name: "c.zip", fileURL: nil)
+        manager.failDownload(id: third, reason: "lost")
+        XCTAssertEqual(manager.rows.count, 3)
+
+        manager.deleteAll()
+
+        XCTAssertTrue(manager.rows.isEmpty)
+        XCTAssertNil(manager.overallProgress)
+    }
+
+    func testDeleteAllCancelsInProgressAndRemovesFiles() throws {
+        let (manager, root) = try makeManager()
+        defer { tearDownDirectory(root) }
+
+        let activeURL = root.appendingPathComponent("active.bin")
+        try Data(repeating: 3, count: 1024).write(to: activeURL)
+        let active = manager.registerRow(name: "active.bin", fileURL: activeURL)
+        manager.applyProgress(0.5, for: active)
+        XCTAssertEqual(manager.rows.first(where: { $0.id == active })?.state, .inProgress)
+
+        let finishedURL = root.appendingPathComponent("done.bin")
+        try Data(repeating: 9, count: 512).write(to: finishedURL)
+        let finished = manager.registerRow(name: "done.bin", fileURL: finishedURL)
+        manager.completeDownload(id: finished)
+
+        manager.deleteAll()
+
+        XCTAssertTrue(manager.rows.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: activeURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: finishedURL.path))
+        XCTAssertNil(manager.overallProgress)
+    }
+
+    func testDeleteAllWhenEmptyKeepsRowsEmpty() throws {
+        let (manager, root) = try makeManager()
+        defer { tearDownDirectory(root) }
+        XCTAssertTrue(manager.rows.isEmpty)
+        manager.deleteAll()
+        XCTAssertTrue(manager.rows.isEmpty)
+        XCTAssertNil(manager.overallProgress)
+    }
+
     func testOpenInFilesPickerTargetsDirectory() throws {
         let (manager, root) = try makeManager()
         defer { tearDownDirectory(root) }
         let picker = manager.makeFilesPicker()
         XCTAssertNotNil(picker)
+    }
+
+    func testDownloadTakeover102SuppressesError() {
+        let controller = WebPageController(configuration: WKWebViewConfiguration())
+        // Download handovers interrupt the provisional load; the page stays visible.
+        let error = NSError(
+            domain: "WebKitErrorDomain",
+            code: 102,
+            userInfo: [NSLocalizedDescriptionKey: "Frame load interrupted by policy change"]
+        )
+        let webView = controller.webView
+        controller.webView(webView, didFailProvisionalNavigation: nil, withError: error)
+        XCTAssertNil(controller.snapshot.lastError)
+        XCTAssertNil(controller.snapshot.lastErrorCode)
+    }
+
+    func testCancellationSuppressesError() {
+        let controller = WebPageController(configuration: WKWebViewConfiguration())
+        let error = NSError(
+            domain: NSURLErrorDomain,
+            code: NSURLErrorCancelled,
+            userInfo: [NSLocalizedDescriptionKey: "cancelled"]
+        )
+        let webView = controller.webView
+        controller.webView(webView, didFailProvisionalNavigation: nil, withError: error)
+        XCTAssertNil(controller.snapshot.lastError)
+        XCTAssertNil(controller.snapshot.lastErrorCode)
+    }
+
+    func testGenuineFailureSurfacesError() {
+        let controller = WebPageController(configuration: WKWebViewConfiguration())
+        let error = NSError(
+            domain: NSURLErrorDomain,
+            code: NSURLErrorTimedOut,
+            userInfo: [NSLocalizedDescriptionKey: "timed out"]
+        )
+        let webView = controller.webView
+        controller.webView(webView, didFailProvisionalNavigation: nil, withError: error)
+        XCTAssertNotNil(controller.snapshot.lastError)
+        XCTAssertEqual(controller.snapshot.lastErrorCode, NSURLErrorTimedOut)
+    }
+
+    func testFileSharingEnabled() {
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "UIFileSharingEnabled") as? Bool, true)
+    }
+
+    func testOverallProgressNilWhenEmpty() throws {
+        let (manager, root) = try makeManager()
+        defer { tearDownDirectory(root) }
+        XCTAssertNil(manager.overallProgress)
+    }
+
+    func testOverallProgressNilWhenAllFinished() throws {
+        let (manager, root) = try makeManager()
+        defer { tearDownDirectory(root) }
+        let id = manager.registerRow(name: "a.zip", fileURL: nil)
+        manager.applyProgress(0.9, for: id)
+        manager.completeDownload(id: id)
+        XCTAssertNil(manager.overallProgress)
+    }
+
+    func testOverallProgressSingleRow() throws {
+        let (manager, root) = try makeManager()
+        defer { tearDownDirectory(root) }
+        let id = manager.registerRow(name: "a.zip", fileURL: nil)
+        manager.applyProgress(0.4, for: id)
+        XCTAssertEqual(manager.overallProgress ?? -1, 0.4, accuracy: 0.001)
+    }
+
+    func testOverallProgressMeanAcrossRows() throws {
+        let (manager, root) = try makeManager()
+        defer { tearDownDirectory(root) }
+        let first = manager.registerRow(name: "a.zip", fileURL: nil)
+        let second = manager.registerRow(name: "b.zip", fileURL: nil)
+        manager.applyProgress(0.2, for: first)
+        manager.applyProgress(0.8, for: second)
+        XCTAssertEqual(manager.overallProgress ?? -1, 0.5, accuracy: 0.001)
+    }
+
+    func testOverallProgressExcludesFinishedAndFailed() throws {
+        let (manager, root) = try makeManager()
+        defer { tearDownDirectory(root) }
+        let active = manager.registerRow(name: "active.zip", fileURL: nil)
+        let finished = manager.registerRow(name: "done.zip", fileURL: nil)
+        let failed = manager.registerRow(name: "bad.zip", fileURL: nil)
+        manager.applyProgress(0.6, for: active)
+        manager.applyProgress(0.9, for: finished)
+        manager.applyProgress(0.9, for: failed)
+        manager.completeDownload(id: finished)
+        manager.failDownload(id: failed, reason: "lost")
+        XCTAssertEqual(manager.overallProgress ?? -1, 0.6, accuracy: 0.001)
+    }
+
+    func testDownloadRingReplacesReloadWhenIdle() {
+        let pill = AddressBarView(frame: CGRect(x: 0, y: 0, width: 360, height: 44))
+        TestWindow.attach(pill)
+        pill.configure(url: URL(string: "https://example.com"), isSecure: true, isLoading: false)
+        XCTAssertFalse(pill.isDownloadRingVisible)
+        XCTAssertEqual(pill.actionAccessibilityLabel, "Reload page")
+        pill.configureDownloadProgress(0.5)
+        XCTAssertTrue(pill.isDownloadRingVisible)
+        XCTAssertFalse(pill.isActionButtonVisible)
+        XCTAssertEqual(pill.downloadProgress ?? -1, 0.5, accuracy: 0.001)
+    }
+
+    func testLoadingTakesPrecedenceOverRing() {
+        let pill = AddressBarView(frame: CGRect(x: 0, y: 0, width: 360, height: 44))
+        TestWindow.attach(pill)
+        pill.configure(url: URL(string: "https://example.com"), isSecure: true, isLoading: true)
+        pill.configureDownloadProgress(0.5)
+        XCTAssertFalse(pill.isDownloadRingVisible)
+        XCTAssertTrue(pill.isActionButtonVisible)
+        XCTAssertEqual(pill.actionAccessibilityLabel, "Stop loading")
+    }
+
+    func testRingTapForwardsToDownloads() {
+        let pill = AddressBarView(frame: CGRect(x: 0, y: 0, width: 360, height: 44))
+        TestWindow.attach(pill)
+        pill.configure(url: URL(string: "https://example.com"), isSecure: true, isLoading: false)
+        var tapped = false
+        pill.onDownloadsTap = { tapped = true }
+        pill.configureDownloadProgress(0.3)
+        XCTAssertTrue(pill.isDownloadRingVisible)
+        guard let button = findDownloadsButton(in: pill) else {
+            XCTFail("Downloads button not found")
+            return
+        }
+        button.sendActions(for: .touchUpInside)
+        XCTAssertTrue(tapped)
+    }
+
+    func testCompletionRestoresReload() {
+        let pill = AddressBarView(frame: CGRect(x: 0, y: 0, width: 360, height: 44))
+        TestWindow.attach(pill)
+        pill.configure(url: URL(string: "https://example.com"), isSecure: true, isLoading: false)
+        pill.configureDownloadProgress(0.8)
+        XCTAssertTrue(pill.isDownloadRingVisible)
+        pill.configureDownloadProgress(nil)
+        XCTAssertFalse(pill.isDownloadRingVisible)
+        XCTAssertTrue(pill.isActionButtonVisible)
+        XCTAssertEqual(pill.actionAccessibilityLabel, "Reload page")
+    }
+
+    func testDownloadRingSize() {
+        XCTAssertEqual(AddressBarView.downloadRingSize, 24)
+    }
+
+    func testRootUpdateDownloadProgressDrivesPill() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let root = BrowserRootViewController(database: database)
+        TestWindow.attach(root)
+        root.updateDownloadProgress()
+        XCTAssertFalse(root.pillView.isDownloadRingVisible)
+        XCTAssertNotNil(root.pillView.onDownloadsTap)
+        let id = root.downloadsManager.registerRow(name: "a.zip", fileURL: nil)
+        root.downloadsManager.applyProgress(0.5, for: id)
+        root.updateDownloadProgress()
+        XCTAssertTrue(root.pillView.isDownloadRingVisible)
+        XCTAssertEqual(root.pillView.downloadProgress ?? -1, 0.5, accuracy: 0.001)
+        root.downloadsManager.completeDownload(id: id)
+        root.updateDownloadProgress()
+        XCTAssertFalse(root.pillView.isDownloadRingVisible)
+        XCTAssertEqual(root.pillView.actionAccessibilityLabel, "Reload page")
+    }
+
+    private func findDownloadsButton(in view: UIView) -> UIButton? {
+        if let button = view as? UIButton, button.accessibilityLabel == "Downloads" {
+            return button
+        }
+        for subview in view.subviews {
+            if let found = findDownloadsButton(in: subview) {
+                return found
+            }
+        }
+        return nil
     }
 }

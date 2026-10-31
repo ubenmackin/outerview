@@ -4,16 +4,9 @@
 //
 
 import SwiftUI
-import UIKit
 
 struct DownloadsSheetView: View {
     @ObservedObject var manager: DownloadsManager
-    @Environment(\.dismiss) private var dismiss
-    @State private var showingFilesPicker = false
-
-    init(manager: DownloadsManager) {
-        self.manager = manager
-    }
 
     var body: some View {
         NavigationStack {
@@ -56,21 +49,6 @@ struct DownloadsSheetView: View {
             }
             .navigationTitle("Downloads")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Open Files") {
-                        showingFilesPicker = true
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-            }
-            .sheet(isPresented: $showingFilesPicker) {
-                DownloadsFilesPicker(manager: manager)
-            }
         }
     }
 
@@ -89,32 +67,6 @@ struct DownloadsSheetView: View {
             row.sizeLabel.isEmpty ? "finished" : row.sizeLabel
         case let .failed(reason):
             reason ?? "failed"
-        }
-    }
-}
-
-private struct DownloadsFilesPicker: UIViewControllerRepresentable {
-    let manager: DownloadsManager
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let controller = manager.makeFilesPicker()
-        controller.delegate = context.coordinator
-        return controller
-    }
-
-    func updateUIViewController(_: UIDocumentPickerViewController, context _: Context) {}
-
-    final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt _: [URL]) {
-            controller.dismiss(animated: true)
-        }
-
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-            controller.dismiss(animated: true)
         }
     }
 }
