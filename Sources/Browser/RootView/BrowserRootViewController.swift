@@ -3,6 +3,7 @@
 //  OuterView
 //
 
+import Combine
 import os
 import Photos
 import SwiftUI
@@ -93,6 +94,12 @@ final class BrowserRootViewController: UIViewController {
     let settingsContainer = UIView()
     private(set) var settingsHosting: UIViewController?
     private(set) var isSettingsVisible = false
+    let downloadsContainer = UIView()
+    var downloadsHosting: UIViewController?
+    var isDownloadsVisible = false
+    /// Last Files picker issued by the downloads rail. Retained so the
+    /// wiring stays observable when the host blocks modal presentation.
+    var presentedDownloadsPicker: UIDocumentPickerViewController?
     private let bookmarkEditorContainer = UIView()
     private var bookmarkEditorHosting: UIHostingController<BookmarkEditorView>?
     private var activeBookmarkEditorModel: BookmarkEditorModel?
@@ -116,6 +123,7 @@ final class BrowserRootViewController: UIViewController {
     var suggestionTask: Task<Void, Never>?
     var findQueryTask: Task<Void, Never>?
     var findStepTask: Task<Void, Never>?
+    var downloadProgressCancellable: AnyCancellable?
 
     // MARK: - State
 
@@ -207,6 +215,8 @@ final class BrowserRootViewController: UIViewController {
         loadInitialTabs()
         applyContentInsets()
         applyChromeViews(animated: false)
+        subscribeToDownloadProgress()
+        updateDownloadProgress()
     }
 
     override func viewSafeAreaInsetsDidChange() {
@@ -270,6 +280,7 @@ final class BrowserRootViewController: UIViewController {
         setupEditor()
         setupLibrary()
         setupSettings()
+        setupDownloads()
         setupBookmarkEditor()
         setupOverview()
         bringChromeToFront()
@@ -286,6 +297,7 @@ final class BrowserRootViewController: UIViewController {
         view.bringSubviewToFront(editorView)
         view.bringSubviewToFront(bookmarksLibraryView)
         view.bringSubviewToFront(settingsContainer)
+        view.bringSubviewToFront(downloadsContainer)
         view.bringSubviewToFront(bookmarkEditorContainer)
         view.bringSubviewToFront(overviewView)
         view.bringSubviewToFront(railView)
@@ -353,6 +365,7 @@ final class BrowserRootViewController: UIViewController {
         }
         pillView.onReload = { [weak self] in self?.activePage()?.reload() }
         pillView.onStop = { [weak self] in self?.activePage()?.stop() }
+        pillView.onDownloadsTap = { [weak self] in self?.presentDownloadsFromMenu() }
     }
 
     private func setupEditor() {

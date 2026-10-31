@@ -31,6 +31,13 @@ struct DownloadRow: Identifiable, Equatable, Sendable {
 final class DownloadsManager: NSObject, ObservableObject {
     @Published private(set) var rows: [DownloadRow] = []
 
+    /// Mean of in-progress fractions, or nil when nothing is downloading.
+    var overallProgress: Double? {
+        let active = rows.filter { $0.state == .inProgress }
+        guard !active.isEmpty else { return nil }
+        return active.reduce(0.0) { $0 + $1.progress } / Double(active.count)
+    }
+
     let directoryURL: URL
     private let fileManager: FileManager
 
@@ -257,6 +264,13 @@ final class DownloadsManager: NSObject, ObservableObject {
     }
 
     // MARK: - Files app
+
+    func deleteAll() {
+        let ids = rows.map(\.id)
+        for id in ids {
+            delete(id: id)
+        }
+    }
 
     func makeFilesPicker() -> UIDocumentPickerViewController {
         UIDocumentPickerViewController(forExporting: [directoryURL], asCopy: true)

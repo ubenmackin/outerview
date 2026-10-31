@@ -17,6 +17,7 @@ final class AddressBarView: UIView {
     /// Max width of the minified capsule. The minified pill floats centered
     /// over content, never full width.
     nonisolated static let minifiedMaxWidth: CGFloat = 220
+    nonisolated static let downloadRingSize: CGFloat = 24
 
     /// Pure geometry so tests and the frame owner share one source of truth.
     nonisolated static func heightForState(_ pill: PillState) -> CGFloat {
@@ -55,11 +56,13 @@ final class AddressBarView: UIView {
     var onReload: (() -> Void)?
     var onStop: (() -> Void)?
     var onPillTap: (() -> Void)?
+    var onDownloadsTap: (() -> Void)?
 
     private var currentPill: PillState = .expanded
     private var currentURL: URL?
     private var isSecure = false
     private var isLoading = false
+    private(set) var downloadProgress: Double?
 
     private let backgroundEffectView = UIVisualEffectView(effect: GlassEffect.make())
     private let contentStack = UIStackView()
@@ -69,6 +72,8 @@ final class AddressBarView: UIView {
     private let lockImageView = UIImageView()
     private let domainLabel = UILabel()
     private let actionButton = AccessibleButton(type: .system)
+    private let downloadsButton = AccessibleButton(type: .system)
+    private let downloadRingView = DownloadProgressRingView()
 
     var domainAccessibilityLabel: String? {
         domainContainer.accessibilityLabel
@@ -80,6 +85,14 @@ final class AddressBarView: UIView {
 
     var isDomainAccessibilityElement: Bool {
         domainContainer.isAccessibilityElement
+    }
+
+    var isDownloadRingVisible: Bool {
+        !downloadsButton.isHidden
+    }
+
+    var isActionButtonVisible: Bool {
+        !actionButton.isHidden
     }
 
     override init(frame: CGRect) {
@@ -126,6 +139,15 @@ final class AddressBarView: UIView {
         updateAction()
     }
 
+    func configureDownloadProgress(_ progress: Double?) {
+        if let progress {
+            downloadProgress = min(max(progress, 0), 1)
+        } else {
+            downloadProgress = nil
+        }
+        updateAction()
+    }
+
     // MARK: - Private
 
     private func setup() {
@@ -162,6 +184,20 @@ final class AddressBarView: UIView {
                 self.onReload?()
             }
         }, for: .touchUpInside)
+
+        downloadsButton.tintColor = .label
+        downloadsButton.accessibilityLabel = "Downloads"
+        downloadsButton.isHidden = true
+        downloadsButton.addAction(UIAction { [weak self] _ in self?.onDownloadsTap?() }, for: .touchUpInside)
+        downloadRingView.translatesAutoresizingMaskIntoConstraints = false
+        downloadRingView.isUserInteractionEnabled = false
+        downloadsButton.addSubview(downloadRingView)
+        NSLayoutConstraint.activate([
+            downloadRingView.centerXAnchor.constraint(equalTo: downloadsButton.centerXAnchor),
+            downloadRingView.centerYAnchor.constraint(equalTo: downloadsButton.centerYAnchor),
+            downloadRingView.widthAnchor.constraint(equalToConstant: Self.downloadRingSize),
+            downloadRingView.heightAnchor.constraint(equalToConstant: Self.downloadRingSize)
+        ])
 
         lockImageView.image = UIImage(
             systemName: "lock.fill",
@@ -204,6 +240,7 @@ final class AddressBarView: UIView {
         contentStack.addArrangedSubview(pageMenuButton)
         contentStack.addArrangedSubview(domainContainer)
         contentStack.addArrangedSubview(actionButton)
+        contentStack.addArrangedSubview(downloadsButton)
         addSubview(contentStack)
         NSLayoutConstraint.activate([
             contentStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
@@ -213,7 +250,9 @@ final class AddressBarView: UIView {
             pageMenuButton.widthAnchor.constraint(equalToConstant: 36),
             pageMenuButton.heightAnchor.constraint(equalToConstant: 36),
             actionButton.widthAnchor.constraint(equalToConstant: 36),
-            actionButton.heightAnchor.constraint(equalToConstant: 36)
+            actionButton.heightAnchor.constraint(equalToConstant: 36),
+            downloadsButton.widthAnchor.constraint(equalToConstant: 36),
+            downloadsButton.heightAnchor.constraint(equalToConstant: 36)
         ])
         domainContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         domainContainer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -229,7 +268,7 @@ final class AddressBarView: UIView {
     private func updatePresentation() {
         let isExpanded = currentPill == .expanded
         pageMenuButton.isHidden = !isExpanded
-        actionButton.isHidden = !isExpanded
+        updateAction()
         invalidateIntrinsicContentSize()
         setNeedsLayout()
     }
@@ -251,9 +290,24 @@ final class AddressBarView: UIView {
     }
 
     private func updateAction() {
-        let name = isLoading ? "xmark" : "arrow.clockwise"
-        actionButton.setImage(UIImage(systemName: name), for: .normal)
-        actionButton.accessibilityLabel = isLoading ? "Stop loading" : "Reload page"
+        let isExpanded = currentPill == .expanded
+        if isLoading {
+            actionButton.isHidden = !isExpanded
+            downloadsButton.isHidden = true
+            actionButton.setImage(UIImage(systemName: "xmark"), for: .normal)
+            actionButton.accessibilityLabel = "Stop loading"
+            return
+        }
+        if let progress = downloadProgress {
+            actionButton.isHidden = true
+            downloadsButton.isHidden = !isExpanded
+            downloadRingView.progress = progress
+            return
+        }
+        actionButton.isHidden = !isExpanded
+        downloadsButton.isHidden = true
+        actionButton.setImage(UIImage(systemName: "arrow.clockwise"), for: .normal)
+        actionButton.accessibilityLabel = "Reload page"
     }
 
     @objc private func handlePillTap() {
@@ -281,5 +335,54 @@ final class DomainPillView: UIView {
     override func accessibilityActivate() -> Bool {
         onActivate?()
         return true
+    }
+}
+
+@MainActor
+final class DownloadProgressRingView: UIView {
+    var progress: Double = 0 {
+        didSet { setNeedsLayout() }
+    }
+
+    private let trackLayer = CAShapeLayer()
+    private let valueLayer = CAShapeLayer()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupLayers()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupLayers()
+    }
+
+    private func setupLayers() {
+        isOpaque = false
+        trackLayer.fillColor = UIColor.clear.cgColor
+        trackLayer.strokeColor = UIColor.tertiaryLabel.cgColor
+        trackLayer.lineWidth = 2.5
+        valueLayer.fillColor = UIColor.clear.cgColor
+        valueLayer.strokeColor = UIColor.label.cgColor
+        valueLayer.lineWidth = 2.5
+        valueLayer.lineCap = .round
+        layer.addSublayer(trackLayer)
+        layer.addSublayer(valueLayer)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let inset = valueLayer.lineWidth / 2 + 1
+        let rect = bounds.insetBy(dx: inset, dy: inset)
+        guard rect.width > 0, rect.height > 0 else { return }
+        let path = UIBezierPath(ovalIn: rect).cgPath
+        trackLayer.frame = bounds
+        trackLayer.path = path
+        valueLayer.frame = bounds
+        valueLayer.path = path
+        let clamped = min(max(progress, 0), 1)
+        valueLayer.strokeStart = 0
+        valueLayer.strokeEnd = CGFloat(clamped)
+        valueLayer.transform = CATransform3DMakeRotation(-.pi / 2, 0, 0, 1)
     }
 }

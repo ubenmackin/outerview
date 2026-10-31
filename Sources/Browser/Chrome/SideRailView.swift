@@ -97,6 +97,14 @@ struct RailAction {
         )
     }
 
+    static func files(handler: @escaping () -> Void) -> RailAction {
+        RailAction(
+            systemImageName: "folder",
+            accessibilityLabel: "Files",
+            handler: handler
+        )
+    }
+
     static func clear(label: String = "Clear History", isEnabled: Bool = true, handler: @escaping () -> Void) -> RailAction {
         RailAction(
             systemImageName: "trash",

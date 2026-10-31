@@ -450,6 +450,12 @@ extension WebPageController: WKNavigationDelegate {
             finishRefreshing()
             return
         }
+        // Download handovers interrupt the provisional load with WebKit error
+        // 102; the transfer continues in the downloads pipeline.
+        guard !(nsError.domain == "WebKitErrorDomain" && nsError.code == 102) else {
+            finishRefreshing()
+            return
+        }
         if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorServerCertificateUntrusted {
             hasFailedServerTrustChallenge = true
         }
