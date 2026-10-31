@@ -37,6 +37,7 @@ extension BrowserRootViewController {
     }
 
     func beginEditing() {
+        editorView.applyPlacement(for: chromePlacement)
         let engine = currentSearchEngine()
         configureEditor(text: editorInitialText(), engine: engine)
         if selectedTabID != nil, peekActivePage()?.snapshot.url != nil {

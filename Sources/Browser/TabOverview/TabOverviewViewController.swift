@@ -6,6 +6,10 @@
 import os
 import UIKit
 
+// swiftlint:disable file_length
+// Tab overview grid hosts cards, search, groups, and picker bar;
+// size reflects single-owner composition, not feature sprawl.
+
 /// UserDefaults keys libraryTab as Int, overviewMode as String, and overviewGroup as String.
 /// Values are read at init and setup and written on every change; private mode is never
 /// written and restores as standard. Unparseable values fall back to bookmarks, standard,
@@ -449,28 +453,29 @@ final class TabOverviewViewController: UIViewController {
     }
 
     /// Exact overview rail composition: search + command menu up top, new
-    /// tab + done at the bottom. The owner forwards its `SideRailView` here
-    /// so browsing and overview rails can never drift apart.
-    func applyRailItems(to railView: SideRailView) {
-        railView.setItems(
-            prefix: [
-                .search { [weak self] in
-                    guard let self else { return }
-                    self.setFilterVisible(!self.isFilterVisible)
-                },
-                .overviewMenu(menu: makeOverviewMenu(includesCloseAll: true))
-            ],
-            suffix: [
-                .newTab { [weak self] in
-                    guard let self else { return }
-                    self.delegate?.tabOverviewDidRequestNewTab(self, in: self.mode)
-                },
-                .done { [weak self] in
-                    guard let self else { return }
-                    self.delegate?.tabOverviewDidFinish(self)
-                }
-            ]
-        )
+    /// tab + done at the bottom. The owner forwards its chrome views here
+    /// so browsing and overview rails can never drift apart. On regular
+    /// width the same prefix/suffix mirrors into the top toolbar because
+    /// the rail hides while the toolbar keeps browsing items otherwise.
+    func overviewChromeItems() -> (prefix: [RailAction], suffix: [RailAction]) {
+        let prefix: [RailAction] = [
+            .search { [weak self] in
+                guard let self else { return }
+                self.setFilterVisible(!self.isFilterVisible)
+            },
+            .overviewMenu(menu: makeOverviewMenu(includesCloseAll: true))
+        ]
+        let suffix: [RailAction] = [
+            .newTab { [weak self] in
+                guard let self else { return }
+                self.delegate?.tabOverviewDidRequestNewTab(self, in: self.mode)
+            },
+            .done { [weak self] in
+                guard let self else { return }
+                self.delegate?.tabOverviewDidFinish(self)
+            }
+        ]
+        return (prefix, suffix)
     }
 
     // MARK: - Private

@@ -34,11 +34,25 @@ extension BrowserRootViewController {
                 groups: groups,
                 selectedGroupID: validFilter
             )
-            overviewController.applyRailItems(to: railView)
+            if chromePlacement == .regular {
+                updateToolbarVisibility(for: chromeController.state)
+            }
+            applyOverviewChromeItems()
             bringChromeToFront()
         } else {
             updateRailItems()
+            applyChromeViews(animated: false)
         }
+    }
+
+    /// Single owner for overview chrome composition. Overview and sheet
+    /// overlays are mutually exclusive — the overview surface sits above the
+    /// sheet overlays — so toolbar writes route through `setChromeItems` to
+    /// keep the single sheet-suppression owner instead of writing
+    /// `topBarView` directly.
+    func applyOverviewChromeItems() {
+        let items = overviewController.overviewChromeItems()
+        setChromeItems(prefix: items.prefix, suffix: items.suffix)
     }
 
     func overviewGroups() -> [TabGroup] {
@@ -65,6 +79,7 @@ extension BrowserRootViewController {
     func refreshOverview(groups: [TabGroup], selectedGroupID: UUID?) {
         overviewController.setGroups(groups, selectedGroupID: selectedGroupID)
         overviewController.setItems(overviewItems(groups: groups), selectedID: selectedTabID)
+        updateTabStrip()
     }
 
     func closeTab(id: UUID, replacementIfEmpty replacement: TabOverviewItem?) {
@@ -103,12 +118,12 @@ extension BrowserRootViewController {
             }
             persistStripAndRefresh(closedSelected: closedSelected, fallbackIsPrivate: replacement.isPrivate)
             if isOverviewVisible {
-                overviewController.applyRailItems(to: railView)
+                applyOverviewChromeItems()
             }
         } else {
             persistStripAndRefresh(closedSelected: closedSelected, fallbackIsPrivate: wasPrivate)
             if isOverviewVisible {
-                overviewController.applyRailItems(to: railView)
+                applyOverviewChromeItems()
             }
         }
     }
@@ -140,7 +155,7 @@ extension BrowserRootViewController {
         }
         persistStripAndRefresh(closedSelected: closedSelected, fallbackIsPrivate: mode.isPrivate)
         if isOverviewVisible {
-            overviewController.applyRailItems(to: railView)
+            applyOverviewChromeItems()
         }
     }
 
@@ -160,7 +175,10 @@ extension BrowserRootViewController {
     /// Single write path for the strip snapshot: order plus selection stay
     /// in sync across close, close-all, and reorder flows.
     private func persistStrip() {
-        guard let store = tabStore, let selected = selectedTabID else { return }
+        guard let store = tabStore, let selected = selectedTabID else {
+            updateTabStrip()
+            return
+        }
         do {
             try store.saveSession(tabs: tabs, selected: selected)
         } catch {
@@ -176,6 +194,7 @@ extension BrowserRootViewController {
         } catch {
             logPersistenceError(error, operation: "reorder")
         }
+        updateTabStrip()
     }
 
     private func persistStripAndRefresh(closedSelected: Bool) {
@@ -206,6 +225,7 @@ extension BrowserRootViewController {
         if isOverviewVisible {
             overviewController.setItems(overviewItems(), selectedID: selectedTabID)
         }
+        updateTabStrip()
     }
 
     /// Drops every per-tab entry so closed tabs release their proxies,
@@ -228,11 +248,28 @@ extension BrowserRootViewController {
 }
 
 extension BrowserRootViewController {
-    // MARK: - Fold handling
+    // MARK: - Tab strip
 
-    func applyStructuralLayout() {
-        refreshForActiveSnapshot()
-        view.setNeedsLayout()
+    func updateTabStrip() {
+        if topBarView.isHidden {
+            tabStripView.isHidden = true
+            return
+        }
+        if isOverviewVisible || isSheetOverlayVisible {
+            tabStripView.isHidden = true
+            return
+        }
+        if chromePlacement == .regular, chromeController.state.rail == .hidden || chromeController.state.pill == .editing {
+            tabStripView.isHidden = true
+            return
+        }
+        let items = TabOverviewViewController.tabs(overviewItems(), in: overviewMode)
+        guard items.count >= 2 else {
+            tabStripView.isHidden = true
+            return
+        }
+        tabStripView.isHidden = false
+        tabStripView.render(tabs: items, selectedID: selectedTabID)
     }
 }
 

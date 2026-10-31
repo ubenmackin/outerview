@@ -23,6 +23,15 @@ extension BrowserRootViewController {
     /// never restart the other axis animator.
     func applyCommands(_ commands: ChromeCommands, animated: Bool) {
         guard commands != .noChange else { return }
+        if chromePlacement == .regular {
+            if commands.pill != nil {
+                applyPillViews(animated: animated)
+            }
+            if commands.rail != nil || commands.pill != nil {
+                applyTopBarViews(animated: animated)
+            }
+            return
+        }
         if commands.pill != nil {
             applyPillViews(animated: animated)
         }
@@ -32,8 +41,49 @@ extension BrowserRootViewController {
     }
 
     func applyChromeViews(animated: Bool) {
+        if chromePlacement == .regular {
+            applyPillViews(animated: animated)
+            applyTopBarViews(animated: animated)
+            return
+        }
         applyPillViews(animated: animated)
         applyRailViews(animated: animated)
+    }
+
+    /// Single owner for regular toolbar visibility: editing/overview shows
+    /// the bar with both stacks, sheet overlays show the bar but hide the
+    /// duplicated stacks, otherwise the collapsed rail state drives the bar.
+    /// All regular placement sites delegate here; none re-implement the
+    /// branching.
+    func updateToolbarVisibility(for state: ChromeState) {
+        railView.isHidden = true
+        if state.pill == .editing || isOverviewVisible {
+            topBarView.isHidden = false
+            topBarView.leadingStack.isHidden = false
+            topBarView.trailingStack.isHidden = false
+            tabStripView.isHidden = true
+            return
+        }
+        if isSheetOverlayVisible {
+            topBarView.isHidden = false
+            topBarView.leadingStack.isHidden = true
+            topBarView.trailingStack.isHidden = true
+            tabStripView.isHidden = true
+            return
+        }
+        let isCollapsed = state.rail == .hidden
+        topBarView.isHidden = isCollapsed
+        topBarView.leadingStack.isHidden = isCollapsed
+        topBarView.trailingStack.isHidden = isCollapsed
+        if isCollapsed {
+            tabStripView.isHidden = true
+        } else {
+            updateTabStrip()
+        }
+    }
+
+    func applyTopBarViews(animated _: Bool) {
+        updateToolbarVisibility(for: chromeController.state)
     }
 
     // MARK: - Chrome applier (single owner)
@@ -83,6 +133,7 @@ extension BrowserRootViewController {
     }
 
     func applyPillViews(animated: Bool) {
+        editorView.applyPlacement(for: chromePlacement)
         let state = chromeController.state
         if isFindActive, state.pill != .editing {
             pillView.isHidden = true
@@ -90,6 +141,34 @@ extension BrowserRootViewController {
         }
         pillView.setAddressState(state)
 
+        if chromePlacement == .regular {
+            if pillView.superview !== topBarView.pillSlotView {
+                applyChromePlacement(for: .regular)
+            }
+            let updateToolbarPill = { [weak self] in
+                guard let self else { return }
+                self.pillHeightConstraint.constant = AddressBarView.heightForState(state.pill)
+                self.pillView.isHidden = state.pill == .editing
+                self.editorView.isHidden = state.pill != .editing
+                self.view.layoutIfNeeded()
+            }
+            if animated {
+                pillAnimator?.stopAnimation(true)
+                let animator = UIViewPropertyAnimator(
+                    duration: Self.pillMorphDuration, curve: .easeInOut, animations: updateToolbarPill
+                )
+                pillAnimator = animator
+                animator.addCompletion { [weak self, weak animator] _ in
+                    if let animator, self?.pillAnimator === animator {
+                        self?.pillAnimator = nil
+                    }
+                }
+                animator.startAnimation()
+            } else {
+                updateToolbarPill()
+            }
+            return
+        }
         let updatePillGeometry = { [weak self] in
             guard let self else { return }
             self.pillHeightConstraint.constant = AddressBarView.heightForState(state.pill)
@@ -124,6 +203,12 @@ extension BrowserRootViewController {
     }
 
     func applyRailViews(animated: Bool) {
+        if chromePlacement == .regular {
+            applyTopBarViews(animated: animated)
+            return
+        }
+        topBarView.isHidden = true
+        railView.isHidden = false
         var state = chromeController.state
         if currentRailMode == .startPage
             || currentRailMode == .bookmarkEditor
@@ -184,10 +269,19 @@ extension BrowserRootViewController {
         dismissForcedStartPage()
     }
 
+    func setChromeItems(prefix: [RailAction], suffix: [RailAction]) {
+        railView.setItems(prefix: prefix, suffix: suffix)
+        if chromePlacement == .regular, isSheetOverlayVisible, !isOverviewVisible {
+            topBarView.setItems(prefix: [], suffix: [])
+        } else {
+            topBarView.setItems(prefix: prefix, suffix: suffix)
+        }
+    }
+
     func updateRailItems() {
         switch currentRailMode {
         case .bookmarkEditor:
-            railView.setItems(
+            setChromeItems(
                 prefix: [
                     .cancel { [weak self] in
                         self?.dismissBookmarkEditor()
@@ -200,7 +294,7 @@ extension BrowserRootViewController {
                 ]
             )
         case .settings:
-            railView.setItems(
+            setChromeItems(
                 prefix: [],
                 suffix: [
                     .done { [weak self] in
@@ -209,7 +303,7 @@ extension BrowserRootViewController {
                 ]
             )
         case .downloads:
-            railView.setItems(
+            setChromeItems(
                 prefix: [
                     .files { [weak self] in
                         self?.presentDownloadsFilesPicker()
@@ -228,7 +322,7 @@ extension BrowserRootViewController {
         case let .library(tab):
             updateLibraryRailItems(for: tab)
         case .startPage:
-            railView.setItems(
+            setChromeItems(
                 prefix: [],
                 suffix: [
                     .done { [weak self] in
@@ -238,7 +332,7 @@ extension BrowserRootViewController {
             )
         case .browsing:
             let canGoBack = peekActivePage()?.snapshot.canGoBack ?? false
-            railView.setItems(
+            setChromeItems(
                 prefix: [
                     .back(isEnabled: canGoBack) { [weak self] in self?.activePage()?.goBack() },
                     .bookmarks { [weak self] in self?.openBookmarksLibrary() }

@@ -37,22 +37,15 @@ extension BrowserRootViewController {
     }
 
     func presentDownloadsSheet() {
-        let hosting = UIHostingController(rootView: DownloadsSheetView(manager: downloadsManager))
-        downloadsHosting?.view.removeFromSuperview()
-        downloadsHosting?.removeFromParent()
-        addChild(hosting)
-        hosting.view.translatesAutoresizingMaskIntoConstraints = false
-        downloadsContainer.addSubview(hosting.view)
-        NSLayoutConstraint.activate([
-            hosting.view.leadingAnchor.constraint(equalTo: downloadsContainer.leadingAnchor),
-            hosting.view.topAnchor.constraint(equalTo: downloadsContainer.topAnchor),
-            hosting.view.bottomAnchor.constraint(equalTo: downloadsContainer.bottomAnchor),
-            hosting.view.trailingAnchor.constraint(equalTo: downloadsContainer.safeAreaLayoutGuide.trailingAnchor)
-        ])
-        hosting.didMove(toParent: self)
+        let sheet = DownloadsSheetView(
+            manager: downloadsManager,
+            inlineCommands: chromePlacement == .regular,
+            onDone: { [weak self] in self?.dismissDownloadsSheet() }
+        )
+        let hosting = UIHostingController(rootView: sheet)
+        presentOverlay(downloadsOverlay, newHosting: hosting, currentHosting: downloadsHosting, container: downloadsContainer)
         downloadsHosting = hosting
         isDownloadsVisible = true
-        downloadsContainer.isHidden = false
         bringChromeToFront()
         updateRailItems()
         applyRailViews(animated: true)
@@ -60,9 +53,7 @@ extension BrowserRootViewController {
 
     func dismissDownloadsSheet() {
         isDownloadsVisible = false
-        downloadsContainer.isHidden = true
-        downloadsHosting?.view.removeFromSuperview()
-        downloadsHosting?.removeFromParent()
+        dismissOverlay(downloadsOverlay, hosting: downloadsHosting, container: downloadsContainer)
         downloadsHosting = nil
         updateRailItems()
         applyRailViews(animated: true)
