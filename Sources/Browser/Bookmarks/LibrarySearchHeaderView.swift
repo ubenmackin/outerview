@@ -45,9 +45,11 @@ final class LibrarySearchHeaderView: UIView, UISearchBarDelegate {
 
         // 6 pt top + 44 pt bar + 14 pt bottom reveal gap (spacing between the
         // revealed bar and the list content) = defaultHeight.
+        let trailingConstraint = searchBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8)
+        trailingConstraint.priority = UILayoutPriority(999)
         NSLayoutConstraint.activate([
             searchBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            searchBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            trailingConstraint,
             searchBar.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             searchBar.heightAnchor.constraint(equalToConstant: 44),
             searchBar.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14)
@@ -141,6 +143,7 @@ final class LibrarySearchTuckController {
             }
             return
         }
+        guard tableView.window != nil, tableView.bounds.height > 0 else { return }
         // contentSize is stale until layout runs after reloadData; force it current.
         tableView.layoutIfNeeded()
         let headerHeight = LibrarySearchHeaderView.defaultHeight
@@ -180,7 +183,7 @@ final class LibrarySearchTuckController {
 
     private func attach(_ header: LibrarySearchHeaderView, to tableView: UITableView) {
         var frame = header.frame
-        frame.size.width = tableView.bounds.width
+        frame.size.width = max(tableView.bounds.width, 320)
         frame.size.height = LibrarySearchHeaderView.defaultHeight
         header.frame = frame
         tableView.tableHeaderView = header

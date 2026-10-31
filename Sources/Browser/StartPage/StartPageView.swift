@@ -101,12 +101,10 @@ final class StartPageView: UIView {
 
     private func observeHorizontalSizeClass() {
         // Grid density follows size class; bounds-driven sizing stays in layoutSubviews.
-        _ = registerForTraitChanges([UITraitHorizontalSizeClass.self]) { (owner: StartPageView, previous: UITraitCollection) in
-            MainActor.assumeIsolated {
-                if previous.horizontalSizeClass != owner.traitCollection.horizontalSizeClass {
-                    owner.updateFlowItemSize()
-                    owner.updateCollectionHeight()
-                }
+        _ = registerForTraitChanges([UITraitHorizontalSizeClass.self]) { @MainActor (owner: StartPageView, previous: UITraitCollection) in
+            if previous.horizontalSizeClass != owner.traitCollection.horizontalSizeClass {
+                owner.updateFlowItemSize()
+                owner.updateCollectionHeight()
             }
         }
     }
@@ -289,7 +287,7 @@ final class StartPageView: UIView {
                 self.delegate?.startPage(self, didOpenURL: url)
             }, for: .touchUpInside)
 
-            Task { @MainActor [weak button, targetURL = url] in
+            Task { [weak button, targetURL = url] in
                 let fetched = await FaviconService.shared.favicon(for: targetURL, size: 26)
                 guard let button else { return }
                 var config = button.configuration

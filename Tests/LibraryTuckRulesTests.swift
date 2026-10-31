@@ -103,4 +103,14 @@ final class LibraryTuckRulesTests: XCTestCase {
             boundsHeight: 600
         ))
     }
+
+    @MainActor
+    func testReassertDoesNotForceLayoutWhenDetachedOrZeroBounds() {
+        let tuck = LibrarySearchTuckController()
+        let tableView = UITableView(frame: .zero)
+        let header = LibrarySearchHeaderView(frame: .zero)
+        // Table is detached and bounds.height == 0; reassert should safely no-op without attaching or laying out
+        tuck.reassert(tableView: tableView, header: header, searchBar: header.searchBar, isFiltering: false)
+        XCTAssertNil(tableView.tableHeaderView)
+    }
 }

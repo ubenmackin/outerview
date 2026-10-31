@@ -188,18 +188,8 @@ struct SettingsView: View {
 
     private func handlePickedURL(_ url: URL) {
         showingImporter = false
-        Task { @MainActor in
-            // File reads run detached so a large export never stalls the main thread.
-            let data: Data? = await Task.detached(priority: .userInitiated) {
-                do {
-                    return try Data(contentsOf: url)
-                } catch {
-                    Logger(subsystem: "com.volcrypt.OuterView", category: "Settings")
-                        .error("bookmarks file read failed: \(error.localizedDescription, privacy: .public)")
-                    return nil
-                }
-            }.value
-            guard let data else {
+        Task {
+            guard let data = await BookmarkImportWorker.shared.readFile(at: url) else {
                 actionError = "Couldn’t read the exported bookmarks file."
                 return
             }

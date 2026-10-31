@@ -18,6 +18,7 @@ final class FavoriteTileCell: UICollectionViewCell {
     private let iconView = UIImageView()
     private let titleLabel = UILabel()
     private var currentURL: URL?
+    private var faviconTask: Task<Void, Never>?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -31,6 +32,9 @@ final class FavoriteTileCell: UICollectionViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        faviconTask?.cancel()
+        faviconTask = nil
+        currentURL = nil
         onCopyURL = nil
         onDelete = nil
         accessibilityCustomActions = nil
@@ -108,9 +112,10 @@ final class FavoriteTileCell: UICollectionViewCell {
 
         iconView.image = FaviconService.shared.cachedFaviconOrMonogram(for: bookmark.url, size: Self.tileLength)
 
-        Task { @MainActor [weak self, targetURL = bookmark.url] in
+        faviconTask?.cancel()
+        faviconTask = Task { [weak self, targetURL = bookmark.url] in
             let image = await FaviconService.shared.favicon(for: targetURL, size: Self.tileLength)
-            guard self?.currentURL == targetURL else { return }
+            guard !Task.isCancelled, self?.currentURL == targetURL else { return }
             self?.iconView.image = image
         }
     }

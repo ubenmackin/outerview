@@ -3,8 +3,8 @@
 //  OuterView
 //
 
-import Combine
 import Foundation
+import Observation
 import os
 import UIKit
 import WebKit
@@ -27,9 +27,17 @@ struct DownloadRow: Identifiable, Equatable, Sendable {
 }
 
 /// WKDownloadDelegate pipeline writing to Documents/Downloads.
+@Observable
 @MainActor
-final class DownloadsManager: NSObject, ObservableObject {
-    @Published private(set) var rows: [DownloadRow] = []
+final class DownloadsManager: NSObject {
+    private(set) var rows: [DownloadRow] = [] {
+        didSet {
+            onProgressChange?()
+        }
+    }
+
+    @ObservationIgnored
+    var onProgressChange: (@MainActor () -> Void)?
 
     /// Mean of in-progress fractions, or nil when nothing is downloading.
     var overallProgress: Double? {
@@ -39,11 +47,16 @@ final class DownloadsManager: NSObject, ObservableObject {
     }
 
     let directoryURL: URL
+    @ObservationIgnored
     private let fileManager: FileManager
 
+    @ObservationIgnored
     private var downloads: [UUID: WKDownload] = [:]
+    @ObservationIgnored
     private var destinations: [UUID: URL] = [:]
+    @ObservationIgnored
     private var downloadIDs: [ObjectIdentifier: UUID] = [:]
+    @ObservationIgnored
     private var observations: [UUID: NSKeyValueObservation] = [:]
 
     init(directoryURL: URL? = nil, fileManager: FileManager = .default) {

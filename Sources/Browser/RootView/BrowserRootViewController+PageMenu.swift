@@ -296,7 +296,7 @@ extension BrowserRootViewController {
         } catch {
             logPersistenceError(error, operation: "addToReadingList")
         }
-        Task { @MainActor [weak self, weak page] in
+        Task { [weak self, weak page] in
             guard let self, let page else { return }
             let snippet = await page.extractPreviewSnippet()
             if let snippet, !snippet.isEmpty {
@@ -326,7 +326,7 @@ extension BrowserRootViewController {
     func toggleReaderFromMenu() {
         guard let page = activePage() else { return }
         let url = page.snapshot.url
-        Task { @MainActor [weak self, weak page] in
+        Task { [weak self, weak page] in
             guard let page else { return }
             let entered = await page.toggleReader()
             guard !Task.isCancelled else { return }
@@ -413,7 +413,7 @@ extension BrowserRootViewController {
         findView.resignSearch()
         findView.isHidden = true
         if let page = peekActivePage() {
-            Task { @MainActor [weak page] in await page?.clearFind() }
+            Task { [weak page] in await page?.clearFind() }
         }
         applyPillViews(animated: true)
         bringChromeToFront()
@@ -425,7 +425,7 @@ extension BrowserRootViewController {
             return
         }
         findQueryTask?.cancel()
-        findQueryTask = Task { @MainActor [weak self, weak page] in
+        findQueryTask = Task { [weak self, weak page] in
             guard let self, let page else { return }
             let total = await page.findText(text)
             guard !Task.isCancelled, self.isFindActive, self.findView.fieldText == text else { return }
@@ -437,7 +437,7 @@ extension BrowserRootViewController {
         guard let page = peekActivePage() else { return }
         let query = findView.fieldText
         findStepTask?.cancel()
-        findStepTask = Task { @MainActor [weak self, weak page] in
+        findStepTask = Task { [weak self, weak page] in
             guard let self, let page else { return }
             let index = await page.findStep(delta)
             guard !Task.isCancelled, self.isFindActive, self.findView.fieldText == query else { return }

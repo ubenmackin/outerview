@@ -3,7 +3,6 @@
 //  OuterView
 //
 
-import Combine
 import os
 import SwiftUI
 import UIKit
@@ -29,10 +28,8 @@ extension BrowserRootViewController {
     }
 
     func subscribeToDownloadProgress() {
-        downloadProgressCancellable = downloadsManager.$rows.sink { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.updateDownloadProgress()
-            }
+        downloadsManager.onProgressChange = { [weak self] in
+            self?.updateDownloadProgress()
         }
     }
 
