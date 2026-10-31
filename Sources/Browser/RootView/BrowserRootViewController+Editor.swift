@@ -284,7 +284,7 @@ extension BrowserRootViewController {
 
         // 2. Debounced background fetch for per-engine remote suggestions
         let engine = currentSearchEngine()
-        suggestionTask = Task { @MainActor [weak self] in
+        suggestionTask = Task { [weak self] in
             do {
                 try await Task.sleep(nanoseconds: 120_000_000)
             } catch {

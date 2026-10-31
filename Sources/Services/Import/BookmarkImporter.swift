@@ -4,12 +4,32 @@
 //
 
 import Foundation
+import os
 
 struct ImportSummary: Equatable, Sendable {
     let added: Int
     let skippedDuplicates: Int
     let skippedInvalid: Int
     let truncated: Int
+}
+
+/// Dedicated background worker actor for HTML parsing and file reading.
+actor BookmarkImportWorker {
+    static let shared = BookmarkImportWorker()
+
+    func parse(_ data: Data) throws -> BookmarkParseResult {
+        try BookmarkHTMLParser.parse(data)
+    }
+
+    func readFile(at url: URL) -> Data? {
+        do {
+            return try Data(contentsOf: url)
+        } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "Settings")
+                .error("bookmarks file read failed: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
 }
 
 /// Imports a Netscape bookmarks export into the bookmark store, deduplicating
@@ -19,11 +39,7 @@ struct BookmarkImporter {
     func importFromData(_ data: Data, bookmarkStore: BookmarkStore) async -> ImportSummary {
         let parseResult: BookmarkParseResult
         do {
-            // Parse detached so a large export never blocks the main thread;
-            // store writes below stay on the main actor.
-            parseResult = try await Task.detached(priority: .userInitiated) {
-                try BookmarkHTMLParser.parse(data)
-            }.value
+            parseResult = try await BookmarkImportWorker.shared.parse(data)
         } catch {
             // Malformed or oversize input imports nothing instead of crashing.
             return ImportSummary(added: 0, skippedDuplicates: 0, skippedInvalid: 0, truncated: 0)

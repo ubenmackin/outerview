@@ -195,13 +195,17 @@ final class RailButton: UIButton {
         glassView.isUserInteractionEnabled = false
         glassView.translatesAutoresizingMaskIntoConstraints = false
         insertSubview(glassView, at: 0)
+        let widthConstraint = widthAnchor.constraint(equalToConstant: SideRailView.buttonDiameter)
+        let heightConstraint = heightAnchor.constraint(equalToConstant: SideRailView.buttonDiameter)
+        widthConstraint.priority = UILayoutPriority(999)
+        heightConstraint.priority = UILayoutPriority(999)
         NSLayoutConstraint.activate([
             glassView.leadingAnchor.constraint(equalTo: leadingAnchor),
             glassView.trailingAnchor.constraint(equalTo: trailingAnchor),
             glassView.topAnchor.constraint(equalTo: topAnchor),
             glassView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            widthAnchor.constraint(equalToConstant: SideRailView.buttonDiameter),
-            heightAnchor.constraint(equalToConstant: SideRailView.buttonDiameter)
+            widthConstraint,
+            heightConstraint
         ])
         clipsToBounds = true
     }
@@ -347,9 +351,18 @@ final class SideRailView: UIView {
         )
         let originX = Self.columnOriginX(boundsMaxX: bounds.maxX, safeAreaRight: safeAreaInsets.right)
         let width = Self.columnWidth
-        let topHeight = topStack.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).height
+        let targetSize = CGSize(width: width, height: UIView.noIntrinsicMetric)
+        let topHeight = topStack.systemLayoutSizeFitting(
+            targetSize,
+            withHorizontalFittingPriority: .defaultHigh,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
         topStack.frame = CGRect(x: originX, y: top, width: width, height: topHeight)
-        let bottomHeight = bottomStack.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).height
+        let bottomHeight = bottomStack.systemLayoutSizeFitting(
+            targetSize,
+            withHorizontalFittingPriority: .defaultHigh,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
         bottomStack.frame = CGRect(x: originX, y: bottom - bottomHeight, width: width, height: bottomHeight)
 
         quickMenuButton.frame = Self.menuButtonFrame(

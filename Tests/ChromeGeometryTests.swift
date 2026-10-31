@@ -91,6 +91,32 @@ final class ChromeGeometryTests: XCTestCase {
     }
 
     @MainActor
+    func testRailButtonConstraintPriority() {
+        let action = RailAction.done {}
+        let button = RailButton(action: action)
+        let widthConstraint = button.constraints.first { $0.firstAttribute == .width }
+        let heightConstraint = button.constraints.first { $0.firstAttribute == .height }
+        XCTAssertEqual(widthConstraint?.constant, SideRailView.buttonDiameter)
+        XCTAssertEqual(widthConstraint?.priority, UILayoutPriority(999))
+        XCTAssertEqual(heightConstraint?.constant, SideRailView.buttonDiameter)
+        XCTAssertEqual(heightConstraint?.priority, UILayoutPriority(999))
+    }
+
+    @MainActor
+    func testSideRailViewLayoutSubviewsDoesNotCrashOnZeroOrStandardBounds() {
+        let rail = SideRailView(frame: .zero)
+        rail.setItems(
+            prefix: [RailAction.back {}, RailAction.newTab {}],
+            suffix: [RailAction.search {}, RailAction.tabs {}]
+        )
+        // Should not crash or throw unsatisfiable constraints on zero bounds
+        rail.layoutIfNeeded()
+
+        rail.frame = CGRect(x: 0, y: 0, width: 466, height: 678)
+        rail.layoutIfNeeded()
+    }
+
+    @MainActor
     func testLibraryRailActions() {
         let addFolder = RailAction.addFolder {}
         XCTAssertEqual(addFolder.systemImageName, "folder.badge.plus")

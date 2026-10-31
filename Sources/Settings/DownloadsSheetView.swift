@@ -6,7 +6,7 @@
 import SwiftUI
 
 struct DownloadsSheetView: View {
-    @ObservedObject var manager: DownloadsManager
+    var manager: DownloadsManager
     var inlineCommands = false
     var onDone: (() -> Void)?
     @Environment(\.dismiss) private var dismiss

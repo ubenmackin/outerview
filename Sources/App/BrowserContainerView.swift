@@ -36,7 +36,7 @@ struct BrowserContainerView: UIViewControllerRepresentable {
             controller.openExternalURL(url)
             // Consuming clears the binding so repeated deep links reload.
             let binding = _pendingURL
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 binding.wrappedValue = nil
             }
         }

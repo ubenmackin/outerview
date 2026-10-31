@@ -163,18 +163,10 @@ final class FaviconService {
     }
 
     private func loadFromDisk(forHost host: String) async -> UIImage? {
-        guard let url = diskURL(forHost: host) else {
-            return nil
-        }
-        // File reads run detached so a large cache never stalls the main thread.
-        let data: Data? = await Task.detached(priority: .userInitiated) {
-            do {
-                return try Data(contentsOf: url)
-            } catch {
-                return nil
-            }
-        }.value
-        guard let data, let image = UIImage(data: data) else {
+        guard let url = diskURL(forHost: host),
+              let data = await FaviconDiskCache.shared.read(from: url),
+              let image = UIImage(data: data)
+        else {
             return nil
         }
         return image
@@ -186,13 +178,30 @@ final class FaviconService {
         else {
             return
         }
-        Task.detached(priority: .utility) {
-            do {
-                try data.write(to: url, options: .atomic)
-            } catch {
-                Logger(subsystem: "com.volcrypt.OuterView", category: "Favicons")
-                    .error("favicon cache write failed: \(error.localizedDescription, privacy: .public)")
-            }
+        Task(priority: .utility) {
+            await FaviconDiskCache.shared.write(data, to: url)
+        }
+    }
+}
+
+/// Dedicated background actor for offloading disk I/O from @MainActor.
+actor FaviconDiskCache {
+    static let shared = FaviconDiskCache()
+
+    func read(from url: URL) -> Data? {
+        do {
+            return try Data(contentsOf: url)
+        } catch {
+            return nil
+        }
+    }
+
+    func write(_ data: Data, to url: URL) {
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "Favicons")
+                .error("favicon cache write failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

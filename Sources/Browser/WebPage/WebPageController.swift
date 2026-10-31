@@ -160,7 +160,7 @@ final class WebPageController: NSObject {
     }
 
     func takeSnapshot(completion: @escaping @MainActor (UIImage?) -> Void) {
-        Task { @MainActor [weak self] in
+        Task { [weak self] in
             guard let self else {
                 completion(nil)
                 return
@@ -754,7 +754,7 @@ extension WebPageController: WKUIDelegate {
         }
         // Resolving the JS payload happens asynchronously while the menu is
         // being assembled; an unknown element leaves WebKit's default menu up.
-        Task { @MainActor [weak self] in
+        Task { [weak self] in
             guard let self,
                   let actions = self.contextActions,
                   let kind = await self.contextElementKind(for: elementInfo)

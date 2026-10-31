@@ -152,7 +152,7 @@ final class TabStripCell: UICollectionViewCell {
         if let url = item.url {
             titleLabel.text = HostFormatter.displayTitle(url: url, title: item.title)
             faviconView.image = FaviconService.shared.cachedFaviconOrMonogram(for: url, size: 16)
-            faviconTask = Task { @MainActor [weak self, targetURL = url, targetID = item.id] in
+            faviconTask = Task { [weak self, targetURL = url, targetID = item.id] in
                 let image = await FaviconService.shared.favicon(for: targetURL, size: 16)
                 guard !Task.isCancelled, self?.currentID == targetID else { return }
                 self?.faviconView.image = image
