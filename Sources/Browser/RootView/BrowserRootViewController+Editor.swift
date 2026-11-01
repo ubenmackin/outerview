@@ -37,10 +37,11 @@ extension BrowserRootViewController {
     }
 
     func beginEditing() {
-        editorView.applyPlacement(for: chromePlacement)
+        let placement = chromePlacement
+        editorView.applyPlacement(for: placement)
         let engine = currentSearchEngine()
         configureEditor(text: editorInitialText(), engine: engine)
-        if selectedTabID != nil, peekActivePage()?.snapshot.url != nil {
+        if placement == .compact, selectedTabID != nil, peekActivePage()?.snapshot.url != nil {
             showStartPageForActiveTab()
         }
         isEditingAddress = true
@@ -168,7 +169,15 @@ extension BrowserRootViewController {
     }
 
     func configureEditor(text: String, engine: SearchEngine) {
-        editorView.configure(text: text, suggestions: [], engine: engine)
+        let activeURL = peekActivePage()?.snapshot.url
+        let favorites = StartPageViewModel.sortedFavorites(bookmarkStore?.fetchFavorites() ?? [])
+        editorView.configure(
+            text: text,
+            suggestions: [],
+            engine: engine,
+            activeURL: activeURL,
+            favorites: favorites
+        )
     }
 
     func editorFieldText() -> String {

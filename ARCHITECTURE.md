@@ -82,10 +82,10 @@ Sources/
   - On regular width the rail hides and the same composition renders into `TopBarView`.
 - **`TopBarView`**: Regular-width toolbar spanning the physical width edge to edge under the status cluster (`84 pt` expanded, collapsing to `48 pt` remnant on scroll), rendered with `.systemChromeMaterial` translucent blur so page content flows cleanly behind it. Consumes the identical `RailAction` prefix and suffix arrays as the rail through `setItems(prefix:suffix:)`, so compact and regular never diverge in available commands. Leading cluster inset `28 pt` with `12 pt` cluster spacing; trailing cluster inset `164 pt` (expanding dynamically for top-trailing status occlusions) so buttons clear both curved corners and the clock + Control Center cluster. Expanded pill caps at `380 pt` centered on the bar; collapsed hides the button stacks, fades out the status bar, and keeps a domain-hugging mini capsule centered. Collapsed top inset equals the `48 pt` remnant so sticky page headers park below it with content flowing behind.
 - **`TabStripView`**: Regular-width live tab strip beneath the toolbar showing the active mode tabs with favicon, title, and close affordance. Visible with two or more tabs; hidden otherwise. Tap switches through `selectTab`, close removes through `closeTab`; the strip never reorders and never shows the inactive mode.
-- **Sheet presentation**: Library, Settings, and Downloads are overlay containers pinned to the root view edges on compact. On regular they render inside `OverlayCardView` centered max-width cards with 16 pt content padding and heavy-blur dim. Their command buttons stay rail commands composed by `RailMode` at rail coordinates above the sheet on compact; on regular they carry HIG-standard inline Done, Cancel, and Save controls plus inline option menus, and the rail stays hidden. Explicit Done and close actions are the only dismissal paths on either placement.
-- **`OverlayCardView`**: Placement-driven scaffold owning heavy-blur dim, centered max-width card with content padding, corner radius, and content pinning. Library, Settings, Downloads, and BookmarkEditor supply content only; folding with a sheet open keeps old chrome until reopen.
+- **Sheet presentation**: Library, Settings, and Downloads are overlay containers pinned to the root view edges on compact. On regular, Library presents natively via `LibrarySheetViewController` (`.pageSheet` with `UISheetPresentationController` `.large()` detent, `32 pt` corner radius, circular `•••` options and `✕` close buttons, keeping `TopBarView` and the webpage visible behind UIKit's native dimming scrim), while Settings, Downloads, and standalone BookmarkEditor render inside `OverlayCardView` centered max-width cards with 16 pt content padding and heavy-blur dim. On compact, command buttons stay rail commands composed by `RailMode`; on regular the rail stays hidden.
+- **`OverlayCardView`**: Placement-driven scaffold owning heavy-blur dim, centered max-width card with content padding, corner radius, and content pinning. Settings, Downloads, and standalone BookmarkEditor supply content on regular; folding with a compact sheet open keeps old chrome until reopen.
 - **`AddressBarView`**: Liquid glass floating capsule displaying security status (lock icon), page domain/title, reload/stop action, and page menu anchor. Morphs between expanded (44 pt height) and minified (30 pt height). Shows a download progress ring in the action slot while downloads run and the page is idle; tapping the ring opens Downloads. While Find in Page is active, the find capsule (`FindInPageView`) occupies the pill's exact frame — the FSM is not involved; the overlay is independent like `errorContainer`.
-- **`AddressEditorView`**: Full-bleed editing overlay docked above `keyboardLayoutGuide` on compact. On regular it drops as a centered rounded panel under the toolbar with heavy-blur dim, clear-while-editing, and an inline blue-check Done; favorites stay on the Start Page behind the panel. Features an integrated `UITextField` inside a glass capsule and a suggestions `UITableView` with `automaticDimension` row height to eliminate any text clipping.
+- **`AddressEditorView`**: Full-bleed editing overlay docked above `keyboardLayoutGuide` on compact. On regular it floats as a centered translucent blurred popover card (`600 pt` max width, `28 pt` corner radius, `.systemChromeMaterial`) directly over the address bar slot while leaving the live `WKWebView` and `TopBarView` browsing controls untouched underneath; displays Favorites tiles when focused/idle and switches to live suggestions when typing, dismissing on outside tap or Escape. Features an integrated `UITextField` with `clearButtonMode = .whileEditing` and a suggestions `UITableView` with `automaticDimension` row height.
 - **`ChromeStateController`**: Pure, deterministic finite state machine driving chrome transitions from scroll offsets, drag events, and editing lifecycle changes. Thresholds (8, 24, 32) are shared across placements; the root maps rail outputs to toolbar plus strip visibility on regular. Programmatic offset writes during inset compensation never reach the machine: the scroll proxy suppresses deltas while marked. P1 introduces no new FSM inputs or states.
 
 ### 4.2 Address Editing & Suggestions Pipeline
@@ -108,7 +108,7 @@ Sources/
 - **ElementContextMenu**: Pure UIMenu builder — the canonical item owner. Links: Open in New Tab, Add to Reading List, Copy Link, Share. Images: Open in New Tab, Save to Photos, Copy Image, Share. Photos saving declares `NSPhotoLibraryAddUsageDescription`.
 
 ### 4.4 Library, Bookmarks, Favorites, History & Reading List
-- **`BookmarksLibraryView`**: Full-screen overlay for Bookmarks, Favorites, History, and Reading List library on compact; centered card content with inline Done, per-tab controls, and options menu on regular (matching Safari).
+- **`BookmarksLibraryView`**: Full-screen overlay for Bookmarks, Favorites, History, and Reading List library on compact; hosted inside `LibrarySheetViewController` (`.pageSheet`) on regular with a Safari-style two-row header (section title + `36 × 36 pt` circular `•••` options menu and `✕` close buttons on row 1, full-width `LibraryTabBar` on row 2, `.systemGroupedBackground` surface, and zero raw `.system` blue text buttons).
 - **Library search tuck contract**: In all three searchable lists the search bar is **hidden by default** and revealed only by pulling down from the top. `LibrarySearchTuckController` (Sources/Browser/Bookmarks/LibrarySearchHeaderView.swift) is the SOLE tuck decider: every host list re-asserts the hidden state via `reassert` immediately after every `tableReload` (`reassert` detaches the header via `requiresCollapse` on short lists that cannot tuck, otherwise re-attaches the header and tucks via `enforceTuck`); first-layout tuck stays in `layoutTuckIfNeeded`; re-exposure on reload is a bug. The spacing between the revealed search bar and list content is owned by the header view's internal padding (`defaultHeight` 64 with ~14 pt bottom padding), never by per-list constants.
 - **`BookmarksBrowserView`**: Hierarchical bookmark navigator supporting nested folders, section-bound drag-and-drop reordering, and context-menu operations.
 - **`BookmarkEditorView` + `BookmarkEditorModel`**: Dedicated bookmark editing surface for modifying title, URL, and destination folder using `BookmarkLocationTree`. Directly integrated with side-rail Cancel/Save buttons on compact and inline toolbar items on regular.
@@ -147,14 +147,13 @@ Sources/
 On regular width, rail outputs drive toolbar plus strip visibility; the expanded header reserves layout through top content insets while the collapsed state keeps a translucent remnant with content behind it and an inset-based sticky limit parking page headers below the remnant. Thresholds are shared across placements.
 
 ### 5.2 Address Editing & Start Page Coordination
-1. **Initiation**: Tapping the address bar or selecting "Open Start Page" invokes `beginEditing()`:
-   - On tabs with an active web page, `BrowserRootViewController` displays the unified `StartPageView` underneath the address editor.
-   - `editorView` unhides and keyboard focuses on `textField` docked above `keyboardLayoutGuide`.
-   - The side rail transitions to `RailMode.startPage` presenting the prominent Blue Checkmark (`Done`).
+1. **Initiation**: Tapping the address bar invokes `beginEditing()`:
+   - On `.compact`, tabs with an active web page display the unified `StartPageView` underneath `editorView` docked above `keyboardLayoutGuide`, and `SideRailView` transitions to `RailMode.startPage` presenting the Blue Checkmark (`Done`).
+   - On `.regular`, the active web page and `TopBarView` browsing buttons (`<`, `📖`, `+`, `⧉`) remain untouched while `AddressEditorView` floats above `TopBarView` as a centered blurred popover card showing the active URL + embedded Favorites grid.
 2. **Typing**: Keystrokes switch `AddressEditorView` into typing mode:
-   - Synchronous local suggestions render instantly over an opaque `.systemBackground` backdrop.
+   - Synchronous local suggestions render instantly (over `.systemBackground` on `.compact`, or inside the blurred popover card on `.regular`).
    - Debounced remote suggestions merge seamlessly upon arrival.
-3. **Exit**: Tapping the Blue Checkmark in the side rail invokes `dismissStartPageOrEditing()`, cleanly dismissing the keyboard, hiding the editor, and smoothly restoring the underlying web page.
+3. **Exit**: Tapping the Blue Checkmark in the side rail on `.compact`, or tapping outside the popover card / pressing Escape on `.regular`, invokes `dismissStartPageOrEditing()`, dismissing the keyboard and hiding the editor.
 
 ### 5.3 Page Menu Structure
 The page menu accessed from the address capsule adheres strictly to Safari's structure:
@@ -176,11 +175,14 @@ The page menu accessed from the address capsule adheres strictly to Safari's str
 ## 6. Engineering Standards & Test Automation Contracts
 
 ### Test & Target Matrix
-- **Target Device**: OuterView specifically targets the **iPhone Duo** running iOS 27.1+ (outer portrait display 466 × 678 pt). Automated builds and unit tests target the **iPhone Duo simulator** (`platform=iOS Simulator,name=iPhone Duo` / booted simulator ID `327DB40D-E3CB-4580-958A-B3FDF68E0E73`) requiring iOS 27.1+:
+- **Target Device**: OuterView specifically targets the **iPhone Duo** running iOS 27.1+ (outer portrait display 466 × 678 pt). Automated builds and unit tests target the iOS Simulator running iOS 27.1+:
   ```bash
-  xcodebuild test -scheme OuterView -destination "platform=iOS Simulator,id=327DB40D-E3CB-4580-958A-B3FDF68E0E73" -derivedDataPath /tmp/OuterViewDD -only-testing:OuterViewTests
+  xcodebuild test -scheme OuterView -destination "platform=iOS Simulator,name=iPhone 17 Pro" -only-testing:OuterViewTests
   ```
-- **Test Scope**: Only the unit test bundle (`OuterViewTests`) is executed in automated workflows. UI tests (`OuterViewUITests`) are excluded unless explicitly requested.
+- **Test Scope & Architecture**: All tests are contained in the `OuterViewTests` bundle (`bundle.unit-test`).
+  - **Unit Tests (`Tests/Unit/`)**: Pure business logic, parsers, algorithms, view models, and state controllers.
+  - **View Integration Tests (`Tests/Views/`)**: In-process UIKit hierarchy and layout verification anchored to `TestWindow.swift`. Out-of-process `XCUI` tests (`XCUIApplication`) are deliberately omitted to avoid test runner flakiness and overhead.
+  - **Test Plans**: Managed via `Support/TestPlans/OuterView.xctestplan` (default, all tests, randomized ordering) and `Support/TestPlans/OuterViewFast.xctestplan` (fast logic/model tests only).
 - **Project Maintenance**: Whenever files are added, removed, or project configuration changes, `xcodegen generate` must be run to synchronize `OuterView.xcodeproj` from `project.yml`.
 
 ### Architectural Invariants

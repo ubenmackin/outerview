@@ -1,0 +1,57 @@
+{
+  "configurations" : [
+    {
+      "id" : "9B1E4A3C-F7D2-4E5B-9A8C-2D6F8A1B4C7E",
+      "name" : "Fast Unit Tests Configuration",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "environmentVariableEntries" : [
+      {
+        "enabled" : true,
+        "key" : "OS_ACTIVITY_MODE",
+        "value" : "disable"
+      },
+      {
+        "enabled" : true,
+        "key" : "SO_LOG_LEVEL",
+        "value" : "off"
+      }
+    ],
+    "testExecutionOrdering" : "random"
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "skippedTests" : [
+        "AccessibilityTests",
+        "DownloadsSheetTests",
+        "EditorPlacementTests",
+        "ElementContextMenuTests",
+        "FavoritesGridTests",
+        "FavoritesReorderTests",
+        "FoldTransitionTests",
+        "LibrarySheetTests",
+        "LibraryTuckRulesTests",
+        "OverlayCardTests",
+        "OverviewInlineTests",
+        "PillTapTests",
+        "ReaderModeTests",
+        "RegularHeaderTests",
+        "SettingsSheetTests",
+        "SideRailRevealTests",
+        "TopBarTests",
+        "VerticalBarTests"
+      ],
+      "target" : {
+        "containerPath" : "container:OuterView.xcodeproj",
+        "identifier" : "OuterViewTests",
+        "name" : "OuterViewTests"
+      }
+    }
+  ],
+  "version" : 1
+}

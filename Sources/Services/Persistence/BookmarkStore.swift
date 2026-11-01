@@ -292,6 +292,16 @@ final class BookmarkStore {
         }
     }
 
+    func delete(ids: Set<UUID>) throws {
+        guard !ids.isEmpty else { return }
+        for id in ids {
+            if let found = try bookmark(id: id) {
+                context.delete(found)
+            }
+        }
+        try context.save()
+    }
+
     /// Ensures `url` is favorited without creating a duplicate: an existing
     /// row keeps its identity (earliest wins) and is promoted in place; only a
     /// missing URL inserts a new favorite.

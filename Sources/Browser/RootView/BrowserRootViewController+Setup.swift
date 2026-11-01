@@ -73,7 +73,9 @@ extension BrowserRootViewController {
         }
         view.bringSubviewToFront(findView)
         view.bringSubviewToFront(editorView)
-        view.bringSubviewToFront(bookmarksLibraryView)
+        if bookmarksLibraryView.superview === view {
+            view.bringSubviewToFront(bookmarksLibraryView)
+        }
         view.bringSubviewToFront(settingsContainer)
         view.bringSubviewToFront(downloadsContainer)
         view.bringSubviewToFront(bookmarkEditorContainer)
@@ -84,6 +86,9 @@ extension BrowserRootViewController {
         view.bringSubviewToFront(overviewView)
         view.bringSubviewToFront(tabStripView)
         view.bringSubviewToFront(topBarView)
+        if chromePlacement == .regular {
+            view.bringSubviewToFront(editorView)
+        }
         view.bringSubviewToFront(railView)
     }
 
@@ -122,6 +127,11 @@ extension BrowserRootViewController {
     func setupTopBar() {
         topBarView.translatesAutoresizingMaskIntoConstraints = false
         topBarView.isHidden = true
+        topBarView.onSlotWidthChanged = { [weak self] in
+            guard let self, self.pillSlotWidthConstraint.isActive else { return }
+            self.updateRegularPillGeometry()
+            self.topBarView.pillSlotView.layoutIfNeeded()
+        }
         view.addSubview(topBarView)
         let toSafeArea = topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
         let toViewTop = topBarView.topAnchor.constraint(equalTo: view.topAnchor)
@@ -197,6 +207,7 @@ extension BrowserRootViewController {
         pillSlotWidthConstraint = pillView.widthAnchor.constraint(
             equalToConstant: AddressBarView.minifiedMaxWidth
         )
+        pillSlotWidthConstraint.priority = UILayoutPriority(998)
         pillSlotMinLeadingConstraint = pillView.leadingAnchor.constraint(
             greaterThanOrEqualTo: topBarView.pillSlotView.leadingAnchor
         )
@@ -235,6 +246,19 @@ extension BrowserRootViewController {
         editorView.onSubmit = { [weak self] text in self?.submitAddressText(text) }
         editorView.onTextChanged = { [weak self] text in self?.refreshSuggestions(for: text) }
         editorView.onSelectSuggestion = { [weak self] suggestion in self?.openSuggestion(suggestion) }
+        editorView.onSelectFavorite = { [weak self] url in
+            guard let self else { return }
+            guard URLNormalizer.isLoadable(url) else {
+                self.showEditorInputError(
+                    Self.inputErrorMessage(for: .unsupportedScheme(url.scheme?.lowercased() ?? "unknown"))
+                )
+                return
+            }
+            self.clearEditorInputError()
+            self.clearForcedStartPageForSelectedTab()
+            self.loadActivePage(url)
+            self.endEditing(submitted: true)
+        }
         editorView.onDone = { [weak self] in self?.dismissStartPageOrEditing() }
     }
 
@@ -276,6 +300,9 @@ extension BrowserRootViewController {
         bookmarksLibraryView.onReadingListStateChanged = { [weak self] in
             guard let self, self.isLibraryVisible, self.bookmarksLibraryView.currentTab == .readingList else { return }
             self.updateLibraryRailItems(for: .readingList)
+        }
+        bookmarksLibraryView.onDidMutateLibraryData = { [weak self] in
+            self?.updateStartPageContent()
         }
     }
 
@@ -356,6 +383,10 @@ extension BrowserRootViewController {
         applyRailViews(animated: true)
     }
 
+    var shouldAnimateModalSheets: Bool {
+        view.window != nil && ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
+    }
+
     func presentBookmarkEditor(for target: BookmarkEditorTarget) {
         guard let bookmarkStore else { return }
         let placement = chromePlacement
@@ -369,6 +400,32 @@ extension BrowserRootViewController {
             onSave: { [weak self] in self?.saveBookmarkEditor() }
         )
         let hosting = UIHostingController(rootView: editor)
+
+        if placement == .regular,
+           let librarySheet = librarySheetController,
+           librarySheet.presentingViewController != nil
+        {
+            if isBookmarkEditorPresentedModally {
+                bookmarkEditorHosting?.dismiss(animated: false)
+            } else {
+                dismissOverlay(bookmarkEditorOverlay, hosting: bookmarkEditorHosting, container: bookmarkEditorContainer)
+            }
+            hosting.modalPresentationStyle = .pageSheet
+            if let sheet = hosting.sheetPresentationController {
+                sheet.detents = [.medium(), .large()]
+                sheet.prefersGrabberVisible = false
+                sheet.preferredCornerRadius = 28
+            }
+            bookmarkEditorHosting = hosting
+            isBookmarkEditorPresentedModally = true
+            isBookmarkEditorVisible = true
+            librarySheet.present(hosting, animated: shouldAnimateModalSheets)
+            updateRailItems()
+            applyRailViews(animated: true)
+            return
+        }
+
+        isBookmarkEditorPresentedModally = false
         presentOverlay(bookmarkEditorOverlay, newHosting: hosting, currentHosting: bookmarkEditorHosting, container: bookmarkEditorContainer)
         bookmarkEditorHosting = hosting
 
@@ -380,7 +437,12 @@ extension BrowserRootViewController {
 
     func dismissBookmarkEditor() {
         isBookmarkEditorVisible = false
-        dismissOverlay(bookmarkEditorOverlay, hosting: bookmarkEditorHosting, container: bookmarkEditorContainer)
+        if isBookmarkEditorPresentedModally {
+            isBookmarkEditorPresentedModally = false
+            bookmarkEditorHosting?.dismiss(animated: shouldAnimateModalSheets)
+        } else {
+            dismissOverlay(bookmarkEditorOverlay, hosting: bookmarkEditorHosting, container: bookmarkEditorContainer)
+        }
         bookmarkEditorHosting = nil
         activeBookmarkEditorModel = nil
         updateRailItems()
@@ -410,39 +472,115 @@ extension BrowserRootViewController {
         let placement = chromePlacement
         bookmarksLibraryView.applyPlacement(for: placement)
         libraryOverlay.applyPlacement(for: placement)
-        isLibraryVisible = true
-        if placement == .regular {
-            if libraryOverlay.hostedContent !== bookmarksLibraryView {
-                NSLayoutConstraint.deactivate(libraryCompactConstraints)
-                bookmarksLibraryView.removeFromSuperview()
-                libraryOverlay.setContent(bookmarksLibraryView)
-            }
-            libraryOverlay.isHidden = false
-            bookmarksLibraryView.isHidden = false
-        } else {
-            if bookmarksLibraryView.superview !== view {
-                libraryOverlay.clearContent()
-                view.addSubview(bookmarksLibraryView)
-                NSLayoutConstraint.activate(libraryCompactConstraints)
-            }
-            libraryOverlay.isHidden = true
-            bookmarksLibraryView.isHidden = false
-        }
-        bookmarksLibraryView.open(tab: resolved)
-        updateLibraryRailItems(for: resolved)
-        applyChromeViews(animated: false)
-        bringChromeToFront()
-    }
-
-    func closeBookmarksLibrary() {
-        isLibraryVisible = false
         libraryOverlay.isHidden = true
-        bookmarksLibraryView.isHidden = true
-        // Mirror dismissOverlay: detach the hosted library from the card so
-        // a hidden overlay never retains it; compact re-attaches on next open.
         if libraryOverlay.hostedContent === bookmarksLibraryView {
             libraryOverlay.clearContent()
         }
+        isLibraryVisible = true
+        if placement == .regular {
+            if bookmarksLibraryView.superview === view {
+                NSLayoutConstraint.deactivate(libraryCompactConstraints)
+                bookmarksLibraryView.removeFromSuperview()
+            }
+            let sheet: LibrarySheetViewController
+            if let existing = librarySheetController {
+                sheet = existing
+            } else {
+                let created = LibrarySheetViewController(libraryView: bookmarksLibraryView)
+                created.onDidDismiss = { [weak self] in
+                    self?.handleLibrarySheetSystemDismiss()
+                }
+                librarySheetController = created
+                sheet = created
+            }
+            bookmarksLibraryView.isHidden = false
+            bookmarksLibraryView.open(tab: resolved)
+            updateLibraryRailItems(for: resolved)
+            applyChromeViews(animated: false)
+            bringChromeToFront()
+            if view.window != nil {
+                if sheet.presentingViewController == nil {
+                    present(sheet, animated: shouldAnimateModalSheets)
+                }
+                if sheet.viewIfLoaded?.window != nil || !shouldAnimateModalSheets {
+                    sheet.attachLibraryViewIfNeeded()
+                }
+            }
+        } else {
+            if let sheet = librarySheetController {
+                sheet.onDidDismiss = nil
+                if sheet.presentingViewController != nil {
+                    sheet.dismiss(animated: false)
+                }
+                sheet.detachLibraryView()
+                librarySheetController = nil
+            }
+            if bookmarksLibraryView.superview !== view {
+                view.addSubview(bookmarksLibraryView)
+                NSLayoutConstraint.activate(libraryCompactConstraints)
+            }
+            bookmarksLibraryView.isHidden = false
+            bookmarksLibraryView.open(tab: resolved)
+            updateLibraryRailItems(for: resolved)
+            applyChromeViews(animated: false)
+            bringChromeToFront()
+        }
+    }
+
+    func closeBookmarksLibrary() {
+        bookmarksLibraryView.resetRegularSelectionModes()
+        isLibraryVisible = false
+        libraryOverlay.isHidden = true
+        if let sheet = librarySheetController {
+            sheet.onDidDismiss = nil
+            if isBookmarkEditorPresentedModally {
+                isBookmarkEditorPresentedModally = false
+                isBookmarkEditorVisible = false
+                bookmarkEditorHosting = nil
+                activeBookmarkEditorModel = nil
+            }
+            let detachAndClear = { [weak self, weak sheet] in
+                sheet?.detachLibraryView()
+                if self?.librarySheetController === sheet {
+                    self?.librarySheetController = nil
+                }
+                self?.bookmarksLibraryView.isHidden = true
+            }
+            if sheet.presentingViewController != nil {
+                if shouldAnimateModalSheets {
+                    sheet.dismiss(animated: true, completion: detachAndClear)
+                } else {
+                    sheet.dismiss(animated: false)
+                    detachAndClear()
+                }
+            } else {
+                detachAndClear()
+            }
+        } else {
+            bookmarksLibraryView.isHidden = true
+            if libraryOverlay.hostedContent === bookmarksLibraryView {
+                libraryOverlay.clearContent()
+            }
+        }
+        updateRailItems()
+        applyChromeViews(animated: false)
+    }
+
+    func handleLibrarySheetSystemDismiss() {
+        bookmarksLibraryView.resetRegularSelectionModes()
+        let sheet = librarySheetController
+        sheet?.onDidDismiss = nil
+        sheet?.detachLibraryView()
+        librarySheetController = nil
+        if isBookmarkEditorPresentedModally {
+            isBookmarkEditorPresentedModally = false
+            isBookmarkEditorVisible = false
+            bookmarkEditorHosting = nil
+            activeBookmarkEditorModel = nil
+        }
+        isLibraryVisible = false
+        libraryOverlay.isHidden = true
+        bookmarksLibraryView.isHidden = true
         updateRailItems()
         applyChromeViews(animated: false)
     }

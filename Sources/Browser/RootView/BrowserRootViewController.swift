@@ -259,6 +259,9 @@ final class BrowserRootViewController: UIViewController {
             }
         }
         editorView.applyPlacement(for: placement)
+        if !isOverviewVisible {
+            updateRailItems()
+        }
         updateTabStrip()
         updateTopBarPinning(for: placement)
         updateHeaderBackgrounds()
@@ -301,6 +304,7 @@ final class BrowserRootViewController: UIViewController {
     let downloadsOverlay = OverlayCardView()
     let bookmarkEditorOverlay = OverlayCardView()
     var libraryCompactConstraints: [NSLayoutConstraint] = []
+    var librarySheetController: LibrarySheetViewController?
     /// Last Files picker issued by the downloads rail. Retained so the
     /// wiring stays observable when the host blocks modal presentation.
     var presentedDownloadsPicker: UIDocumentPickerViewController?
@@ -308,6 +312,11 @@ final class BrowserRootViewController: UIViewController {
     var bookmarkEditorHosting: UIHostingController<BookmarkEditorView>?
     var activeBookmarkEditorModel: BookmarkEditorModel?
     var isBookmarkEditorVisible = false
+    var isBookmarkEditorPresentedModally = false
+
+    var isLibrarySheetPresented: Bool {
+        librarySheetController?.presentingViewController != nil
+    }
 
     /// Read-only inline-command state for the bookmark editor sheet. Tests
     /// verify behaviour through this accessor instead of reaching the hosting
@@ -332,11 +341,18 @@ final class BrowserRootViewController: UIViewController {
         bookmarkEditorHosting?.rootView.performInlineSave()
     }
 
-    /// Any library/settings/downloads/editor sheet is on screen. On regular
-    /// width the toolbar suppresses its duplicated Done/Cancel/Save items
-    /// while this is true, leaving only the sheet's inline controls.
+    /// Any library/settings/downloads/editor sheet is on screen. Used to keep
+    /// the `.regular` top bar un-collapsed and the status bar visible while a
+    /// sheet or modal library is presented.
     var isSheetOverlayVisible: Bool {
         isLibraryVisible || isSettingsVisible || isDownloadsVisible || isBookmarkEditorVisible
+    }
+
+    /// Inline `OverlayCardView` sheets hide `TopBarView`'s button stacks on
+    /// `.regular`. Modal `LibrarySheetViewController` and `.regular` address
+    /// editing keep `TopBarView`'s browsing buttons visible underneath.
+    var suppressesRegularToolbarButtons: Bool {
+        isSettingsVisible || isDownloadsVisible || (isBookmarkEditorVisible && !isBookmarkEditorPresentedModally)
     }
 
     var isEditingAddress = false
@@ -511,8 +527,10 @@ final class BrowserRootViewController: UIViewController {
         }
         bookmarksLibraryView.onInlineDelete = { [weak self] in
             guard let self else { return }
-            self.bookmarksLibraryView.deleteReadingListSelectedItems()
-            self.updateLibraryRailItems(for: .readingList)
+            let tab = self.bookmarksLibraryView.currentTab
+            self.bookmarksLibraryView.deleteSelectedItemsForActiveTab()
+            self.updateStartPageContent()
+            self.updateLibraryRailItems(for: tab)
         }
         bookmarksLibraryView.onInlineDone = { [weak self] in
             self?.closeBookmarksLibrary()
@@ -706,6 +724,10 @@ extension BrowserRootViewController {
         let snapshot = snapshot ?? peekActivePage()?.snapshot
         startPageView?.updateActivePage(url: snapshot?.url, title: snapshot?.title)
         startPageView?.reload()
+        if isEditingAddress {
+            let favorites = StartPageViewModel.sortedFavorites(bookmarkStore?.fetchFavorites() ?? [])
+            editorView.setFavorites(favorites)
+        }
     }
 
     private func updatePillForSnapshot(_ snapshot: WebPageSnapshot) {
@@ -748,6 +770,24 @@ extension BrowserRootViewController {
         }
         if !isLibraryVisible {
             bookmarksLibraryView.applyPlacement(for: placement)
+        } else if placement == .compact, let sheet = librarySheetController {
+            sheet.onDidDismiss = nil
+            sheet.dismiss(animated: false)
+            sheet.detachLibraryView()
+            librarySheetController = nil
+            if bookmarksLibraryView.superview !== view {
+                view.addSubview(bookmarksLibraryView)
+                NSLayoutConstraint.activate(libraryCompactConstraints)
+            }
+            bookmarksLibraryView.applyPlacement(for: .compact)
+            bookmarksLibraryView.isHidden = false
+        }
+        if isEditingAddress, let id = selectedTabID, peekActivePage()?.snapshot.url != nil {
+            if placement == .regular {
+                forcedStartPageTabs.remove(id)
+            } else {
+                forcedStartPageTabs.insert(id)
+            }
         }
         updateTabStrip()
         updateTopBarPinning(for: placement)

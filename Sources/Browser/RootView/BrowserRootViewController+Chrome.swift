@@ -24,11 +24,11 @@ extension BrowserRootViewController {
     func applyCommands(_ commands: ChromeCommands, animated: Bool) {
         guard commands != .noChange else { return }
         if chromePlacement == .regular {
-            if commands.pill != nil {
-                applyPillViews(animated: animated)
-            }
             if commands.rail != nil || commands.pill != nil {
                 applyTopBarViews(animated: animated)
+            }
+            if commands.pill != nil {
+                applyPillViews(animated: animated)
             }
             applyContentInsets()
             return
@@ -44,8 +44,8 @@ extension BrowserRootViewController {
 
     func applyChromeViews(animated: Bool) {
         if chromePlacement == .regular {
-            applyPillViews(animated: animated)
             applyTopBarViews(animated: animated)
+            applyPillViews(animated: animated)
             applyContentInsets()
             return
         }
@@ -71,7 +71,7 @@ extension BrowserRootViewController {
             topBarView.leadingStack.isHidden = true
             topBarView.trailingStack.isHidden = true
         } else {
-            let isSheetExpanded = isSheetOverlayVisible && state.pill != .editing && !isOverviewVisible
+            let isSheetExpanded = suppressesRegularToolbarButtons && state.pill != .editing && !isOverviewVisible
             topBarView.leadingStack.isHidden = isSheetExpanded
             topBarView.trailingStack.isHidden = isSheetExpanded
         }
@@ -432,16 +432,43 @@ extension BrowserRootViewController {
     }
 
     func dismissStartPageOrEditing() {
+        let hadForcedStartPage = selectedTabID.map { forcedStartPageTabs.contains($0) } ?? false
         if isEditingAddress {
             endEditing(submitted: false)
+            if hadForcedStartPage {
+                dismissForcedStartPage()
+            }
+            return
         }
         dismissForcedStartPage()
     }
 
+    func makeBrowsingChromeItems() -> (prefix: [RailAction], suffix: [RailAction]) {
+        let canGoBack = peekActivePage()?.snapshot.canGoBack ?? false
+        return (
+            prefix: [
+                .back(isEnabled: canGoBack) { [weak self] in self?.activePage()?.goBack() },
+                .bookmarks { [weak self] in self?.openBookmarksLibrary() }
+            ],
+            suffix: [
+                .newTab { [weak self] in self?.createNewTab() },
+                .tabs { [weak self] in self?.toggleOverview() }
+            ]
+        )
+    }
+
     func setChromeItems(prefix: [RailAction], suffix: [RailAction]) {
         railView.setItems(prefix: prefix, suffix: suffix)
-        if chromePlacement == .regular, isSheetOverlayVisible, !isOverviewVisible {
-            topBarView.setItems(prefix: [], suffix: [])
+        let isRegularApplied = chromePlacement == .regular || !topBarView.isHidden
+        if isRegularApplied, !isOverviewVisible {
+            if suppressesRegularToolbarButtons {
+                topBarView.setItems(prefix: [], suffix: [])
+            } else if isEditingAddress || isLibraryVisible {
+                let browsing = makeBrowsingChromeItems()
+                topBarView.setItems(prefix: browsing.prefix, suffix: browsing.suffix)
+            } else {
+                topBarView.setItems(prefix: prefix, suffix: suffix)
+            }
         } else {
             topBarView.setItems(prefix: prefix, suffix: suffix)
         }
@@ -500,17 +527,8 @@ extension BrowserRootViewController {
                 ]
             )
         case .browsing:
-            let canGoBack = peekActivePage()?.snapshot.canGoBack ?? false
-            setChromeItems(
-                prefix: [
-                    .back(isEnabled: canGoBack) { [weak self] in self?.activePage()?.goBack() },
-                    .bookmarks { [weak self] in self?.openBookmarksLibrary() }
-                ],
-                suffix: [
-                    .newTab { [weak self] in self?.createNewTab() },
-                    .tabs { [weak self] in self?.toggleOverview() }
-                ]
-            )
+            let browsing = makeBrowsingChromeItems()
+            setChromeItems(prefix: browsing.prefix, suffix: browsing.suffix)
         }
     }
 
