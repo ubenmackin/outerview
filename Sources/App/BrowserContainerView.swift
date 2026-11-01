@@ -21,13 +21,15 @@ struct BrowserContainerView: UIViewControllerRepresentable {
         Coordinator(scenePhase: scenePhase)
     }
 
-    func makeUIViewController(context: Context) -> BrowserRootViewController {
-        let controller = BrowserRootViewController()
-        context.coordinator.controller = controller
-        return controller
+    func makeUIViewController(context: Context) -> BrowserChromeHostViewController {
+        let browserRoot = BrowserRootViewController()
+        let host = BrowserChromeHostViewController(browserRoot: browserRoot)
+        context.coordinator.controller = browserRoot
+        return host
     }
 
-    func updateUIViewController(_ controller: BrowserRootViewController, context: Context) {
+    func updateUIViewController(_ host: BrowserChromeHostViewController, context: Context) {
+        let controller = host.browserRoot
         if context.coordinator.lastPhase != scenePhase {
             context.coordinator.lastPhase = scenePhase
             controller.handleScenePhase(scenePhase)
