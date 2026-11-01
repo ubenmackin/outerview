@@ -37,4 +37,12 @@ final class BrowserChromeHostViewController: UIViewController {
     override var childForPreferredVerticalBarBehavior: UIViewController? {
         browserRoot
     }
+
+    override var childForStatusBarHidden: UIViewController? {
+        browserRoot
+    }
+
+    override var childForStatusBarStyle: UIViewController? {
+        browserRoot
+    }
 }

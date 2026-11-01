@@ -7,9 +7,15 @@
 import UIKit
 import XCTest
 
+/// Shared Contract HEADER-BAR: regular bar leading zero plus trailing zero to
+/// the view edges; leading cluster inset 28; trailing cluster inset 164;
+/// cluster spacing 12; regular header background always clear with blur shown
+/// in every state; expanded pill centered with width min of 380 and slot
+/// width; minified capsule centered with domain-hugging width capped at 220;
+/// slot leading plus trailing inactive on regular in both states.
 /// Shared Contract REGULAR-COLLAPSE: collapsed keeps topBarView visible with
-/// both stacks plus strip hidden and the pill minified centered in its slot
-/// through slot-scoped centerX plus width constraints; expanded is unchanged;
+/// both stacks plus strip hidden; expanded centered with min(380,slotWidth)
+/// and collapsed centered with domain-hugging width capped at min(220,slotWidth);
 /// collapsed top inset equals TopBarView.remnantHeight; additionalSafeArea top
 /// is zero in every placement and state; no remnant view exists anywhere.
 @MainActor
@@ -69,18 +75,22 @@ final class TopBarScrollTests: XCTestCase {
         XCTAssertFalse(root.pillView.isHidden)
         XCTAssertEqual(root.pillHeightConstraint.constant, AddressBarView.expandedHeight)
         XCTAssertTrue(root.railView.isHidden)
+        XCTAssertEqual(root.topBarView.currentHeightConstant, TopBarView.barHeight)
+        XCTAssertFalse(root.prefersStatusBarHidden)
 
         scroll(root, delta: 8)
         XCTAssertFalse(root.topBarView.isHidden)
+        XCTAssertEqual(root.topBarView.currentHeightConstant, TopBarView.remnantHeight)
+        XCTAssertTrue(root.prefersStatusBarHidden)
         XCTAssertTrue(root.topBarView.leadingStack.isHidden)
         XCTAssertTrue(root.topBarView.trailingStack.isHidden)
         XCTAssertTrue(root.tabStripView.isHidden)
         XCTAssertFalse(root.pillView.isHidden)
         XCTAssertEqual(root.pillHeightConstraint.constant, AddressBarView.expandedHeight)
-        XCTAssertTrue(root.pillSlotLeadingConstraint.isActive)
-        XCTAssertTrue(root.pillSlotTrailingConstraint.isActive)
-        XCTAssertFalse(root.pillSlotCenterXConstraint.isActive)
-        XCTAssertFalse(root.pillSlotWidthConstraint.isActive)
+        XCTAssertFalse(root.pillSlotLeadingConstraint.isActive)
+        XCTAssertFalse(root.pillSlotTrailingConstraint.isActive)
+        XCTAssertTrue(root.pillSlotCenterXConstraint.isActive)
+        XCTAssertTrue(root.pillSlotWidthConstraint.isActive)
         XCTAssertEqual(root.additionalSafeAreaInsets.top, 0, accuracy: 0.001)
         XCTAssertNil(root.railView.lastAppliedRail)
         XCTAssertEqual(root.railView.applyCount, 0)
@@ -108,6 +118,8 @@ final class TopBarScrollTests: XCTestCase {
 
         scroll(root, delta: 24)
         XCTAssertFalse(root.topBarView.isHidden)
+        XCTAssertEqual(root.topBarView.currentHeightConstant, TopBarView.remnantHeight)
+        XCTAssertTrue(root.prefersStatusBarHidden)
         XCTAssertTrue(root.topBarView.leadingStack.isHidden)
         XCTAssertTrue(root.topBarView.trailingStack.isHidden)
         XCTAssertTrue(root.tabStripView.isHidden)
@@ -121,15 +133,17 @@ final class TopBarScrollTests: XCTestCase {
 
         scroll(root, delta: -32)
         XCTAssertFalse(root.topBarView.isHidden)
+        XCTAssertEqual(root.topBarView.currentHeightConstant, TopBarView.barHeight)
+        XCTAssertFalse(root.prefersStatusBarHidden)
         XCTAssertFalse(root.topBarView.leadingStack.isHidden)
         XCTAssertFalse(root.topBarView.trailingStack.isHidden)
         XCTAssertFalse(root.tabStripView.isHidden)
         XCTAssertFalse(root.pillView.isHidden)
         XCTAssertEqual(root.pillHeightConstraint.constant, AddressBarView.expandedHeight)
-        XCTAssertTrue(root.pillSlotLeadingConstraint.isActive)
-        XCTAssertTrue(root.pillSlotTrailingConstraint.isActive)
-        XCTAssertFalse(root.pillSlotCenterXConstraint.isActive)
-        XCTAssertFalse(root.pillSlotWidthConstraint.isActive)
+        XCTAssertFalse(root.pillSlotLeadingConstraint.isActive)
+        XCTAssertFalse(root.pillSlotTrailingConstraint.isActive)
+        XCTAssertTrue(root.pillSlotCenterXConstraint.isActive)
+        XCTAssertTrue(root.pillSlotWidthConstraint.isActive)
         XCTAssertEqual(root.additionalSafeAreaInsets.top, 0, accuracy: 0.001)
         XCTAssertNil(root.railView.lastAppliedRail)
         XCTAssertEqual(root.railView.applyCount, 0)
@@ -236,6 +250,7 @@ final class TopBarScrollTests: XCTestCase {
         root.applyCommands(commands, animated: false)
         XCTAssertTrue(root.topBarView.isHidden)
         XCTAssertFalse(root.railView.isHidden)
+        XCTAssertFalse(root.prefersStatusBarHidden)
         XCTAssertEqual(root.railView.applyCount, baseCount + 1)
         XCTAssertEqual(root.railView.lastAppliedRail, .hidden)
     }

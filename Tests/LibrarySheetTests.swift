@@ -42,10 +42,10 @@ final class LibrarySheetTests: XCTestCase {
         XCTAssertEqual(OverlayCardView.cornerRadius, 16)
         XCTAssertEqual(OverlayCardView.dimAlpha, 0.2, accuracy: 0.001)
         XCTAssertEqual(OverlayCardView.contentPadding, 16)
-        XCTAssertEqual(TopBarView.barHeight, 56)
+        XCTAssertEqual(TopBarView.barHeight, 84)
         XCTAssertEqual(TabStripView.stripHeight, 44)
-        XCTAssertEqual(TopBarView.remnantHeight, TopBarView.barHeight)
-        XCTAssertEqual(TopBarView.trailingClearance, 96)
+        XCTAssertEqual(TopBarView.remnantHeight, 48)
+        XCTAssertEqual(TopBarView.trailingStatusInset, 164)
     }
 
     func testRegularCardContentPadded() {

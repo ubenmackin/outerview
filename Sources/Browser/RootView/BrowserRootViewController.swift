@@ -64,16 +64,28 @@ final class BrowserRootViewController: UIViewController {
     }
 
     /// Shared Contract REGULAR-COLLAPSE: collapsed keeps topBarView visible with
-    /// both stacks plus strip hidden and the pill minified centered in its slot
-    /// through slot-scoped centerX plus width constraints; expanded is unchanged;
-    /// collapsed top inset equals TopBarView.remnantHeight; additionalSafeArea top
-    /// is zero in every placement and state; no remnant view exists anywhere.
+    /// both stacks plus strip hidden; expanded centered with min(380,slotWidth)
+    /// and collapsed centered with domain-hugging capsule width capped at
+    /// min(220,slotWidth); collapsed top inset equals TopBarView.remnantHeight;
+    /// additionalSafeArea top is zero in every placement and state; no remnant view exists anywhere.
     nonisolated static var regularRemnantHeight: CGFloat {
-        TopBarView.barHeight
+        TopBarView.remnantHeight
     }
 
     nonisolated static var regularTrailingClearance: CGFloat {
-        TopBarView.trailingClearance
+        TopBarView.trailingStatusInset
+    }
+
+    /// Regular pill width capped by the laid-out slot; zero slot defers to the cap until layout runs.
+    nonisolated static func regularPillTarget(
+        slotWidth: CGFloat,
+        isMinified: Bool,
+        preferredMinifiedWidth: CGFloat = AddressBarView.minifiedMaxWidth
+    ) -> CGFloat {
+        let cap = isMinified
+            ? min(AddressBarView.minifiedMaxWidth, preferredMinifiedWidth)
+            : TopBarView.expandedPillMaxWidth
+        return slotWidth > 0 ? min(cap, slotWidth) : cap
     }
 
     nonisolated static func topContentInset(
@@ -97,7 +109,7 @@ final class BrowserRootViewController: UIViewController {
 
     nonisolated static func compensatedOffset(current: CGPoint, oldTop: CGFloat, newTop: CGFloat) -> CGPoint {
         let shiftedY = current.y + (newTop - oldTop)
-        return CGPoint(x: current.x, y: max(-newTop, shiftedY))
+        return CGPoint(x: current.x, y: max(0, shiftedY))
     }
 
     /// Bounds width the minified capsule measures against. The minified pill
@@ -124,6 +136,51 @@ final class BrowserRootViewController: UIViewController {
 
     override var preferredVerticalBarBehavior: UIVerticalBarBehavior {
         Self.verticalBarBehavior(for: chromePlacement)
+    }
+
+    nonisolated static func isRegularCollapsed(
+        state: ChromeState,
+        isOverviewVisible: Bool,
+        isSheetOverlayVisible: Bool
+    ) -> Bool {
+        if state.pill == .editing || isOverviewVisible || isSheetOverlayVisible {
+            return false
+        }
+        return state.rail == .hidden
+    }
+
+    nonisolated static func shouldHideStatusBar(
+        for placement: ChromePlacement,
+        state: ChromeState,
+        isOverviewVisible: Bool,
+        isSheetOverlayVisible: Bool
+    ) -> Bool {
+        guard placement == .regular else { return false }
+        return isRegularCollapsed(
+            state: state,
+            isOverviewVisible: isOverviewVisible,
+            isSheetOverlayVisible: isSheetOverlayVisible
+        )
+    }
+
+    override var prefersStatusBarHidden: Bool {
+        Self.shouldHideStatusBar(
+            for: chromePlacement,
+            state: chromeController.state,
+            isOverviewVisible: isOverviewVisible,
+            isSheetOverlayVisible: isSheetOverlayVisible
+        )
+    }
+
+    override var preferredStatusBarUpdateAnimation: UIStatusBarAnimation {
+        .fade
+    }
+
+    func refreshStatusBarAppearanceIfNeeded() {
+        let hidden = prefersStatusBarHidden
+        guard lastStatusBarHidden != hidden else { return }
+        lastStatusBarHidden = hidden
+        setNeedsStatusBarAppearanceUpdate()
     }
 
     /// Moves the shared pill between the bottom anchors and the toolbar slot.
@@ -161,21 +218,22 @@ final class BrowserRootViewController: UIViewController {
                 pillTrailingConstraint.isActive = false
                 pillCenterXConstraint.isActive = false
                 pillWidthConstraint.isActive = false
-                pillSlotLeadingConstraint.isActive = true
-                pillSlotTrailingConstraint.isActive = true
                 pillSlotCenterYConstraint.isActive = true
-                pillSlotCenterXConstraint.isActive = false
-                pillSlotWidthConstraint.isActive = false
             }
             updateRegularPillGeometry()
         } else {
+            topBarAnimator?.stopAnimation(false)
+            topBarAnimator?.finishAnimation(at: .current)
+            topBarAnimator = nil
             if pillView.superview !== view {
                 NSLayoutConstraint.deactivate([
                     pillSlotLeadingConstraint,
                     pillSlotTrailingConstraint,
                     pillSlotCenterYConstraint,
                     pillSlotCenterXConstraint,
-                    pillSlotWidthConstraint
+                    pillSlotWidthConstraint,
+                    pillSlotMinLeadingConstraint,
+                    pillSlotMaxTrailingConstraint
                 ])
                 pillView.removeFromSuperview()
                 pillView.translatesAutoresizingMaskIntoConstraints = false
@@ -186,6 +244,8 @@ final class BrowserRootViewController: UIViewController {
                 pillSlotCenterYConstraint.isActive = false
                 pillSlotCenterXConstraint.isActive = false
                 pillSlotWidthConstraint.isActive = false
+                pillSlotMinLeadingConstraint.isActive = false
+                pillSlotMaxTrailingConstraint.isActive = false
             }
             let isMinified = chromeController.state.pill == .minified
             pillBottomConstraint.isActive = true
@@ -203,6 +263,7 @@ final class BrowserRootViewController: UIViewController {
         updateTopBarPinning(for: placement)
         updateHeaderBackgrounds()
         updateStartPageTop()
+        refreshStatusBarAppearanceIfNeeded()
         bringChromeToFront()
     }
 
@@ -303,6 +364,8 @@ final class BrowserRootViewController: UIViewController {
     var pillSlotCenterYConstraint: NSLayoutConstraint!
     var pillSlotCenterXConstraint: NSLayoutConstraint!
     var pillSlotWidthConstraint: NSLayoutConstraint!
+    var pillSlotMinLeadingConstraint: NSLayoutConstraint!
+    var pillSlotMaxTrailingConstraint: NSLayoutConstraint!
     var topBarTopConstraint: NSLayoutConstraint!
     var topBarTopToViewConstraint: NSLayoutConstraint?
     var topBarTopToSafeAreaConstraint: NSLayoutConstraint?
@@ -312,6 +375,8 @@ final class BrowserRootViewController: UIViewController {
     var startPageTopToStripConstraint: NSLayoutConstraint?
     var startPageTopToBarConstraint: NSLayoutConstraint?
     var pillAnimator: UIViewPropertyAnimator?
+    var topBarAnimator: UIViewPropertyAnimator?
+    var lastStatusBarHidden: Bool?
     private var structuralTask: Task<Void, Never>?
     private var horizontalSizeClassRegistration: UITraitChangeRegistration?
     private var lastVerticalBarPlacement: ChromePlacement?
@@ -481,8 +546,11 @@ final class BrowserRootViewController: UIViewController {
             }
         }
         if pillSlotWidthConstraint.isActive {
-            let slotWidth = topBarView.pillSlotView.bounds.width
-            let target = slotWidth > 0 ? min(AddressBarView.minifiedMaxWidth, slotWidth) : AddressBarView.minifiedMaxWidth
+            let target = Self.regularPillTarget(
+                slotWidth: topBarView.pillSlotView.bounds.width,
+                isMinified: chromeController.state.pill == .minified,
+                preferredMinifiedWidth: pillView.preferredMinifiedWidth()
+            )
             if pillSlotWidthConstraint.constant != target {
                 pillSlotWidthConstraint.constant = target
             }
@@ -643,6 +711,9 @@ extension BrowserRootViewController {
     private func updatePillForSnapshot(_ snapshot: WebPageSnapshot) {
         let isLoading = snapshot.url != nil && snapshot.progress < 1 && snapshot.lastError == nil
         pillView.configure(url: snapshot.url, isSecure: snapshot.isSecure, isLoading: isLoading)
+        if chromePlacement == .regular, chromeController.state.pill == .minified {
+            updateRegularPillGeometry()
+        }
     }
 
     // MARK: - Fold handling

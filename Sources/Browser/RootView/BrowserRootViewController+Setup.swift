@@ -115,10 +115,10 @@ extension BrowserRootViewController {
     }
 
     /// Shared Contract REGULAR-COLLAPSE: collapsed keeps topBarView visible with
-    /// both stacks plus strip hidden and the pill minified centered in its slot
-    /// through slot-scoped centerX plus width constraints; expanded is unchanged;
-    /// collapsed top inset equals TopBarView.remnantHeight; additionalSafeArea top
-    /// is zero in every placement and state; no remnant view exists anywhere.
+    /// both stacks plus strip hidden; expanded centered with min(380,slotWidth)
+    /// and collapsed centered with min(220,slotWidth) through bar-scoped centerX
+    /// plus width constraints; collapsed top inset equals TopBarView.remnantHeight;
+    /// additionalSafeArea top is zero in every placement and state; no remnant view exists anywhere.
     func setupTopBar() {
         topBarView.translatesAutoresizingMaskIntoConstraints = false
         topBarView.isHidden = true
@@ -191,10 +191,17 @@ extension BrowserRootViewController {
             equalTo: topBarView.pillSlotView.centerYAnchor
         )
         pillSlotCenterXConstraint = pillView.centerXAnchor.constraint(
-            equalTo: topBarView.pillSlotView.centerXAnchor
+            equalTo: topBarView.centerXAnchor
         )
+        pillSlotCenterXConstraint.priority = .defaultHigh
         pillSlotWidthConstraint = pillView.widthAnchor.constraint(
             equalToConstant: AddressBarView.minifiedMaxWidth
+        )
+        pillSlotMinLeadingConstraint = pillView.leadingAnchor.constraint(
+            greaterThanOrEqualTo: topBarView.pillSlotView.leadingAnchor
+        )
+        pillSlotMaxTrailingConstraint = pillView.trailingAnchor.constraint(
+            lessThanOrEqualTo: topBarView.pillSlotView.trailingAnchor
         )
         NSLayoutConstraint.activate([
             pillBottomConstraint,
