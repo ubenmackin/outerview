@@ -63,6 +63,11 @@ final class BrowserRootViewController: UIViewController {
             + contentBottomGap
     }
 
+    /// Shared Contract REGULAR-COLLAPSE: collapsed keeps topBarView visible with
+    /// both stacks plus strip hidden and the pill minified centered in its slot
+    /// through slot-scoped centerX plus width constraints; expanded is unchanged;
+    /// collapsed top inset equals TopBarView.remnantHeight; additionalSafeArea top
+    /// is zero in every placement and state; no remnant view exists anywhere.
     nonisolated static var regularRemnantHeight: CGFloat {
         TopBarView.barHeight
     }
@@ -76,19 +81,18 @@ final class BrowserRootViewController: UIViewController {
         state: ChromeState,
         stripVisible: Bool
     ) -> CGFloat {
-        guard placement == .regular, state.pill == .editing || state.rail == .visible else { return 0 }
-        return TopBarView.barHeight + (stripVisible ? TabStripView.stripHeight : 0)
+        guard placement == .regular else { return 0 }
+        if state.pill == .editing || state.rail == .visible {
+            return TopBarView.barHeight + (stripVisible ? TabStripView.stripHeight : 0)
+        }
+        return TopBarView.remnantHeight
     }
 
     nonisolated static func additionalSafeAreaTopInset(
-        for placement: ChromePlacement,
-        state: ChromeState
+        for _: ChromePlacement,
+        state _: ChromeState
     ) -> CGFloat {
-        guard placement == .regular else { return 0 }
-        if state.pill == .editing {
-            return 0
-        }
-        return state.rail == .hidden ? TopBarView.barHeight : 0
+        0
     }
 
     nonisolated static func compensatedOffset(current: CGPoint, oldTop: CGFloat, newTop: CGFloat) -> CGPoint {
@@ -144,6 +148,8 @@ final class BrowserRootViewController: UIViewController {
                 pillView.removeFromSuperview()
                 pillView.translatesAutoresizingMaskIntoConstraints = false
                 topBarView.pillSlotView.addSubview(pillView)
+                pillSlotCenterXConstraint.isActive = false
+                pillSlotWidthConstraint.isActive = false
                 NSLayoutConstraint.activate([
                     pillSlotLeadingConstraint,
                     pillSlotTrailingConstraint,
@@ -158,13 +164,18 @@ final class BrowserRootViewController: UIViewController {
                 pillSlotLeadingConstraint.isActive = true
                 pillSlotTrailingConstraint.isActive = true
                 pillSlotCenterYConstraint.isActive = true
+                pillSlotCenterXConstraint.isActive = false
+                pillSlotWidthConstraint.isActive = false
             }
+            updateRegularPillGeometry()
         } else {
             if pillView.superview !== view {
                 NSLayoutConstraint.deactivate([
                     pillSlotLeadingConstraint,
                     pillSlotTrailingConstraint,
-                    pillSlotCenterYConstraint
+                    pillSlotCenterYConstraint,
+                    pillSlotCenterXConstraint,
+                    pillSlotWidthConstraint
                 ])
                 pillView.removeFromSuperview()
                 pillView.translatesAutoresizingMaskIntoConstraints = false
@@ -173,6 +184,8 @@ final class BrowserRootViewController: UIViewController {
                 pillSlotLeadingConstraint.isActive = false
                 pillSlotTrailingConstraint.isActive = false
                 pillSlotCenterYConstraint.isActive = false
+                pillSlotCenterXConstraint.isActive = false
+                pillSlotWidthConstraint.isActive = false
             }
             let isMinified = chromeController.state.pill == .minified
             pillBottomConstraint.isActive = true
@@ -288,6 +301,8 @@ final class BrowserRootViewController: UIViewController {
     var pillSlotLeadingConstraint: NSLayoutConstraint!
     var pillSlotTrailingConstraint: NSLayoutConstraint!
     var pillSlotCenterYConstraint: NSLayoutConstraint!
+    var pillSlotCenterXConstraint: NSLayoutConstraint!
+    var pillSlotWidthConstraint: NSLayoutConstraint!
     var topBarTopConstraint: NSLayoutConstraint!
     var topBarTopToViewConstraint: NSLayoutConstraint?
     var topBarTopToSafeAreaConstraint: NSLayoutConstraint?
@@ -296,7 +311,6 @@ final class BrowserRootViewController: UIViewController {
     var startPageTopToContentConstraint: NSLayoutConstraint?
     var startPageTopToStripConstraint: NSLayoutConstraint?
     var startPageTopToBarConstraint: NSLayoutConstraint?
-    var headerRemnantView: UIVisualEffectView?
     var pillAnimator: UIViewPropertyAnimator?
     private var structuralTask: Task<Void, Never>?
     private var horizontalSizeClassRegistration: UITraitChangeRegistration?
@@ -464,6 +478,13 @@ final class BrowserRootViewController: UIViewController {
             let width = AddressBarView.widthForBounds(pillReferenceWidth)
             if pillWidthConstraint.constant != width {
                 pillWidthConstraint.constant = width
+            }
+        }
+        if pillSlotWidthConstraint.isActive {
+            let slotWidth = topBarView.pillSlotView.bounds.width
+            let target = slotWidth > 0 ? min(AddressBarView.minifiedMaxWidth, slotWidth) : AddressBarView.minifiedMaxWidth
+            if pillSlotWidthConstraint.constant != target {
+                pillSlotWidthConstraint.constant = target
             }
         }
     }

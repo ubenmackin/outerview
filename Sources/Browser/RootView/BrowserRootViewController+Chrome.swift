@@ -56,7 +56,13 @@ extension BrowserRootViewController {
 
     /// Single owner for regular toolbar visibility: editing/overview shows
     /// the bar with both stacks, sheet overlays show the bar but hide the
-    /// duplicated stacks, otherwise the collapsed rail state drives the bar.
+    /// duplicated stacks, otherwise collapsed keeps the bar visible while
+    /// hiding both stacks plus the strip.
+    /// Shared Contract REGULAR-COLLAPSE: collapsed keeps topBarView visible with
+    /// both stacks plus strip hidden and the pill minified centered in its slot
+    /// through slot-scoped centerX plus width constraints; expanded is unchanged;
+    /// collapsed top inset equals TopBarView.remnantHeight; additionalSafeArea top
+    /// is zero in every placement and state; no remnant view exists anywhere.
     /// All regular placement sites delegate here; none re-implement the
     /// branching.
     func updateToolbarVisibility(for state: ChromeState) {
@@ -66,6 +72,7 @@ extension BrowserRootViewController {
             topBarView.leadingStack.isHidden = false
             topBarView.trailingStack.isHidden = false
             tabStripView.isHidden = true
+            updateRegularPillGeometry()
             return
         }
         if isSheetOverlayVisible {
@@ -73,16 +80,30 @@ extension BrowserRootViewController {
             topBarView.leadingStack.isHidden = true
             topBarView.trailingStack.isHidden = true
             tabStripView.isHidden = true
+            updateRegularPillGeometry()
             return
         }
         let isCollapsed = state.rail == .hidden
-        topBarView.isHidden = isCollapsed
+        topBarView.isHidden = false
         topBarView.leadingStack.isHidden = isCollapsed
         topBarView.trailingStack.isHidden = isCollapsed
-        if isCollapsed {
-            tabStripView.isHidden = true
-        } else {
-            updateTabStrip()
+        updateTabStrip()
+        updateRegularPillGeometry()
+    }
+
+    func updateRegularPillGeometry() {
+        guard isViewLoaded, pillView.superview === topBarView.pillSlotView else { return }
+        let isMinified = chromeController.state.pill == .minified
+        pillSlotLeadingConstraint.isActive = !isMinified
+        pillSlotTrailingConstraint.isActive = !isMinified
+        pillSlotCenterXConstraint.isActive = isMinified
+        pillSlotWidthConstraint.isActive = isMinified
+        if isMinified {
+            let slotWidth = topBarView.pillSlotView.bounds.width
+            let target = slotWidth > 0 ? min(AddressBarView.minifiedMaxWidth, slotWidth) : AddressBarView.minifiedMaxWidth
+            if pillSlotWidthConstraint.constant != target {
+                pillSlotWidthConstraint.constant = target
+            }
         }
     }
 
@@ -132,6 +153,8 @@ extension BrowserRootViewController {
             let oldTop = webView.obscuredContentInsets.top
             let insets = UIEdgeInsets(top: newTop, left: 0, bottom: bottom, right: 0)
             if webView.obscuredContentInsets != insets {
+                let proxy = selectedTabID.flatMap { scrollProxies[$0] }
+                proxy?.suppressDeltas = true
                 webView.obscuredContentInsets = insets
                 if oldTop != newTop {
                     let current = webView.scrollView.contentOffset
@@ -145,6 +168,7 @@ extension BrowserRootViewController {
                     let clampedY = min(max(compensated.y, -newTop), max(maxOffsetY, -newTop))
                     webView.scrollView.contentOffset = CGPoint(x: compensated.x, y: clampedY)
                 }
+                proxy?.suppressDeltas = false
             }
         }
         startPageView?.setBottomChromeInset(max(0, bottom - systemBottom))
@@ -182,29 +206,6 @@ extension BrowserRootViewController {
         let collapsed = isHeaderCollapsed
         topBarView.applyHeaderBackground(isCollapsed: collapsed)
         tabStripView.applyHeaderBackground(isCollapsed: collapsed)
-        ensureHeaderRemnant()
-        headerRemnantView?.isHidden = !collapsed || chromePlacement != .regular
-    }
-
-    private func ensureHeaderRemnant() {
-        if headerRemnantView == nil {
-            let remnant = UIVisualEffectView(effect: GlassEffect.make())
-            remnant.translatesAutoresizingMaskIntoConstraints = false
-            remnant.isHidden = true
-            remnant.isUserInteractionEnabled = false
-            view.addSubview(remnant)
-            NSLayoutConstraint.activate([
-                remnant.topAnchor.constraint(equalTo: view.topAnchor),
-                remnant.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-                remnant.trailingAnchor.constraint(
-                    equalTo: view.trailingAnchor,
-                    constant: -Self.regularTrailingClearance
-                ),
-                remnant.heightAnchor.constraint(equalToConstant: TopBarView.barHeight)
-            ])
-            headerRemnantView = remnant
-            bringChromeToFront()
-        }
     }
 
     func updateStartPageTop() {
@@ -267,6 +268,7 @@ extension BrowserRootViewController {
             let updateToolbarPill = { [weak self] in
                 guard let self else { return }
                 self.pillHeightConstraint.constant = AddressBarView.heightForState(state.pill)
+                self.updateRegularPillGeometry()
                 self.pillView.isHidden = state.pill == .editing
                 self.editorView.isHidden = state.pill != .editing
                 self.view.layoutIfNeeded()

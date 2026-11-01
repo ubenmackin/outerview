@@ -7,6 +7,11 @@
 import UIKit
 import XCTest
 
+/// Shared Contract REGULAR-COLLAPSE: collapsed keeps topBarView visible with
+/// both stacks plus strip hidden and the pill minified centered in its slot
+/// through slot-scoped centerX plus width constraints; expanded is unchanged;
+/// collapsed top inset equals TopBarView.remnantHeight; additionalSafeArea top
+/// is zero in every placement and state; no remnant view exists anywhere.
 @MainActor
 final class RegularHeaderTests: XCTestCase {
     private func makeRegularRoot(tabCount: Int = 2) throws -> (parent: UIViewController, root: BrowserRootViewController) {
@@ -46,6 +51,10 @@ final class RegularHeaderTests: XCTestCase {
         root.applyCommands(commands, animated: false)
     }
 
+    private func hasRemnantProperty(_ root: BrowserRootViewController) -> Bool {
+        Mirror(reflecting: root).children.contains { $0.label == "headerRemnantView" }
+    }
+
     func testStaticsMatchRegularHeaderContract() {
         XCTAssertEqual(TopBarView.barHeight, 56)
         XCTAssertEqual(TabStripView.stripHeight, 44)
@@ -67,25 +76,45 @@ final class RegularHeaderTests: XCTestCase {
         )
     }
 
-    func testCollapsedTopInsetZeroWithRemnant() {
-        let collapsed = ChromeState(rail: .hidden, pill: .expanded)
+    func testCollapsedTopInsetEqualsRemnant() {
+        let collapsed = ChromeState(rail: .hidden, pill: .minified)
         XCTAssertEqual(
             BrowserRootViewController.topContentInset(for: .regular, state: collapsed, stripVisible: false),
-            0
+            TopBarView.remnantHeight
         )
         XCTAssertEqual(
             BrowserRootViewController.topContentInset(for: .regular, state: collapsed, stripVisible: true),
-            0
+            TopBarView.remnantHeight
         )
         XCTAssertEqual(
             BrowserRootViewController.additionalSafeAreaTopInset(for: .regular, state: collapsed),
-            TopBarView.barHeight
+            0
         )
         let expanded = ChromeState(rail: .visible, pill: .expanded)
         XCTAssertEqual(
             BrowserRootViewController.additionalSafeAreaTopInset(for: .regular, state: expanded),
             0
         )
+    }
+
+    func testAdditionalSafeAreaZeroEverywhere() {
+        let states = [
+            ChromeState(rail: .visible, pill: .expanded),
+            ChromeState(rail: .hidden, pill: .minified),
+            ChromeState(rail: .hidden, pill: .expanded),
+            ChromeState(rail: .hidden, pill: .editing),
+            ChromeState(rail: .visible, pill: .editing)
+        ]
+        for state in states {
+            XCTAssertEqual(
+                BrowserRootViewController.additionalSafeAreaTopInset(for: .regular, state: state),
+                0
+            )
+            XCTAssertEqual(
+                BrowserRootViewController.additionalSafeAreaTopInset(for: .compact, state: state),
+                0
+            )
+        }
     }
 
     func testEditingKeepsExpandedInsets() {
@@ -176,31 +205,68 @@ final class RegularHeaderTests: XCTestCase {
         let fixture = try makeRegularRoot(tabCount: 2)
         let root = fixture.root
         XCTAssertFalse(root.topBarView.isHidden)
+        XCTAssertFalse(root.topBarView.leadingStack.isHidden)
+        XCTAssertFalse(root.topBarView.trailingStack.isHidden)
         XCTAssertFalse(root.tabStripView.isHidden)
         XCTAssertEqual(root.topBarView.backgroundColor, .systemBackground)
         XCTAssertTrue(root.topBarView.isOpaque)
         XCTAssertFalse(root.topBarView.isBlurVisible)
-        XCTAssertTrue(root.headerRemnantView?.isHidden ?? true)
+        XCTAssertFalse(hasRemnantProperty(root))
         XCTAssertEqual(root.additionalSafeAreaInsets.top, 0, accuracy: 0.001)
+        XCTAssertTrue(root.pillSlotLeadingConstraint.isActive)
+        XCTAssertTrue(root.pillSlotTrailingConstraint.isActive)
+        XCTAssertFalse(root.pillSlotCenterXConstraint.isActive)
+        XCTAssertFalse(root.pillSlotWidthConstraint.isActive)
         XCTAssertTrue(root.startPageTopToStripConstraint?.isActive ?? false)
         XCTAssertFalse(root.startPageTopToBarConstraint?.isActive ?? true)
     }
 
-    func testCollapsedRemnantTranslucentWithContentBehind() throws {
+    func testCollapsedKeepsMiniCapsuleCentered() throws {
         let fixture = try makeRegularRoot(tabCount: 2)
         let root = fixture.root
-        scroll(root, delta: 8)
+        scroll(root, delta: 30)
+        root.view.layoutIfNeeded()
         XCTAssertEqual(root.chromeController.state.rail, .hidden)
-        XCTAssertTrue(root.topBarView.isHidden)
+        XCTAssertEqual(root.chromeController.state.pill, .minified)
+        XCTAssertFalse(root.topBarView.isHidden)
+        XCTAssertTrue(root.topBarView.leadingStack.isHidden)
+        XCTAssertTrue(root.topBarView.trailingStack.isHidden)
         XCTAssertTrue(root.tabStripView.isHidden)
         XCTAssertEqual(root.topBarView.backgroundColor, .clear)
         XCTAssertFalse(root.topBarView.isOpaque)
         XCTAssertTrue(root.topBarView.isBlurVisible)
-        XCTAssertFalse(root.headerRemnantView?.isHidden ?? true)
-        XCTAssertEqual(root.additionalSafeAreaInsets.top, TopBarView.barHeight, accuracy: 0.001)
-        XCTAssertEqual(root.additionalSafeAreaInsets.top, BrowserRootViewController.regularRemnantHeight, accuracy: 0.001)
+        XCTAssertFalse(hasRemnantProperty(root))
+        XCTAssertEqual(root.additionalSafeAreaInsets.top, 0, accuracy: 0.001)
+        XCTAssertFalse(root.pillSlotLeadingConstraint.isActive)
+        XCTAssertFalse(root.pillSlotTrailingConstraint.isActive)
+        XCTAssertTrue(root.pillSlotCenterXConstraint.isActive)
+        XCTAssertTrue(root.pillSlotWidthConstraint.isActive)
+        let slotWidth = root.topBarView.pillSlotView.bounds.width
+        let expected = slotWidth > 0 ? min(AddressBarView.minifiedMaxWidth, slotWidth) : AddressBarView.minifiedMaxWidth
+        XCTAssertEqual(root.pillSlotWidthConstraint.constant, expected, accuracy: 0.5)
+        XCTAssertEqual(root.pillHeightConstraint.constant, AddressBarView.minifiedHeight, accuracy: 0.001)
         XCTAssertTrue(root.startPageTopToBarConstraint?.isActive ?? false)
         XCTAssertFalse(root.startPageTopToStripConstraint?.isActive ?? true)
+        scroll(root, delta: -40)
+        root.view.layoutIfNeeded()
+        XCTAssertEqual(root.chromeController.state.rail, .visible)
+        XCTAssertFalse(root.topBarView.isHidden)
+        XCTAssertFalse(root.topBarView.leadingStack.isHidden)
+        XCTAssertFalse(root.topBarView.trailingStack.isHidden)
+        XCTAssertFalse(root.tabStripView.isHidden)
+        XCTAssertTrue(root.pillSlotLeadingConstraint.isActive)
+        XCTAssertFalse(root.pillSlotCenterXConstraint.isActive)
+    }
+
+    func testNoRemnantViewExists() throws {
+        let fixture = try makeRegularRoot(tabCount: 2)
+        let root = fixture.root
+        XCTAssertFalse(hasRemnantProperty(root))
+        scroll(root, delta: 30)
+        root.view.layoutIfNeeded()
+        XCTAssertFalse(hasRemnantProperty(root))
+        let strayRemnants = root.view.subviews.filter { $0 is UIVisualEffectView && $0.superview === root.view }
+        XCTAssertTrue(strayRemnants.isEmpty)
     }
 
     func testStartPageTopFollowsStripOrBar() throws {
@@ -232,6 +298,6 @@ final class RegularHeaderTests: XCTestCase {
             ),
             0
         )
-        XCTAssertTrue(root.headerRemnantView?.isHidden ?? true)
+        XCTAssertFalse(hasRemnantProperty(root))
     }
 }

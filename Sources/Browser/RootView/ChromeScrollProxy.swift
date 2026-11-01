@@ -34,6 +34,10 @@ final class ChromeScrollProxy: NSObject, UIScrollViewDelegate {
     /// Previous delegate kept for pass-through of the scroll callbacks.
     weak var forwardedDelegate: any UIScrollViewDelegate?
 
+    /// While true, programmatic offset jumps resync the baseline and still
+    /// reach the previous delegate without moving chrome.
+    var suppressDeltas = false
+
     private var lastOffsetY: CGFloat?
 
     func attach(to scrollView: UIScrollView) {
@@ -62,6 +66,8 @@ final class ChromeScrollProxy: NSObject, UIScrollViewDelegate {
         let currentY = scrollView.contentOffset.y
         let change = Self.delta(previousY: lastOffsetY, currentY: currentY)
         lastOffsetY = currentY
+        forwardedDelegate?.scrollViewDidScroll?(scrollView)
+        guard !suppressDeltas else { return }
         if Self.isUserDriven(isDragging: scrollView.isDragging, isDecelerating: scrollView.isDecelerating) {
             if currentY <= 0 {
                 // At the top of content (or during rubber-band overscroll), ensure chrome
@@ -75,6 +81,5 @@ final class ChromeScrollProxy: NSObject, UIScrollViewDelegate {
                 onScrollDelta?(change)
             }
         }
-        forwardedDelegate?.scrollViewDidScroll?(scrollView)
     }
 }

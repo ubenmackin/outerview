@@ -61,11 +61,14 @@ enum RegularHeaderBackground {
 }
 
 /// Regular-width toolbar owning button clusters flanking the shared pill slot.
-/// Shared Contract REGULAR-HEADER: toolbar height TopBarView.barHeight,
-/// strip height TabStripView.stripHeight, remnant height equals toolbar height,
-/// trailing status clearance 96, expanded top inset equals toolbar plus visible strip,
-/// collapsed top inset zero with additionalSafeAreaInsets top equal to remnant,
-/// compact top inset zero with no additional insets.
+/// Toolbar height TopBarView.barHeight, strip height TabStripView.stripHeight,
+/// remnant height equals toolbar height, trailing status clearance 96,
+/// expanded top inset equals toolbar plus visible strip.
+/// Shared Contract REGULAR-COLLAPSE: collapsed keeps topBarView visible with
+/// both stacks plus strip hidden and the pill minified centered in its slot
+/// through slot-scoped centerX plus width constraints; expanded is unchanged;
+/// collapsed top inset equals TopBarView.remnantHeight; additionalSafeArea top
+/// is zero in every placement and state; no remnant view exists anywhere.
 @MainActor
 final class TopBarView: UIView {
     nonisolated static let barHeight: CGFloat = 56
