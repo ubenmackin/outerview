@@ -17,6 +17,10 @@ final class AddressBarView: UIView {
     /// Max width of the minified capsule. The minified pill floats centered
     /// over content, never full width.
     nonisolated static let minifiedMaxWidth: CGFloat = 220
+    nonisolated static let minifiedPillMinWidth: CGFloat = 96
+    /// Padding added to the measured domain width: 16pt content edge padding
+    /// (8pt each side) plus domain stack inset so text never touches the edge.
+    nonisolated static let minifiedWidthPadding: CGFloat = 28
     nonisolated static let downloadRingSize: CGFloat = 24
 
     /// Pure geometry so tests and the frame owner share one source of truth.
@@ -34,6 +38,28 @@ final class AddressBarView: UIView {
     /// Host-only display text; scheme, path, and query never reach the pill.
     nonisolated static func displayHost(for url: URL?) -> String {
         HostFormatter.host(of: url)
+    }
+
+    /// Snug minified capsule width for the regular top toolbar when a URL is
+    /// loaded; falls back to `minifiedMaxWidth` for empty placeholder tabs.
+    func preferredMinifiedWidth(minimumWidth: CGFloat = AddressBarView.minifiedPillMinWidth) -> CGFloat {
+        let host = Self.displayHost(for: currentURL)
+        guard !host.isEmpty else {
+            return Self.minifiedMaxWidth
+        }
+        if let cached = cachedMinifiedWidth,
+           cachedMinifiedHost == host,
+           cachedMinifiedMinimumWidth == minimumWidth
+        {
+            return cached
+        }
+        let fitting = domainStack.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width
+        let padded = ceil(fitting) + Self.minifiedWidthPadding
+        let result = min(Self.minifiedMaxWidth, max(minimumWidth, padded))
+        cachedMinifiedHost = host
+        cachedMinifiedMinimumWidth = minimumWidth
+        cachedMinifiedWidth = result
+        return result
     }
 
     var onPageMenu: (() -> Void)?
@@ -63,6 +89,9 @@ final class AddressBarView: UIView {
     private var isSecure = false
     private var isLoading = false
     private(set) var downloadProgress: Double?
+    private var cachedMinifiedWidth: CGFloat?
+    private var cachedMinifiedHost: String?
+    private var cachedMinifiedMinimumWidth: CGFloat?
 
     private let backgroundEffectView = UIVisualEffectView(effect: GlassEffect.make())
     private let contentStack = UIStackView()
@@ -135,6 +164,7 @@ final class AddressBarView: UIView {
         currentURL = url
         self.isSecure = isSecure
         self.isLoading = isLoading
+        cachedMinifiedWidth = nil
         updateDomain()
         updateAction()
     }
@@ -242,16 +272,28 @@ final class AddressBarView: UIView {
         contentStack.addArrangedSubview(actionButton)
         contentStack.addArrangedSubview(downloadsButton)
         addSubview(contentStack)
+        // Edge case: 999 lets the domain container compress first so the
+        // minified capsule hugs its text instead of breaking constraints.
+        let stackLeading = contentStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8)
+        let stackTrailing = contentStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8)
+        stackLeading.priority = UILayoutPriority(999)
+        stackTrailing.priority = UILayoutPriority(999)
+        let menuWidth = pageMenuButton.widthAnchor.constraint(equalToConstant: 36)
+        let actionWidth = actionButton.widthAnchor.constraint(equalToConstant: 36)
+        let downloadsWidth = downloadsButton.widthAnchor.constraint(equalToConstant: 36)
+        menuWidth.priority = UILayoutPriority(999)
+        actionWidth.priority = UILayoutPriority(999)
+        downloadsWidth.priority = UILayoutPriority(999)
         NSLayoutConstraint.activate([
-            contentStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            contentStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            stackLeading,
+            stackTrailing,
             contentStack.topAnchor.constraint(equalTo: topAnchor),
             contentStack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            pageMenuButton.widthAnchor.constraint(equalToConstant: 36),
+            menuWidth,
             pageMenuButton.heightAnchor.constraint(equalToConstant: 36),
-            actionButton.widthAnchor.constraint(equalToConstant: 36),
+            actionWidth,
             actionButton.heightAnchor.constraint(equalToConstant: 36),
-            downloadsButton.widthAnchor.constraint(equalToConstant: 36),
+            downloadsWidth,
             downloadsButton.heightAnchor.constraint(equalToConstant: 36)
         ])
         domainContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -260,9 +302,19 @@ final class AddressBarView: UIView {
         let tap = UITapGestureRecognizer(target: self, action: #selector(handlePillTap))
         addGestureRecognizer(tap)
 
+        observeContentSizeCategory()
         updatePresentation()
         updateDomain()
         updateAction()
+    }
+
+    private func observeContentSizeCategory() {
+        // Cached width depends on Dynamic Type; refresh it when it changes.
+        _ = registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { @MainActor (owner: AddressBarView, previous: UITraitCollection) in
+            if previous.preferredContentSizeCategory != owner.traitCollection.preferredContentSizeCategory {
+                owner.cachedMinifiedWidth = nil
+            }
+        }
     }
 
     private func updatePresentation() {

@@ -31,21 +31,21 @@ extension ChromePlacementDriven {
     }
 }
 
-/// Single owner for the regular header opaque-vs-translucent switch.
-/// Both `TopBarView` and `TabStripView` delegate here so the collapsed
-/// translucent remnant and the expanded opaque bar can never drift apart.
+/// Single owner for the regular header background. The bar spans edge to
+/// edge with blurred page content behind it in every state.
 @MainActor
 enum RegularHeaderBackground {
-    static func apply(to view: UIView, blurView: UIVisualEffectView, isCollapsed: Bool) {
-        if isCollapsed {
-            view.backgroundColor = .clear
-            view.isOpaque = false
-            blurView.isHidden = false
-        } else {
-            view.backgroundColor = .systemBackground
-            view.isOpaque = true
-            blurView.isHidden = true
+    static func makeBlurEffect() -> UIVisualEffect {
+        UIBlurEffect(style: .systemChromeMaterial)
+    }
+
+    static func apply(to view: UIView, blurView: UIVisualEffectView) {
+        view.backgroundColor = .clear
+        view.isOpaque = false
+        if blurView.effect == nil {
+            blurView.effect = makeBlurEffect()
         }
+        blurView.isHidden = false
     }
 
     static func pinBlur(_ blurView: UIVisualEffectView, in view: UIView) {
@@ -61,35 +61,52 @@ enum RegularHeaderBackground {
 }
 
 /// Regular-width toolbar owning button clusters flanking the shared pill slot.
-/// Toolbar height TopBarView.barHeight, strip height TabStripView.stripHeight,
-/// remnant height equals toolbar height, trailing status clearance 96,
-/// expanded top inset equals toolbar plus visible strip.
-/// Shared Contract REGULAR-COLLAPSE: collapsed keeps topBarView visible with
-/// both stacks plus strip hidden and the pill minified centered in its slot
-/// through slot-scoped centerX plus width constraints; expanded is unchanged;
-/// collapsed top inset equals TopBarView.remnantHeight; additionalSafeArea top
-/// is zero in every placement and state; no remnant view exists anywhere.
+/// The bar spans edge to edge with blurred page content behind it; leading
+/// cluster inset 28, trailing cluster inset 164 (expanding dynamically for
+/// top-right status occlusions), cluster spacing 12.
+/// Expanded bar height is 84 pt and collapses to 48 pt on scroll; expanded
+/// pill caps at 380 centered on the bar; collapsed keeps the mini capsule
+/// centered.
 @MainActor
 final class TopBarView: UIView {
-    nonisolated static let barHeight: CGFloat = 56
-    nonisolated static let horizontalInset: CGFloat = 12
-    nonisolated static let clusterSpacing: CGFloat = 8
-    nonisolated static let trailingClearance: CGFloat = 96
-    nonisolated static var remnantHeight: CGFloat {
-        barHeight
+    nonisolated static let barHeight: CGFloat = 84
+    nonisolated static let remnantHeight: CGFloat = 48
+    nonisolated static let horizontalInset: CGFloat = 28
+    nonisolated static let trailingStatusInset: CGFloat = 164
+    nonisolated static let clusterSpacing: CGFloat = 12
+    nonisolated static let expandedPillMaxWidth: CGFloat = 380
+    nonisolated static var minifiedPillMinWidth: CGFloat {
+        AddressBarView.minifiedPillMinWidth
     }
+
+    nonisolated static let expandedControlVerticalOffset: CGFloat = 4
+    nonisolated static let dynamicInsetMinimumBoundsWidth: CGFloat = 600
+    nonisolated static let minimumSlotContentWidth: CGFloat = 320
 
     let leadingStack = UIStackView()
     let trailingStack = UIStackView()
     let pillSlotView = UIView()
-    private let blurView = UIVisualEffectView(effect: GlassEffect.make())
+    private let blurView = UIVisualEffectView(effect: RegularHeaderBackground.makeBlurEffect())
+
+    private(set) var isCollapsed = false
+    private var barHeightConstraint: NSLayoutConstraint!
+    private var leadingInsetConstraint: NSLayoutConstraint!
+    private var trailingInsetConstraint: NSLayoutConstraint!
+    private var leadingCenterYConstraint: NSLayoutConstraint!
+    private var trailingCenterYConstraint: NSLayoutConstraint!
+    private var slotCenterYConstraint: NSLayoutConstraint!
+    private var slotHeightConstraint: NSLayoutConstraint!
 
     var isBlurVisible: Bool {
         !blurView.isHidden
     }
 
-    func applyHeaderBackground(isCollapsed: Bool) {
-        RegularHeaderBackground.apply(to: self, blurView: blurView, isCollapsed: isCollapsed)
+    var currentHeightConstant: CGFloat {
+        barHeightConstraint.constant
+    }
+
+    func applyHeaderBackground() {
+        RegularHeaderBackground.apply(to: self, blurView: blurView)
     }
 
     override init(frame: CGRect) {
@@ -102,15 +119,64 @@ final class TopBarView: UIView {
         setup()
     }
 
+    override var bounds: CGRect {
+        didSet {
+            if oldValue.size != bounds.size {
+                setNeedsUpdateConstraints()
+            }
+        }
+    }
+
+    override func updateConstraints() {
+        updateHorizontalInsets()
+        super.updateConstraints()
+    }
+
+    func setCollapsed(_ collapsed: Bool) {
+        isCollapsed = collapsed
+        barHeightConstraint.constant = collapsed ? Self.remnantHeight : Self.barHeight
+        let verticalOffset = collapsed ? 0 : Self.expandedControlVerticalOffset
+        leadingCenterYConstraint.constant = verticalOffset
+        trailingCenterYConstraint.constant = verticalOffset
+        slotCenterYConstraint.constant = verticalOffset
+        slotHeightConstraint.constant = collapsed ? AddressBarView.minifiedHeight : AddressBarView.expandedHeight
+        setNeedsUpdateConstraints()
+    }
+
     func setItems(prefix: [RailAction], suffix: [RailAction]) {
         leadingStack.rebuild(with: prefix)
         trailingStack.rebuild(with: suffix)
+        setNeedsUpdateConstraints()
         setNeedsLayout()
+    }
+
+    private func updateHorizontalInsets() {
+        var leading = Self.horizontalInset
+        var trailing = isCollapsed ? Self.horizontalInset : Self.trailingStatusInset
+        if !isCollapsed, bounds.width >= Self.dynamicInsetMinimumBoundsWidth {
+            let barInsets = directionalEdgeInsets(for: .bar(onEdge: NSDirectionalRectEdge.top, extent: Self.barHeight))
+            leading = max(leading, barInsets.leading)
+            trailing = max(trailing, barInsets.trailing)
+            for region in reservedRegions(kind: .occlusion) {
+                if region.frame.minY < Self.barHeight, region.frame.midX > bounds.midX {
+                    let regionTrailing = bounds.width - region.frame.minX
+                    trailing = max(trailing, regionTrailing)
+                }
+            }
+            let maxTrailing = max(Self.trailingStatusInset, bounds.width - leading - Self.minimumSlotContentWidth)
+            trailing = min(trailing, maxTrailing)
+        }
+        if leadingInsetConstraint.constant != leading {
+            leadingInsetConstraint.constant = leading
+        }
+        if trailingInsetConstraint.constant != -trailing {
+            trailingInsetConstraint.constant = -trailing
+        }
     }
 
     private func setup() {
         RegularHeaderBackground.pinBlur(blurView, in: self)
-        applyHeaderBackground(isCollapsed: false)
+        applyHeaderBackground()
         for stack in [leadingStack, trailingStack] {
             stack.axis = .horizontal
             stack.alignment = .center
@@ -120,22 +186,42 @@ final class TopBarView: UIView {
         }
         pillSlotView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(pillSlotView)
+
+        barHeightConstraint = heightAnchor.constraint(equalToConstant: Self.barHeight)
+        leadingInsetConstraint = leadingStack.leadingAnchor.constraint(
+            equalTo: leadingAnchor, constant: Self.horizontalInset
+        )
+        leadingCenterYConstraint = leadingStack.centerYAnchor.constraint(
+            equalTo: centerYAnchor, constant: Self.expandedControlVerticalOffset
+        )
+        trailingInsetConstraint = trailingStack.trailingAnchor.constraint(
+            equalTo: trailingAnchor, constant: -Self.trailingStatusInset
+        )
+        trailingCenterYConstraint = trailingStack.centerYAnchor.constraint(
+            equalTo: centerYAnchor, constant: Self.expandedControlVerticalOffset
+        )
+        slotCenterYConstraint = pillSlotView.centerYAnchor.constraint(
+            equalTo: centerYAnchor, constant: Self.expandedControlVerticalOffset
+        )
+        slotHeightConstraint = pillSlotView.heightAnchor.constraint(
+            equalToConstant: AddressBarView.expandedHeight
+        )
+        slotHeightConstraint.priority = UILayoutPriority(999)
+
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: Self.barHeight),
-            leadingStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.horizontalInset),
-            leadingStack.centerYAnchor.constraint(equalTo: centerYAnchor),
-            trailingStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.horizontalInset),
-            trailingStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            barHeightConstraint,
+            leadingInsetConstraint,
+            leadingCenterYConstraint,
+            trailingInsetConstraint,
+            trailingCenterYConstraint,
             pillSlotView.leadingAnchor.constraint(
                 equalTo: leadingStack.trailingAnchor, constant: Self.clusterSpacing
             ),
             pillSlotView.trailingAnchor.constraint(
                 equalTo: trailingStack.leadingAnchor, constant: -Self.clusterSpacing
             ),
-            pillSlotView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            pillSlotView.heightAnchor.constraint(equalToConstant: AddressBarView.expandedHeight),
-            pillSlotView.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 6),
-            pillSlotView.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -6)
+            slotCenterYConstraint,
+            slotHeightConstraint
         ])
     }
 }

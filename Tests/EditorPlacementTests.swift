@@ -78,7 +78,7 @@ final class EditorPlacementTests: XCTestCase {
     }
 
     func testStaticsMatchRegularHeaderContract() {
-        XCTAssertEqual(TopBarView.barHeight, 56)
+        XCTAssertEqual(TopBarView.barHeight, 84)
         XCTAssertEqual(TabStripView.stripHeight, 44)
         XCTAssertEqual(AddressEditorView.panelMargin, 24)
         XCTAssertEqual(AddressEditorView.panelRadius, 16)

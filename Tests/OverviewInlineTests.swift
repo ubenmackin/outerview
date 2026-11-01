@@ -64,34 +64,54 @@ final class OverviewInlineTests: XCTestCase {
         return (parent, root)
     }
 
-    private func waitForPresented(_ overview: TabOverviewViewController, timeout: TimeInterval = 2.0) -> UIViewController? {
-        let deadline = Date(timeIntervalSinceNow: timeout)
-        while Date() < deadline {
-            if let presented = overview.presentedViewController {
-                return presented
-            }
-            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
-        }
-        return overview.presentedViewController
+    private func isPresentationSettled(_ overview: TabOverviewViewController) -> Bool {
+        guard let presented = overview.presentedViewController else { return false }
+        return !overview.isBeingPresented
+            && !overview.isBeingDismissed
+            && !presented.isBeingPresented
+            && !presented.isBeingDismissed
+            && overview.transitionCoordinator == nil
+            && presented.transitionCoordinator == nil
     }
 
-    private func waitForDismissed(_ overview: TabOverviewViewController, timeout: TimeInterval = 2.0) {
+    private func isDismissalSettled(_ overview: TabOverviewViewController) -> Bool {
+        overview.presentedViewController == nil
+            && !overview.isBeingPresented
+            && !overview.isBeingDismissed
+            && overview.transitionCoordinator == nil
+    }
+
+    private func waitForPresented(_ overview: TabOverviewViewController, timeout: TimeInterval = 5.0) -> UIViewController? {
         let deadline = Date(timeIntervalSinceNow: timeout)
         while Date() < deadline {
-            if overview.presentedViewController == nil {
-                return
+            // Require the presentation transition to finish so a follow-up
+            // dismiss cannot land mid-animation and leave the next present as a no-op.
+            if isPresentationSettled(overview) {
+                return overview.presentedViewController
             }
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
         }
+        return isPresentationSettled(overview) ? overview.presentedViewController : nil
+    }
+
+    private func waitForDismissed(_ overview: TabOverviewViewController, timeout: TimeInterval = 5.0) -> Bool {
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        while Date() < deadline {
+            if isDismissalSettled(overview) {
+                return true
+            }
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        }
+        return isDismissalSettled(overview)
     }
 
     func testStaticsMatchRegularHeaderContract() {
-        XCTAssertEqual(TopBarView.barHeight, 56)
+        XCTAssertEqual(TopBarView.barHeight, 84)
         XCTAssertEqual(TabStripView.stripHeight, 44)
-        XCTAssertEqual(TopBarView.remnantHeight, TopBarView.barHeight)
-        XCTAssertEqual(BrowserRootViewController.regularRemnantHeight, TopBarView.barHeight)
-        XCTAssertEqual(TopBarView.trailingClearance, 96)
-        XCTAssertEqual(BrowserRootViewController.regularTrailingClearance, 96)
+        XCTAssertEqual(TopBarView.remnantHeight, 48)
+        XCTAssertEqual(BrowserRootViewController.regularRemnantHeight, TopBarView.remnantHeight)
+        XCTAssertEqual(TopBarView.trailingStatusInset, 164)
+        XCTAssertEqual(BrowserRootViewController.regularTrailingClearance, 164)
     }
 
     func testInlineBarVisibilityPerPlacement() {
@@ -178,15 +198,15 @@ final class OverviewInlineTests: XCTestCase {
         overview.showGroupsSheet()
         XCTAssertTrue(waitForPresented(overview) is TabGroupsSheetController)
         overview.dismiss(animated: false)
-        waitForDismissed(overview)
+        XCTAssertTrue(waitForDismissed(overview))
         overview.showCloseAllSheet()
         XCTAssertTrue(waitForPresented(overview) is UIAlertController)
         overview.dismiss(animated: false)
-        waitForDismissed(overview)
+        XCTAssertTrue(waitForDismissed(overview))
         overview.promptNewGroupCreation(withTabIDs: [])
         XCTAssertTrue(waitForPresented(overview) is UIAlertController)
         overview.dismiss(animated: false)
-        waitForDismissed(overview)
+        XCTAssertTrue(waitForDismissed(overview))
     }
 
     func testDoneFinishingThroughDelegate() {

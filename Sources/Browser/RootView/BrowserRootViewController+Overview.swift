@@ -35,7 +35,13 @@ extension BrowserRootViewController {
                 selectedGroupID: validFilter
             )
             if chromePlacement == .regular {
+                topBarAnimator?.stopAnimation(false)
+                topBarAnimator?.finishAnimation(at: .current)
+                topBarAnimator = nil
                 updateToolbarVisibility(for: chromeController.state)
+                topBarView.leadingStack.alpha = 1
+                topBarView.trailingStack.alpha = 1
+                refreshStatusBarAppearanceIfNeeded()
             }
             applyOverviewChromeItems()
             bringChromeToFront()

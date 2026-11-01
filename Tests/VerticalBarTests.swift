@@ -22,6 +22,8 @@ final class VerticalBarTests: XCTestCase {
         let fixture = try makeHost()
         XCTAssertTrue(fixture.host.browserRoot === fixture.root)
         XCTAssertTrue(fixture.host.childForPreferredVerticalBarBehavior === fixture.root)
+        XCTAssertTrue(fixture.host.childForStatusBarHidden === fixture.root)
+        XCTAssertTrue(fixture.host.childForStatusBarStyle === fixture.root)
     }
 
     func testHostEmbedsBrowserRootEdgeToEdge() throws {
@@ -70,5 +72,60 @@ final class VerticalBarTests: XCTestCase {
         let url = try XCTUnwrap(URL(string: "https://example.com"))
         coordinator.controller?.openExternalURL(url)
         XCTAssertNotNil(fixture.root.activePage())
+    }
+
+    func testStatusBarHiddenOnlyWhenRegularCollapsed() {
+        let expanded = ChromeState(rail: .visible, pill: .expanded)
+        let collapsed = ChromeState(rail: .hidden, pill: .minified)
+        let editing = ChromeState(rail: .hidden, pill: .editing)
+
+        XCTAssertFalse(
+            BrowserRootViewController.shouldHideStatusBar(
+                for: .compact,
+                state: collapsed,
+                isOverviewVisible: false,
+                isSheetOverlayVisible: false
+            )
+        )
+        XCTAssertFalse(
+            BrowserRootViewController.shouldHideStatusBar(
+                for: .regular,
+                state: expanded,
+                isOverviewVisible: false,
+                isSheetOverlayVisible: false
+            )
+        )
+        XCTAssertTrue(
+            BrowserRootViewController.shouldHideStatusBar(
+                for: .regular,
+                state: collapsed,
+                isOverviewVisible: false,
+                isSheetOverlayVisible: false
+            )
+        )
+        XCTAssertFalse(
+            BrowserRootViewController.shouldHideStatusBar(
+                for: .regular,
+                state: editing,
+                isOverviewVisible: false,
+                isSheetOverlayVisible: false
+            )
+        )
+        XCTAssertFalse(
+            BrowserRootViewController.shouldHideStatusBar(
+                for: .regular,
+                state: collapsed,
+                isOverviewVisible: true,
+                isSheetOverlayVisible: false
+            )
+        )
+        XCTAssertFalse(
+            BrowserRootViewController.shouldHideStatusBar(
+                for: .regular,
+                state: collapsed,
+                isOverviewVisible: false,
+                isSheetOverlayVisible: true
+            )
+        )
     }
 }
