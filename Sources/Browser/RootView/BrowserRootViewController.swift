@@ -108,8 +108,8 @@ final class BrowserRootViewController: UIViewController {
     }
 
     nonisolated static func compensatedOffset(current: CGPoint, oldTop: CGFloat, newTop: CGFloat) -> CGPoint {
-        let shiftedY = current.y + (newTop - oldTop)
-        return CGPoint(x: current.x, y: max(0, shiftedY))
+        let shiftedY = current.y + (oldTop - newTop)
+        return CGPoint(x: current.x, y: max(-newTop, shiftedY))
     }
 
     /// Bounds width the minified capsule measures against. The minified pill

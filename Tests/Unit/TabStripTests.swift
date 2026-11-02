@@ -40,16 +40,40 @@ final class TabStripTests: XCTestCase {
 
     func testStripFixedGeometry() {
         XCTAssertEqual(TabStripView.stripHeight, 44)
-        XCTAssertEqual(TabStripView.cellWidth, 160)
-        XCTAssertEqual(TabStripView.cellHeight, 36)
+        XCTAssertEqual(TabStripView.horizontalInset, 28)
+        XCTAssertEqual(TabStripView.trackHeight, 32)
+        XCTAssertEqual(TabStripView.cellHeight, 32)
+        XCTAssertEqual(TabStripView.minCellWidth, 140)
+        XCTAssertEqual(TabStripView.cellWidth, 140)
         let strip = TabStripView()
         TestWindow.attach(strip)
         XCTAssertEqual(strip.intrinsicContentSize.height, 44)
         let layout = strip.collectionView.collectionViewLayout as? UICollectionViewFlowLayout
         XCTAssertNotNil(layout)
         XCTAssertEqual(layout?.scrollDirection, .horizontal)
-        XCTAssertEqual(layout?.itemSize, CGSize(width: 160, height: 36))
         XCTAssertEqual(strip.newTabButton.accessibilityLabel, "New Tab")
+        XCTAssertTrue(strip.newTabButton.isHidden)
+    }
+
+    func testTabWidthEqualDistributionAcrossAvailableWidth() {
+        // 2 tabs with width 895: index 0 gets 447, index 1 gets 448 (sum = 895)
+        let width0 = TabStripView.tabWidth(at: 0, count: 2, availableWidth: 895)
+        let width1 = TabStripView.tabWidth(at: 1, count: 2, availableWidth: 895)
+        XCTAssertEqual(width0, 447)
+        XCTAssertEqual(width1, 448)
+        XCTAssertEqual(width0 + width1, 895)
+
+        // 3 tabs with width 900: each gets 300
+        let w30 = TabStripView.tabWidth(at: 0, count: 3, availableWidth: 900)
+        let w31 = TabStripView.tabWidth(at: 1, count: 3, availableWidth: 900)
+        let w32 = TabStripView.tabWidth(at: 2, count: 3, availableWidth: 900)
+        XCTAssertEqual(w30, 300)
+        XCTAssertEqual(w31, 300)
+        XCTAssertEqual(w32, 300)
+
+        // 8 tabs with width 895: 895 / 8 = 111.875 < 140 minCellWidth -> clamped to 140 each
+        let w8 = TabStripView.tabWidth(at: 0, count: 8, availableWidth: 895)
+        XCTAssertEqual(w8, 140)
     }
 
     func testStripCellShowsFaviconTitleAndClose() {
@@ -69,6 +93,31 @@ final class TabStripTests: XCTestCase {
         XCTAssertTrue(labels.contains { $0.text == "Example" })
         let buttons: [UIButton] = allSubviews(of: cell)
         XCTAssertTrue(buttons.contains { $0.accessibilityLabel == "Close Tab" })
+        XCTAssertTrue(cell.isCloseButtonVisible)
+    }
+
+    func testActiveTabShowsCloseAndInactiveHidesClose() {
+        let strip = TabStripView()
+        TestWindow.attach(strip)
+        let first = makeItem(title: "Active")
+        let second = makeItem(title: "Inactive")
+        strip.render(tabs: [first, second], selectedID: first.id)
+
+        let activeCell = strip.collectionView.dataSource?.collectionView(
+            strip.collectionView,
+            cellForItemAt: IndexPath(item: 0, section: 0)
+        ) as? TabStripCell
+        let inactiveCell = strip.collectionView.dataSource?.collectionView(
+            strip.collectionView,
+            cellForItemAt: IndexPath(item: 1, section: 0)
+        ) as? TabStripCell
+
+        XCTAssertNotNil(activeCell)
+        XCTAssertNotNil(inactiveCell)
+        XCTAssertTrue(activeCell?.isCloseButtonVisible ?? false)
+        XCTAssertFalse(inactiveCell?.isCloseButtonVisible ?? true)
+        XCTAssertTrue(activeCell?.accessibilityTraits.contains(.selected) ?? false)
+        XCTAssertFalse(inactiveCell?.accessibilityTraits.contains(.selected) ?? true)
     }
 
     func testBelowTwoHiddenRule() throws {

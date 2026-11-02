@@ -165,7 +165,7 @@ final class RegularHeaderTests: XCTestCase {
     func testCompensatedOffsetRoundTrips() {
         let current = CGPoint(x: 0, y: 200)
         let forward = BrowserRootViewController.compensatedOffset(current: current, oldTop: 100, newTop: 0)
-        XCTAssertEqual(forward.y, 100, accuracy: 0.001)
+        XCTAssertEqual(forward.y, 300, accuracy: 0.001)
         XCTAssertEqual(forward.x, current.x, accuracy: 0.001)
         let back = BrowserRootViewController.compensatedOffset(current: forward, oldTop: 0, newTop: 100)
         XCTAssertEqual(back.x, current.x, accuracy: 0.001)
@@ -173,12 +173,24 @@ final class RegularHeaderTests: XCTestCase {
         let unchanged = BrowserRootViewController.compensatedOffset(current: current, oldTop: 84, newTop: 84)
         XCTAssertEqual(unchanged.x, current.x, accuracy: 0.001)
         XCTAssertEqual(unchanged.y, current.y, accuracy: 0.001)
-        let nearTop = BrowserRootViewController.compensatedOffset(
-            current: CGPoint(x: 0, y: 15),
+        let restingCollapse = BrowserRootViewController.compensatedOffset(
+            current: CGPoint(x: 0, y: -TopBarView.barHeight),
             oldTop: TopBarView.barHeight,
             newTop: TopBarView.remnantHeight
         )
-        XCTAssertEqual(nearTop.y, 0, accuracy: 0.001)
+        XCTAssertEqual(restingCollapse.y, -TopBarView.remnantHeight, accuracy: 0.001)
+        let restingExpand = BrowserRootViewController.compensatedOffset(
+            current: CGPoint(x: 0, y: -TopBarView.remnantHeight),
+            oldTop: TopBarView.remnantHeight,
+            newTop: TopBarView.barHeight
+        )
+        XCTAssertEqual(restingExpand.y, -TopBarView.barHeight, accuracy: 0.001)
+        let restingExpandTwoTabs = BrowserRootViewController.compensatedOffset(
+            current: CGPoint(x: 0, y: -TopBarView.remnantHeight),
+            oldTop: TopBarView.remnantHeight,
+            newTop: TopBarView.barHeight + TabStripView.stripHeight
+        )
+        XCTAssertEqual(restingExpandTwoTabs.y, -(TopBarView.barHeight + TabStripView.stripHeight), accuracy: 0.001)
     }
 
     func testPinningConstantsOnRegular() throws {
@@ -374,5 +386,43 @@ final class RegularHeaderTests: XCTestCase {
             0
         )
         XCTAssertFalse(hasRemnantProperty(root))
+    }
+
+    func testContentOffsetRestingTopPreservation() throws {
+        let fixture = try makeRegularRoot(tabCount: 2)
+        let root = fixture.root
+        let url = try XCTUnwrap(URL(string: "https://example.com"))
+        let tab1 = TabRecord(url: url, title: "Example 1", isPrivate: false)
+        let tab2 = TabRecord(url: url, title: "Example 2", isPrivate: false)
+        root.tabs = [tab1, tab2]
+        root.tabPool.create(tab1)
+        root.tabPool.create(tab2)
+        root.selectedTabID = tab1.id
+        root.displaySelectedTabForTest(id: tab1.id)
+        root.applyChromeViews(animated: false)
+        root.view.layoutIfNeeded()
+
+        guard let page = root.peekActivePage() else {
+            XCTFail("Missing active page")
+            return
+        }
+        let webView = page.webView
+        let expandedTop = TopBarView.barHeight + TabStripView.stripHeight
+        XCTAssertEqual(webView.obscuredContentInsets.top, expandedTop)
+        // Resting top is -expandedTop (-128)
+        webView.scrollView.contentOffset = CGPoint(x: 0, y: -expandedTop)
+
+        // Scroll down to collapse chrome
+        scroll(root, delta: 10)
+        XCTAssertEqual(root.chromeController.state.rail, .hidden)
+        let collapsedTop = TopBarView.remnantHeight
+        XCTAssertEqual(webView.obscuredContentInsets.top, collapsedTop)
+        XCTAssertEqual(webView.scrollView.contentOffset.y, -collapsedTop, accuracy: 0.001)
+
+        // Scroll up to reveal chrome
+        scroll(root, delta: -40)
+        XCTAssertEqual(root.chromeController.state.rail, .visible)
+        XCTAssertEqual(webView.obscuredContentInsets.top, expandedTop)
+        XCTAssertEqual(webView.scrollView.contentOffset.y, -expandedTop, accuracy: 0.001)
     }
 }
