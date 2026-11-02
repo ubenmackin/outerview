@@ -56,9 +56,8 @@ schemes:
       config: Debug
     test:
       config: Debug
-      targets:
-        - OuterViewTests
-      # Test-runner log noise filter; print/NSLog/XCTest failures still surface.
-      environmentVariables:
-        OS_ACTIVITY_MODE: disable
-        SO_LOG_LEVEL: off
+      testPlans:
+        - path: Support/TestPlans/OuterView.xctestplan
+          defaultPlan: true
+        - path: Support/TestPlans/OuterViewFast.xctestplan
+          defaultPlan: false

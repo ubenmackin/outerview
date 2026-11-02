@@ -333,9 +333,25 @@ final class SideRailView: UIView {
         setup()
     }
 
+    nonisolated static func expectedStackHeight(itemCount: Int) -> CGFloat {
+        guard itemCount > 0 else { return 0 }
+        return CGFloat(itemCount) * buttonDiameter + CGFloat(itemCount - 1) * spacing
+    }
+
+    private func updateStack(_ stack: UIStackView, with items: [RailAction]) {
+        let targetHeight = Self.expectedStackHeight(itemCount: items.count)
+        if targetHeight > stack.bounds.height {
+            stack.frame.size = CGSize(width: Self.columnWidth, height: targetHeight)
+        }
+        stack.rebuild(with: items)
+        if targetHeight < stack.bounds.height {
+            stack.frame.size = CGSize(width: Self.columnWidth, height: targetHeight)
+        }
+    }
+
     func setItems(prefix: [RailAction], suffix: [RailAction]) {
-        topStack.rebuild(with: prefix)
-        bottomStack.rebuild(with: suffix)
+        updateStack(topStack, with: prefix)
+        updateStack(bottomStack, with: suffix)
         setNeedsLayout()
     }
 

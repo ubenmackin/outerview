@@ -109,6 +109,18 @@ final class HistoryStore {
         }
     }
 
+    func delete(ids: Set<UUID>) throws {
+        guard !ids.isEmpty else { return }
+        for id in ids {
+            var descriptor = FetchDescriptor<HistoryEntry>(predicate: #Predicate { $0.id == id })
+            descriptor.fetchLimit = 1
+            if let found = try context.fetch(descriptor).first {
+                context.delete(found)
+            }
+        }
+        try context.save()
+    }
+
     func clear() throws {
         // Bounded deletes can leave overflow rows when inserts bypass the
         // capped record path, so clear fetches without a limit.

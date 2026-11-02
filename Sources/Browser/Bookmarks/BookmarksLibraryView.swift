@@ -6,7 +6,8 @@
 import os
 import UIKit
 
-/// Full-screen overlay for Bookmarks, Favorites, History, and Reading List library (matching Safari).
+/// Full-screen overlay on compact and native page-sheet content on regular for
+/// Bookmarks, Favorites, History, and Reading List (matching Safari).
 /// UserDefaults keys libraryTab as Int, overviewMode as String, and overviewGroup as String.
 /// Values are read at init and setup and written on every change; private mode is never
 /// written and restores as standard. Unparseable values fall back to bookmarks, standard,
@@ -14,6 +15,7 @@ import UIKit
 @MainActor
 final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     nonisolated static let libraryTabDefaultsKey = "libraryTab"
+    nonisolated static let circleButtonDiameter: CGFloat = 36
 
     nonisolated static func storedTab(defaults: UserDefaults = .standard) -> LibraryTab {
         LibraryTabBar.storedTab(defaults: defaults)
@@ -43,73 +45,86 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         }
     }
 
-    private let doneButton = UIButton(type: .system)
-    private let addButton = UIButton(type: .system)
-    private let editButton = UIButton(type: .system)
-    private let clearButton = UIButton(type: .system)
-    private let menuButton = UIButton(type: .system)
-    private let deleteButton = UIButton(type: .system)
-    private let inlineStack = UIStackView()
-    private var topBarTrailingToHeader: NSLayoutConstraint?
-    private var topBarTrailingToStack: NSLayoutConstraint?
-    private var stackTrailingToDone: NSLayoutConstraint?
-    private var inlineStackCompactTrailing: NSLayoutConstraint?
-    private var inlineStackCompactWidth: NSLayoutConstraint?
+    // MARK: - Regular Safari Sheet Header Controls
+
+    private let regularHeaderRow = UIView()
+    private let leadingTitleStack = UIStackView()
+    private let folderBackButton = AccessibleButton(type: .system)
+    private let sectionTitleLabel = UILabel()
+    private let trailingCircleStack = UIStackView()
+    private let optionsMenuButton = AccessibleButton(type: .system)
+    private let addFolderCircleButton = AccessibleButton(type: .system)
+    private let deleteCircleButton = AccessibleButton(type: .system)
+    private let closeOrDoneCircleButton = AccessibleButton(type: .system)
+
+    private var compactHeaderConstraints: [NSLayoutConstraint] = []
+    private var regularHeaderConstraints: [NSLayoutConstraint] = []
 
     var isDoneVisible: Bool {
-        !doneButton.isHidden
+        chromePlacement == .regular && !regularHeaderRow.isHidden && !closeOrDoneCircleButton.isHidden
+    }
+
+    var isOptionsMenuVisible: Bool {
+        chromePlacement == .regular && !regularHeaderRow.isHidden && !optionsMenuButton.isHidden
+    }
+
+    var currentOptionsMenu: UIMenu? {
+        optionsMenuButton.menu
     }
 
     var isInlineAddVisible: Bool {
-        !addButton.isHidden
-    }
-
-    var isInlineEditVisible: Bool {
-        !editButton.isHidden
-    }
-
-    var isInlineClearVisible: Bool {
-        !clearButton.isHidden
-    }
-
-    var isInlineMenuVisible: Bool {
-        !menuButton.isHidden
+        chromePlacement == .regular && !regularHeaderRow.isHidden && !addFolderCircleButton.isHidden
     }
 
     var isInlineDeleteVisible: Bool {
-        !deleteButton.isHidden
-    }
-
-    var isInlineClearEnabled: Bool {
-        clearButton.isEnabled
+        chromePlacement == .regular && !regularHeaderRow.isHidden && !deleteCircleButton.isHidden
     }
 
     var isInlineDeleteEnabled: Bool {
-        deleteButton.isEnabled
+        deleteCircleButton.isEnabled
     }
 
-    var inlineEditAccessibilityLabel: String? {
-        editButton.accessibilityLabel
+    var isFolderBackVisible: Bool {
+        chromePlacement == .regular && !regularHeaderRow.isHidden && !folderBackButton.isHidden
+    }
+
+    var displayedSectionTitle: String? {
+        sectionTitleLabel.text
+    }
+
+    var closeButtonAccessibilityLabel: String? {
+        closeOrDoneCircleButton.accessibilityLabel
+    }
+
+    var hasAnyVisibleButtonTitle: Bool {
+        let buttons = [
+            folderBackButton,
+            optionsMenuButton,
+            addFolderCircleButton,
+            deleteCircleButton,
+            closeOrDoneCircleButton
+        ]
+        return buttons.contains { !$0.isHidden && !(($0.title(for: .normal) ?? "").isEmpty) }
     }
 
     func performDone() {
-        doneButton.sendActions(for: .touchUpInside)
+        closeOrDoneCircleButton.sendActions(for: .touchUpInside)
     }
 
     func performInlineAdd() {
-        addButton.sendActions(for: .touchUpInside)
+        triggerInlineAdd()
     }
 
     func performInlineToggleEdit() {
-        editButton.sendActions(for: .touchUpInside)
+        triggerInlineToggleEdit()
     }
 
     func performInlineClear() {
-        clearButton.sendActions(for: .touchUpInside)
+        triggerInlineClear()
     }
 
     func performInlineDelete() {
-        deleteButton.sendActions(for: .touchUpInside)
+        triggerInlineDelete()
     }
 
     func performInlineDone() {
@@ -118,15 +133,15 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
 
     private let headerContainer = UIView()
     private let topTabBar: LibraryTabBar
-    private let defaults: UserDefaults
+    let defaults: UserDefaults
 
     private let contentContainer = UIView()
-    private var bookmarksBrowserView: BookmarksBrowserView?
-    private var favoritesGridView: FavoritesGridView?
-    private var historyListView: HistoryListView?
-    private var readingListView: ReadingListView?
+    private(set) var bookmarksBrowserView: BookmarksBrowserView?
+    private(set) var favoritesGridView: FavoritesGridView?
+    private(set) var historyListView: HistoryListView?
+    private(set) var readingListView: ReadingListView?
 
-    private var activeTab: LibraryTab = .bookmarks
+    private(set) var activeTab: LibraryTab = .bookmarks
 
     var currentTab: LibraryTab {
         activeTab
@@ -149,6 +164,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     }
 
     var onReadingListStateChanged: (() -> Void)?
+    var onDidMutateLibraryData: (() -> Void)?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -169,7 +185,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         historyStore: HistoryStore,
         readingListStore: ReadingListStore
     ) {
-        let bookView = BookmarksBrowserView(bookmarkStore: bookmarkStore)
+        let bookView = BookmarksBrowserView(bookmarkStore: bookmarkStore, defaults: defaults)
         bookView.onOpenURL = { [weak self] url in
             self?.onOpenURL?(url)
         }
@@ -178,6 +194,13 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         }
         bookView.onRequestEdit = { [weak self] target in
             self?.onRequestEdit?(target)
+        }
+        bookView.onNavigationStateChanged = { [weak self] in
+            self?.updateInlineCommands()
+        }
+        bookView.onDidMutateBookmarks = { [weak self] in
+            self?.favoritesGridView?.reload()
+            self?.onDidMutateLibraryData?()
         }
         self.bookmarksBrowserView = bookView
 
@@ -193,6 +216,8 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
                     .error("deleteFavorite failed: \(error.localizedDescription, privacy: .public)")
             }
             self?.favoritesGridView?.reload()
+            self?.bookmarksBrowserView?.reload()
+            self?.onDidMutateLibraryData?()
         }
         self.favoritesGridView = favView
 
@@ -200,9 +225,15 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         histView.onOpenURL = { [weak self] url in
             self?.onOpenURL?(url)
         }
+        histView.onStateChanged = { [weak self] in
+            self?.updateInlineCommands()
+        }
+        histView.onDidMutateHistory = { [weak self] in
+            self?.onDidMutateLibraryData?()
+        }
         self.historyListView = histView
 
-        let readingView = ReadingListView(store: readingListStore)
+        let readingView = ReadingListView(store: readingListStore, defaults: defaults)
         readingView.onOpenURL = { [weak self] url in
             self?.onOpenURL?(url)
         }
@@ -221,10 +252,12 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         self.readingListView = readingView
 
         setupContentSubviews()
+        applyChildHeaderVisibility()
         updateVisibleTab()
     }
 
     func open(tab: LibraryTab = .bookmarks) {
+        resetRegularSelectionModes()
         activeTab = tab
         Self.persist(tab: tab, defaults: defaults)
         topTabBar.selectTab(tab, notify: false)
@@ -277,54 +310,116 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
 
     func applyPlacement() {
         let isRegular = chromePlacement == .regular
-        doneButton.isHidden = !isRegular
-        topBarTrailingToHeader?.isActive = !isRegular
-        topBarTrailingToStack?.isActive = isRegular
-        stackTrailingToDone?.isActive = isRegular
-        inlineStackCompactTrailing?.isActive = !isRegular
-        inlineStackCompactWidth?.isActive = !isRegular
+        backgroundColor = isRegular ? .systemGroupedBackground : .systemBackground
+        NSLayoutConstraint.deactivate(isRegular ? compactHeaderConstraints : regularHeaderConstraints)
+        regularHeaderRow.isHidden = !isRegular
+        NSLayoutConstraint.activate(isRegular ? regularHeaderConstraints : compactHeaderConstraints)
+        applyChildHeaderVisibility()
         updateInlineCommands()
     }
 
     func updateInlineCommands() {
-        let isRegular = chromePlacement == .regular
-        guard isRegular else {
-            addButton.isHidden = true
-            editButton.isHidden = true
-            clearButton.isHidden = true
-            menuButton.isHidden = true
-            deleteButton.isHidden = true
-            inlineStack.isHidden = true
+        guard chromePlacement == .regular else {
+            optionsMenuButton.isHidden = true
+            addFolderCircleButton.isHidden = true
+            deleteCircleButton.isHidden = true
+            closeOrDoneCircleButton.isHidden = true
+            folderBackButton.isHidden = true
             return
         }
-        let menu = makeReadingListMenu()
-        inlineMenu = menu
-        inlineStack.isHidden = false
+
+        let readingMenu = makeReadingListMenu()
+        inlineMenu = readingMenu
         let commands = LibraryTabCommands.make(
             for: activeTab,
             isEditingBookmarks: isEditingBookmarks,
             canClearHistory: canClearHistory,
-            isInSelection: activeTab == .readingList && isReadingListInSelectionMode,
-            canDeleteSelection: canDeleteReadingListSelection,
-            hasReadingListMenu: menu != nil
+            isInSelection: isActiveTabInSelectionMode,
+            canDeleteSelection: canDeleteActiveTabSelection,
+            hasReadingListMenu: readingMenu != nil
         )
-        addButton.isHidden = !commands.showsAdd
-        editButton.isHidden = !commands.showsEdit
-        clearButton.isHidden = !commands.showsClear
-        menuButton.isHidden = !commands.showsMenu
-        deleteButton.isHidden = !commands.showsDelete
-        if commands.showsEdit {
-            editButton.setTitle(commands.isEditingBookmarks ? "Done" : "Edit", for: .normal)
-            editButton.accessibilityLabel = commands.isEditingBookmarks ? "Done Editing" : "Edit Bookmarks"
+
+        if activeTab == .bookmarks, let bookmarksBrowserView {
+            sectionTitleLabel.text = bookmarksBrowserView.currentNavigationTitle
+            folderBackButton.isHidden = bookmarksBrowserView.isAtRoot
+            folderBackButton.accessibilityLabel = bookmarksBrowserView.backNavigationAccessibilityLabel
+        } else {
+            sectionTitleLabel.text = activeTab.title
+            folderBackButton.isHidden = true
         }
-        if commands.showsClear {
-            clearButton.isEnabled = commands.canClearHistory
+
+        applyRegularTrailingButtons(for: commands, readingMenu: readingMenu)
+
+        closeOrDoneCircleButton.isHidden = false
+        if commands.isEditingBookmarks {
+            styleAccentCheckButton(closeOrDoneCircleButton, accessibilityLabel: "Done Editing")
+        } else if commands.doneExitsSelection {
+            styleAccentCheckButton(closeOrDoneCircleButton, accessibilityLabel: "Done")
+        } else {
+            styleCloseButton(closeOrDoneCircleButton, accessibilityLabel: "Done")
         }
-        if commands.showsMenu {
-            menuButton.menu = menu
-        }
-        if commands.showsDelete {
-            deleteButton.isEnabled = commands.canDeleteSelection
+    }
+
+    private func applyRegularTrailingButtons(for commands: LibraryTabCommands, readingMenu: UIMenu?) {
+        switch activeTab {
+        case .bookmarks:
+            if commands.showsDelete {
+                optionsMenuButton.isHidden = true
+                optionsMenuButton.menu = nil
+                addFolderCircleButton.isHidden = true
+                deleteCircleButton.isHidden = false
+                deleteCircleButton.isEnabled = commands.canDeleteSelection
+            } else if commands.isEditingBookmarks {
+                optionsMenuButton.isHidden = true
+                optionsMenuButton.menu = nil
+                addFolderCircleButton.isHidden = false
+                addFolderCircleButton.isEnabled = bookmarksBrowserView?.canCreateFolder ?? true
+                deleteCircleButton.isHidden = true
+            } else {
+                optionsMenuButton.menu = makeBookmarksOptionsMenu()
+                optionsMenuButton.accessibilityLabel = "Bookmarks Options"
+                optionsMenuButton.isHidden = false
+                addFolderCircleButton.isHidden = true
+                deleteCircleButton.isHidden = true
+            }
+
+        case .history:
+            addFolderCircleButton.isHidden = true
+            if commands.showsDelete {
+                optionsMenuButton.isHidden = true
+                optionsMenuButton.menu = nil
+                deleteCircleButton.isHidden = false
+                deleteCircleButton.isEnabled = commands.canDeleteSelection
+            } else {
+                optionsMenuButton.menu = makeHistoryOptionsMenu(canClear: commands.canClearHistory)
+                optionsMenuButton.accessibilityLabel = "History Options"
+                optionsMenuButton.isHidden = false
+                deleteCircleButton.isHidden = true
+            }
+
+        case .readingList:
+            addFolderCircleButton.isHidden = true
+            if commands.showsDelete {
+                optionsMenuButton.isHidden = true
+                optionsMenuButton.menu = nil
+                deleteCircleButton.isHidden = false
+                deleteCircleButton.isEnabled = commands.canDeleteSelection
+            } else if commands.showsMenu, let readingMenu {
+                optionsMenuButton.menu = readingMenu
+                optionsMenuButton.accessibilityLabel = "Reading List Options"
+                optionsMenuButton.isHidden = false
+                deleteCircleButton.isHidden = true
+            } else {
+                optionsMenuButton.isHidden = true
+                optionsMenuButton.menu = nil
+                deleteCircleButton.isHidden = true
+            }
+
+        case .favorites:
+            optionsMenuButton.isHidden = true
+            optionsMenuButton.menu = nil
+            addFolderCircleButton.isHidden = true
+            deleteCircleButton.isHidden = true
         }
     }
 
@@ -333,12 +428,17 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     private func setup() {
         backgroundColor = .systemBackground
 
+        regularHeaderRow.translatesAutoresizingMaskIntoConstraints = false
+        regularHeaderRow.isHidden = true
+        addSubview(regularHeaderRow)
+
         headerContainer.translatesAutoresizingMaskIntoConstraints = false
         addSubview(headerContainer)
 
         topTabBar.translatesAutoresizingMaskIntoConstraints = false
         topTabBar.onTabSelected = { [weak self] tab in
             guard let self else { return }
+            self.resetRegularSelectionModes()
             self.activeTab = tab
             Self.persist(tab: tab, defaults: self.defaults)
             self.updateVisibleTab()
@@ -346,139 +446,202 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         }
         headerContainer.addSubview(topTabBar)
 
-        setupActionButtons()
+        setupRegularHeaderControls()
         setupContainersAndConstraints()
-        topBarTrailingToHeader?.isActive = true
         applyPlacement()
     }
 
-    private func setupActionButtons() {
-        addButton.translatesAutoresizingMaskIntoConstraints = false
-        addButton.setTitle("Add", for: .normal)
-        addButton.accessibilityLabel = "New Folder"
-        addButton.addAction(UIAction { [weak self] _ in
-            if let callback = self?.onInlineAddFolder {
-                callback()
-            } else {
-                self?.promptNewFolder()
-            }
+    private func setupRegularHeaderControls() {
+        styleNeutralCircleButton(
+            folderBackButton,
+            symbolName: "chevron.backward",
+            accessibilityLabel: "Back to Bookmarks"
+        )
+        folderBackButton.isHidden = true
+        folderBackButton.addAction(UIAction { [weak self] _ in
+            self?.bookmarksBrowserView?.popNavigation()
         }, for: .touchUpInside)
 
-        editButton.translatesAutoresizingMaskIntoConstraints = false
-        editButton.setTitle("Edit", for: .normal)
-        editButton.accessibilityLabel = "Edit Bookmarks"
-        editButton.addAction(UIAction { [weak self] _ in
-            if let callback = self?.onInlineToggleEdit {
-                callback()
-            } else {
-                self?.toggleBookmarksEdit()
-            }
+        let baseTitleFont = UIFont.systemFont(ofSize: 22, weight: .bold)
+        sectionTitleLabel.font = UIFontMetrics(forTextStyle: .title2).scaledFont(for: baseTitleFont)
+        sectionTitleLabel.adjustsFontForContentSizeCategory = true
+        sectionTitleLabel.textColor = .label
+        sectionTitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        leadingTitleStack.translatesAutoresizingMaskIntoConstraints = false
+        leadingTitleStack.axis = .horizontal
+        leadingTitleStack.alignment = .center
+        leadingTitleStack.spacing = 10
+        leadingTitleStack.addArrangedSubview(folderBackButton)
+        leadingTitleStack.addArrangedSubview(sectionTitleLabel)
+        regularHeaderRow.addSubview(leadingTitleStack)
+
+        styleNeutralCircleButton(
+            optionsMenuButton,
+            symbolName: "ellipsis",
+            accessibilityLabel: "Library Options"
+        )
+        optionsMenuButton.showsMenuAsPrimaryAction = true
+
+        styleNeutralCircleButton(
+            addFolderCircleButton,
+            symbolName: "folder.badge.plus",
+            accessibilityLabel: "New Folder"
+        )
+        addFolderCircleButton.isHidden = true
+        addFolderCircleButton.addAction(UIAction { [weak self] _ in
+            self?.triggerInlineAdd()
         }, for: .touchUpInside)
 
-        clearButton.translatesAutoresizingMaskIntoConstraints = false
-        clearButton.setTitle("Clear", for: .normal)
-        clearButton.accessibilityLabel = "Clear History"
-        clearButton.addAction(UIAction { [weak self] _ in
-            if let callback = self?.onInlineClearHistory {
-                callback()
-            } else {
-                self?.promptClearHistory()
-            }
+        styleNeutralCircleButton(
+            deleteCircleButton,
+            symbolName: "trash",
+            accessibilityLabel: "Delete Selected",
+            tintColor: .systemRed
+        )
+        deleteCircleButton.isHidden = true
+        deleteCircleButton.addAction(UIAction { [weak self] _ in
+            self?.triggerInlineDelete()
         }, for: .touchUpInside)
 
-        menuButton.translatesAutoresizingMaskIntoConstraints = false
-        menuButton.setImage(UIImage(systemName: "ellipsis"), for: .normal)
-        menuButton.accessibilityLabel = "Reading List Options"
-        menuButton.showsMenuAsPrimaryAction = true
-
-        deleteButton.translatesAutoresizingMaskIntoConstraints = false
-        deleteButton.setImage(UIImage(systemName: "trash"), for: .normal)
-        deleteButton.accessibilityLabel = "Delete Selected"
-        deleteButton.addAction(UIAction { [weak self] _ in
-            if let callback = self?.onInlineDelete {
-                callback()
-            } else {
-                self?.deleteReadingListSelectedItems()
-            }
+        styleCloseButton(closeOrDoneCircleButton, accessibilityLabel: "Done")
+        closeOrDoneCircleButton.addAction(UIAction { [weak self] _ in
+            self?.handlePrimaryCloseOrDone()
         }, for: .touchUpInside)
 
-        inlineStack.translatesAutoresizingMaskIntoConstraints = false
-        inlineStack.axis = .horizontal
-        inlineStack.alignment = .center
-        inlineStack.spacing = 8
-        inlineStack.addArrangedSubview(addButton)
-        inlineStack.addArrangedSubview(editButton)
-        inlineStack.addArrangedSubview(clearButton)
-        inlineStack.addArrangedSubview(menuButton)
-        inlineStack.addArrangedSubview(deleteButton)
-        headerContainer.addSubview(inlineStack)
+        trailingCircleStack.translatesAutoresizingMaskIntoConstraints = false
+        trailingCircleStack.axis = .horizontal
+        trailingCircleStack.alignment = .center
+        trailingCircleStack.spacing = 10
+        trailingCircleStack.addArrangedSubview(optionsMenuButton)
+        trailingCircleStack.addArrangedSubview(addFolderCircleButton)
+        trailingCircleStack.addArrangedSubview(deleteCircleButton)
+        trailingCircleStack.addArrangedSubview(closeOrDoneCircleButton)
+        regularHeaderRow.addSubview(trailingCircleStack)
+    }
 
-        doneButton.translatesAutoresizingMaskIntoConstraints = false
-        doneButton.setTitle("Done", for: .normal)
-        doneButton.accessibilityLabel = "Done"
-        doneButton.isHidden = true
-        doneButton.addAction(UIAction { [weak self] _ in
-            guard let self else { return }
-            let commands = LibraryTabCommands.make(
-                for: self.activeTab,
-                isEditingBookmarks: self.isEditingBookmarks,
-                canClearHistory: self.canClearHistory,
-                isInSelection: self.activeTab == .readingList && self.isReadingListInSelectionMode,
-                canDeleteSelection: self.canDeleteReadingListSelection,
-                hasReadingListMenu: self.inlineMenu != nil || self.makeReadingListMenu() != nil
-            )
-            if commands.doneExitsSelection {
-                self.exitReadingListSelectionMode()
-                return
-            }
-            if let inlineDone = self.onInlineDone {
-                inlineDone()
-            } else {
-                self.onDone?()
-            }
-        }, for: .touchUpInside)
-        headerContainer.addSubview(doneButton)
+    private func styleNeutralCircleButton(
+        _ button: UIButton,
+        symbolName: String,
+        accessibilityLabel: String,
+        tintColor: UIColor = .label
+    ) {
+        button.translatesAutoresizingMaskIntoConstraints = false
+        let config = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+        button.setImage(UIImage(systemName: symbolName, withConfiguration: config), for: .normal)
+        button.setTitle(nil, for: .normal)
+        button.tintColor = tintColor
+        button.backgroundColor = .tertiarySystemFill
+        button.layer.cornerRadius = Self.circleButtonDiameter / 2
+        button.clipsToBounds = true
+        button.accessibilityLabel = accessibilityLabel
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: Self.circleButtonDiameter),
+            button.heightAnchor.constraint(equalToConstant: Self.circleButtonDiameter)
+        ])
+    }
+
+    private func styleCloseButton(_ button: UIButton, accessibilityLabel: String) {
+        let config = UIImage.SymbolConfiguration(pointSize: 14, weight: .bold)
+        button.setImage(UIImage(systemName: "xmark", withConfiguration: config), for: .normal)
+        button.setTitle(nil, for: .normal)
+        button.tintColor = .secondaryLabel
+        button.backgroundColor = .tertiarySystemFill
+        button.layer.cornerRadius = Self.circleButtonDiameter / 2
+        button.clipsToBounds = true
+        button.accessibilityLabel = accessibilityLabel
+        if button.constraints.isEmpty {
+            button.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                button.widthAnchor.constraint(equalToConstant: Self.circleButtonDiameter),
+                button.heightAnchor.constraint(equalToConstant: Self.circleButtonDiameter)
+            ])
+        }
+    }
+
+    private func styleAccentCheckButton(_ button: UIButton, accessibilityLabel: String) {
+        let config = UIImage.SymbolConfiguration(pointSize: 15, weight: .bold)
+        button.setImage(UIImage(systemName: "checkmark", withConfiguration: config), for: .normal)
+        button.setTitle(nil, for: .normal)
+        button.tintColor = .white
+        button.backgroundColor = .systemBlue
+        button.layer.cornerRadius = Self.circleButtonDiameter / 2
+        button.clipsToBounds = true
+        button.accessibilityLabel = accessibilityLabel
     }
 
     private func setupContainersAndConstraints() {
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
         addSubview(contentContainer)
 
-        topBarTrailingToHeader = topTabBar.trailingAnchor.constraint(
+        let regLeading = regularHeaderRow.leadingAnchor.constraint(
+            equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 20
+        )
+        regLeading.priority = UILayoutPriority(999)
+        let regTrailing = regularHeaderRow.trailingAnchor.constraint(
+            equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -20
+        )
+        regTrailing.priority = UILayoutPriority(999)
+        let regTabLeading = topTabBar.leadingAnchor.constraint(
+            equalTo: headerContainer.leadingAnchor, constant: 20
+        )
+        regTabLeading.priority = UILayoutPriority(999)
+        let regTabTrailing = topTabBar.trailingAnchor.constraint(
+            equalTo: headerContainer.trailingAnchor, constant: -20
+        )
+        regTabTrailing.priority = UILayoutPriority(999)
+
+        let compactTabLeading = topTabBar.leadingAnchor.constraint(
+            equalTo: headerContainer.leadingAnchor, constant: 16
+        )
+        compactTabLeading.priority = UILayoutPriority(999)
+        let compactTabTrailing = topTabBar.trailingAnchor.constraint(
             equalTo: headerContainer.trailingAnchor, constant: -16
         )
-        topBarTrailingToStack = topTabBar.trailingAnchor.constraint(
-            equalTo: inlineStack.leadingAnchor, constant: -8
+        compactTabTrailing.priority = UILayoutPriority(999)
+
+        compactHeaderConstraints = [
+            headerContainer.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 4),
+            headerContainer.heightAnchor.constraint(equalToConstant: 48),
+            compactTabLeading,
+            compactTabTrailing,
+            contentContainer.topAnchor.constraint(equalTo: headerContainer.bottomAnchor)
+        ]
+
+        let regHeaderHeight = regularHeaderRow.heightAnchor.constraint(equalToConstant: 44)
+        regHeaderHeight.priority = UILayoutPriority(999)
+        let regTabRowHeight = headerContainer.heightAnchor.constraint(equalToConstant: 44)
+        regTabRowHeight.priority = UILayoutPriority(999)
+        let titleSpacing = leadingTitleStack.trailingAnchor.constraint(
+            lessThanOrEqualTo: trailingCircleStack.leadingAnchor, constant: -12
         )
-        stackTrailingToDone = inlineStack.trailingAnchor.constraint(
-            equalTo: doneButton.leadingAnchor, constant: -8
-        )
-        // Compact fallback: the stack is hidden but must keep a defined
-        // horizontal position. Pinning trailing plus a zero width collapses it
-        // without ambiguity while the regular chain is deactivated.
-        inlineStackCompactTrailing = inlineStack.trailingAnchor.constraint(
-            equalTo: headerContainer.trailingAnchor, constant: -16
-        )
-        inlineStackCompactWidth = inlineStack.widthAnchor.constraint(equalToConstant: 0)
+        titleSpacing.priority = UILayoutPriority(999)
+
+        regularHeaderConstraints = [
+            regularHeaderRow.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 14),
+            regLeading,
+            regTrailing,
+            regHeaderHeight,
+            leadingTitleStack.leadingAnchor.constraint(equalTo: regularHeaderRow.leadingAnchor),
+            leadingTitleStack.centerYAnchor.constraint(equalTo: regularHeaderRow.centerYAnchor),
+            trailingCircleStack.trailingAnchor.constraint(equalTo: regularHeaderRow.trailingAnchor),
+            trailingCircleStack.centerYAnchor.constraint(equalTo: regularHeaderRow.centerYAnchor),
+            titleSpacing,
+            headerContainer.topAnchor.constraint(equalTo: regularHeaderRow.bottomAnchor, constant: 8),
+            regTabRowHeight,
+            regTabLeading,
+            regTabTrailing,
+            contentContainer.topAnchor.constraint(equalTo: headerContainer.bottomAnchor, constant: 4)
+        ]
 
         NSLayoutConstraint.activate([
             headerContainer.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor),
             headerContainer.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor),
-            headerContainer.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 4),
-            headerContainer.heightAnchor.constraint(equalToConstant: 48),
-
-            topTabBar.leadingAnchor.constraint(equalTo: headerContainer.leadingAnchor, constant: 16),
             topTabBar.centerYAnchor.constraint(equalTo: headerContainer.centerYAnchor),
             topTabBar.heightAnchor.constraint(equalToConstant: 40),
 
-            inlineStack.centerYAnchor.constraint(equalTo: headerContainer.centerYAnchor),
-
-            doneButton.trailingAnchor.constraint(equalTo: headerContainer.trailingAnchor, constant: -16),
-            doneButton.centerYAnchor.constraint(equalTo: headerContainer.centerYAnchor),
-
             contentContainer.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor),
             contentContainer.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor),
-            contentContainer.topAnchor.constraint(equalTo: headerContainer.bottomAnchor),
             contentContainer.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
     }
@@ -513,6 +676,13 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
             view.topAnchor.constraint(equalTo: parent.topAnchor),
             view.bottomAnchor.constraint(equalTo: parent.bottomAnchor)
         ])
+    }
+
+    private func applyChildHeaderVisibility() {
+        let hideInnerHeaders = chromePlacement == .regular
+        bookmarksBrowserView?.setHeaderBarHidden(hideInnerHeaders)
+        historyListView?.setHeaderBarHidden(hideInnerHeaders)
+        readingListView?.setHeaderBarHidden(hideInnerHeaders)
     }
 
     private func updateVisibleTab() {

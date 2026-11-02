@@ -56,6 +56,25 @@ struct LibraryTabCommands: Sendable, Equatable {
         hasReadingListMenu: Bool
     ) -> LibraryTabCommands {
         switch tab {
+        case .bookmarks, .history, .readingList:
+            if isInSelection {
+                return LibraryTabCommands(
+                    showsAdd: false,
+                    showsEdit: false,
+                    isEditingBookmarks: false,
+                    showsClear: false,
+                    canClearHistory: false,
+                    showsMenu: false,
+                    showsDelete: true,
+                    canDeleteSelection: canDeleteSelection,
+                    doneExitsSelection: true
+                )
+            }
+        case .favorites:
+            break
+        }
+
+        switch tab {
         case .bookmarks:
             return LibraryTabCommands(
                 showsAdd: true,
@@ -81,19 +100,6 @@ struct LibraryTabCommands: Sendable, Equatable {
                 doneExitsSelection: false
             )
         case .readingList:
-            if isInSelection {
-                return LibraryTabCommands(
-                    showsAdd: false,
-                    showsEdit: false,
-                    isEditingBookmarks: false,
-                    showsClear: false,
-                    canClearHistory: false,
-                    showsMenu: false,
-                    showsDelete: true,
-                    canDeleteSelection: canDeleteSelection,
-                    doneExitsSelection: true
-                )
-            }
             return LibraryTabCommands(
                 showsAdd: false,
                 showsEdit: false,

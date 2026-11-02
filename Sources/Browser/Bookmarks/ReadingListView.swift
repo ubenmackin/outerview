@@ -212,6 +212,8 @@ final class ReadingListView: UIView {
     }
 
     private let headerBar = UIView()
+    private var headerTopConstraint: NSLayoutConstraint!
+    private var headerHeightConstraint: NSLayoutConstraint!
     private let titleLabel = UILabel()
     private let tableView = UITableView(frame: .zero, style: .insetGrouped)
     private let emptyLabel = UILabel()
@@ -220,6 +222,12 @@ final class ReadingListView: UIView {
     )
 
     private let searchTuck = LibrarySearchTuckController()
+
+    func setHeaderBarHidden(_ hidden: Bool) {
+        headerBar.isHidden = hidden
+        headerTopConstraint.constant = hidden ? 0 : 4
+        headerHeightConstraint.constant = hidden ? 0 : 40
+    }
 
     nonisolated static let displayModeDefaultsKey = "readingList.displayMode"
     nonisolated static let filterModeDefaultsKey = "readingList.filterMode"
@@ -465,11 +473,14 @@ final class ReadingListView: UIView {
             }
         )
 
+        headerTopConstraint = headerBar.topAnchor.constraint(equalTo: topAnchor, constant: 4)
+        headerHeightConstraint = headerBar.heightAnchor.constraint(equalToConstant: 40)
+
         NSLayoutConstraint.activate([
             headerBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             headerBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            headerBar.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            headerBar.heightAnchor.constraint(equalToConstant: 40),
+            headerTopConstraint,
+            headerHeightConstraint,
 
             titleLabel.centerXAnchor.constraint(equalTo: headerBar.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),

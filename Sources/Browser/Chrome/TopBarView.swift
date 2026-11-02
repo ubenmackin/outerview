@@ -86,9 +86,11 @@ final class TopBarView: UIView {
     let leadingStack = UIStackView()
     let trailingStack = UIStackView()
     let pillSlotView = UIView()
+    var onSlotWidthChanged: (() -> Void)?
     private let blurView = UIVisualEffectView(effect: RegularHeaderBackground.makeBlurEffect())
 
     private(set) var isCollapsed = false
+    private var lastNotifiedSlotWidth: CGFloat = -1
     private var barHeightConstraint: NSLayoutConstraint!
     private var leadingInsetConstraint: NSLayoutConstraint!
     private var trailingInsetConstraint: NSLayoutConstraint!
@@ -132,6 +134,15 @@ final class TopBarView: UIView {
         super.updateConstraints()
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let slotWidth = pillSlotView.bounds.width
+        if abs(slotWidth - lastNotifiedSlotWidth) > 0.01 {
+            lastNotifiedSlotWidth = slotWidth
+            onSlotWidthChanged?()
+        }
+    }
+
     func setCollapsed(_ collapsed: Bool) {
         isCollapsed = collapsed
         barHeightConstraint.constant = collapsed ? Self.remnantHeight : Self.barHeight
@@ -140,6 +151,7 @@ final class TopBarView: UIView {
         trailingCenterYConstraint.constant = verticalOffset
         slotCenterYConstraint.constant = verticalOffset
         slotHeightConstraint.constant = collapsed ? AddressBarView.minifiedHeight : AddressBarView.expandedHeight
+        updateHorizontalInsets()
         setNeedsUpdateConstraints()
     }
 

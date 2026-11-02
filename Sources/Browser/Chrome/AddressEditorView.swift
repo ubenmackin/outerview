@@ -58,16 +58,21 @@ struct SuggestionRowViewModel: Hashable, Sendable {
 }
 
 /// Address editor surface:
-/// - Initial tap: text field focuses over the underlying unified Start Page.
-/// - Typing text: reveals live suggestions in `suggestionsTableView`.
-/// - Bottom bar: Full-width capsule field docked above the keyboard. Exit/close is handled by the side rail Done button.
-/// - Regular: dropdown panel below the toolbar over heavy-blur dim with inline blue-check Done.
+/// - Compact: text field focuses over the underlying unified Start Page inside a
+///   full-width capsule docked above `keyboardLayoutGuide`; exit is handled by the side rail Done button.
+/// - Regular: floating translucent blurred popover card emerging from the top address bar
+///   over the untouched live webpage and top bar, showing Favorites when idle and live
+///   suggestions while typing; tapping outside the card closes it.
 @MainActor
 final class AddressEditorView: UIView, ChromePlacementDriven {
     nonisolated static let fieldHeight: CGFloat = 44
+    nonisolated static let regularHeaderHeight: CGFloat = 56
     nonisolated static let suggestionsMaxHeight: CGFloat = 420
+    nonisolated static let panelMaxWidth: CGFloat = 600
+    nonisolated static let panelPreferredHeight: CGFloat = 520
     nonisolated static let panelMargin: CGFloat = 24
-    nonisolated static let panelRadius: CGFloat = 16
+    nonisolated static let panelTopOffset: CGFloat = 18
+    nonisolated static let panelRadius: CGFloat = 28
     nonisolated static var dimAlpha: CGFloat {
         SheetDim.alpha
     }
@@ -83,40 +88,60 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     }
 
     var onSelectSuggestion: ((Suggestion) -> Void)?
+    var onSelectFavorite: ((URL) -> Void)?
     var onSubmit: ((String) -> Void)?
     var onTextChanged: ((String) -> Void)?
     var onDone: (() -> Void)?
 
     private(set) var suggestions: [Suggestion] = []
+    private(set) var favorites: [Bookmark] = []
+    private var activePageURL: URL?
     private var searchEngine: SearchEngine = .google
 
-    // MARK: - Content Area
+    // MARK: - Compact Hierarchy
 
     private let contentAreaContainer = UIView()
     private let suggestionsTableView = UITableView(frame: .zero, style: .plain)
-
-    // MARK: - Bottom Bar (docked above keyboard)
-
     private let bottomBarContainer = UIView()
-    private let dimView = UIView()
-    private let dimBlurView = UIVisualEffectView(effect: GlassEffect.make())
-    private let dimOverlayView = UIView()
     private let fieldRowStack = UIStackView()
     private let capsuleView = UIView()
     private let capsuleBackground = UIVisualEffectView(effect: GlassEffect.make())
     private let textField = UITextField()
-    private let doneButton = UIButton(type: .system)
     private let inputErrorLabel = UILabel()
+
+    // MARK: - Regular Floating Popover Hierarchy
+
+    private let dismissBackdropControl = UIControl()
+    private let regularCardShadowView = UIView()
+    private let regularCardView = UIView()
+    private let regularBlurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
+    private let regularHeaderRow = UIView()
+    private let leadingIconBadge = UIView()
+    private let leadingIconImageView = UIImageView()
+    private let regularErrorLabel = UILabel()
+    private let regularHeaderDivider = UIView()
+    private let regularBodyContainer = UIView()
+    private let regularFavoritesContainer = UIView()
+    private let favoritesHeaderLabel = UILabel()
+    private let favoritesCollectionView: UICollectionView
+    private let favoritesFlowLayout = UICollectionViewFlowLayout()
+    private let favoritesEmptyLabel = UILabel()
 
     private var compactConstraints: [NSLayoutConstraint] = []
     private var regularConstraints: [NSLayoutConstraint] = []
+    private var compactTextFieldConstraints: [NSLayoutConstraint] = []
+    private var regularTextFieldConstraints: [NSLayoutConstraint] = []
+    private var compactTableConstraints: [NSLayoutConstraint] = []
+    private var regularTableConstraints: [NSLayoutConstraint] = []
     private var suggestionsMaxHeightConstraint: NSLayoutConstraint!
     private var inputErrorTopConstraint: NSLayoutConstraint!
     private var inputErrorBottomConstraint: NSLayoutConstraint!
     private var inputErrorHeightConstraint: NSLayoutConstraint!
-    private var regularBarTopConstraint: NSLayoutConstraint?
-    /// Injected toolbar reference so the regular panel tracks the toolbar's
-    /// bottom edge instead of assuming safeArea.top equals the toolbar origin.
+    private var regularErrorHeightConstraint: NSLayoutConstraint!
+    private var regularCardTopConstraint: NSLayoutConstraint?
+
+    /// Injected toolbar reference so the regular popover aligns directly with the
+    /// toolbar's top edge when mounted in the browser hierarchy.
     weak var toolbarAnchorView: UIView? {
         didSet {
             if oldValue !== toolbarAnchorView {
@@ -129,13 +154,41 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     private var isTypingMode: Bool = false
 
     override init(frame: CGRect) {
+        favoritesFlowLayout.scrollDirection = .vertical
+        favoritesFlowLayout.minimumInteritemSpacing = 16
+        favoritesFlowLayout.minimumLineSpacing = 16
+        favoritesFlowLayout.sectionInset = UIEdgeInsets(top: 12, left: 24, bottom: 20, right: 24)
+        favoritesFlowLayout.itemSize = CGSize(
+            width: FavoriteTileCell.tileLength,
+            height: FavoriteTileCell.cellHeight
+        )
+        favoritesCollectionView = UICollectionView(frame: .zero, collectionViewLayout: favoritesFlowLayout)
         super.init(frame: frame)
         setup()
     }
 
     required init?(coder: NSCoder) {
+        favoritesFlowLayout.scrollDirection = .vertical
+        favoritesFlowLayout.minimumInteritemSpacing = 16
+        favoritesFlowLayout.minimumLineSpacing = 16
+        favoritesFlowLayout.sectionInset = UIEdgeInsets(top: 12, left: 24, bottom: 20, right: 24)
+        favoritesFlowLayout.itemSize = CGSize(
+            width: FavoriteTileCell.tileLength,
+            height: FavoriteTileCell.cellHeight
+        )
+        favoritesCollectionView = UICollectionView(frame: .zero, collectionViewLayout: favoritesFlowLayout)
         super.init(coder: coder)
         setup()
+    }
+
+    override var keyCommands: [UIKeyCommand]? {
+        [
+            UIKeyCommand(
+                input: UIKeyCommand.inputEscape,
+                modifierFlags: [],
+                action: #selector(handleDone)
+            )
+        ]
     }
 
     override func layoutSubviews() {
@@ -144,6 +197,13 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         capsuleBackground.layer.cornerRadius = capsuleBackground.bounds.height / 2
         if #available(iOS 26.0, *) {
             capsuleBackground.cornerConfiguration = .capsule()
+        }
+        if chromePlacement == .regular {
+            regularCardShadowView.layer.shadowPath = UIBezierPath(
+                roundedRect: regularCardShadowView.bounds,
+                cornerRadius: Self.panelRadius
+            ).cgPath
+            updateFavoritesItemSize()
         }
     }
 
@@ -154,9 +214,7 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let hit = super.hitTest(point, with: event)
-        // When suggestions are hidden, allow taps in the empty content area
-        // to pass through to the underlying Start Page so tiles remain interactive.
-        if hit === contentAreaContainer, suggestionsTableView.isHidden {
+        if chromePlacement == .compact, hit === contentAreaContainer, suggestionsTableView.isHidden {
             return nil
         }
         return hit
@@ -181,16 +239,34 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     }
 
     func reloadContent() {
+        favoritesCollectionView.reloadData()
+        updateRegularLeadingIcon()
         updateVisibleContent()
     }
 
-    func configure(text: String?, suggestions: [Suggestion], engine: SearchEngine) {
+    func configure(
+        text: String?,
+        suggestions: [Suggestion],
+        engine: SearchEngine,
+        activeURL: URL? = nil,
+        favorites: [Bookmark] = []
+    ) {
         searchEngine = engine
+        activePageURL = activeURL
+        self.favorites = favorites
         initialLoadedText = text ?? ""
         textField.text = text
         isTypingMode = false
         clearInputError()
+        favoritesCollectionView.reloadData()
+        updateRegularLeadingIcon()
         setSuggestions(suggestions)
+        updateVisibleContent()
+    }
+
+    func setFavorites(_ favorites: [Bookmark]) {
+        self.favorites = favorites
+        favoritesCollectionView.reloadData()
         updateVisibleContent()
     }
 
@@ -203,29 +279,42 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     func showInputError(_ message: String) {
         inputErrorLabel.text = message
         inputErrorLabel.isHidden = false
+        regularErrorLabel.text = message
+        regularErrorLabel.isHidden = false
         updateInputErrorConstraints()
+        updateVisibleContent()
         UIAccessibility.post(notification: .announcement, argument: message)
     }
 
     func clearInputError() {
         inputErrorLabel.text = nil
         inputErrorLabel.isHidden = true
+        regularErrorLabel.text = nil
+        regularErrorLabel.isHidden = true
         updateInputErrorConstraints()
+        updateVisibleContent()
     }
 
     var fieldText: String {
         textField.text ?? ""
     }
 
-    /// Behavioural placement state for tests: dim visibility, suggestion
-    /// visibility, and which layout set is active. Read-only so tests verify
-    /// behaviour without mutating layout internals.
+    /// Neither placement dims or blurs the background behind the editor:
+    /// compact reveals the Start Page, regular keeps the live page crisp.
     var isDimVisible: Bool {
-        !dimView.isHidden && !isHidden
+        false
     }
 
     var areSuggestionsVisible: Bool {
         !suggestionsTableView.isHidden
+    }
+
+    var areFavoritesVisible: Bool {
+        chromePlacement == .regular && !regularCardShadowView.isHidden && !regularFavoritesContainer.isHidden
+    }
+
+    var isOutsideDismissEnabled: Bool {
+        chromePlacement == .regular && !dismissBackdropControl.isHidden && dismissBackdropControl.isUserInteractionEnabled
     }
 
     var isCompactLayoutActive: Bool {
@@ -244,12 +333,18 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         suggestionsMaxHeightConstraint?.constant ?? Self.suggestionsMaxHeight
     }
 
+    /// Neither placement renders an inline blue checkmark button; compact uses
+    /// the side rail Done button and regular dismisses via outside tap or Escape.
     var isDoneVisible: Bool {
-        !doneButton.isHidden
+        false
     }
 
     func performDone() {
-        doneButton.sendActions(for: .touchUpInside)
+        handleDone()
+    }
+
+    func performOutsideTap() {
+        dismissBackdropControl.sendActions(for: .touchUpInside)
     }
 
     var isClearWhileEditing: Bool {
@@ -257,102 +352,68 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     }
 
     var panelFrame: CGRect {
-        bottomBarContainer.frame
+        chromePlacement == .regular ? regularCardShadowView.frame : bottomBarContainer.frame
     }
 
     var panelCornerRadius: CGFloat {
-        bottomBarContainer.layer.cornerRadius
-    }
-
-    var isDimInteractionDisabled: Bool {
-        !dimView.isUserInteractionEnabled
-    }
-
-    override var isHidden: Bool {
-        didSet {
-            updateDimVisibility()
-        }
+        chromePlacement == .regular ? regularCardView.layer.cornerRadius : bottomBarContainer.layer.cornerRadius
     }
 
     func applyPlacement() {
         refreshRegularTopConstraint()
         let isRegular = chromePlacement == .regular
-        NSLayoutConstraint.deactivate(isRegular ? compactConstraints : regularConstraints)
+
+        NSLayoutConstraint.deactivate(compactConstraints)
+        NSLayoutConstraint.deactivate(regularConstraints)
+        NSLayoutConstraint.deactivate(compactTextFieldConstraints)
+        NSLayoutConstraint.deactivate(regularTextFieldConstraints)
+        NSLayoutConstraint.deactivate(compactTableConstraints)
+        NSLayoutConstraint.deactivate(regularTableConstraints)
+
+        let targetFieldParent: UIView = isRegular ? regularHeaderRow : capsuleView
+        if textField.superview !== targetFieldParent {
+            textField.removeFromSuperview()
+            targetFieldParent.addSubview(textField)
+        }
+
+        let targetTableParent: UIView = isRegular ? regularBodyContainer : contentAreaContainer
+        if suggestionsTableView.superview !== targetTableParent {
+            suggestionsTableView.removeFromSuperview()
+            targetTableParent.addSubview(suggestionsTableView)
+        }
+
+        contentAreaContainer.isHidden = isRegular
+        bottomBarContainer.isHidden = isRegular
+        dismissBackdropControl.isHidden = !isRegular
+        regularCardShadowView.isHidden = !isRegular
+
+        suggestionsTableView.backgroundColor = isRegular ? .clear : .systemBackground
+
         NSLayoutConstraint.activate(isRegular ? regularConstraints : compactConstraints)
-        updateDimVisibility()
-        doneButton.isHidden = !isRegular
-        bottomBarContainer.backgroundColor = isRegular ? .systemBackground : .clear
-        bottomBarContainer.layer.cornerRadius = isRegular ? Self.panelRadius : 0
-        bottomBarContainer.clipsToBounds = isRegular
+        NSLayoutConstraint.activate(isRegular ? regularTextFieldConstraints : compactTextFieldConstraints)
+        NSLayoutConstraint.activate(isRegular ? regularTableConstraints : compactTableConstraints)
+
+        updateRegularLeadingIcon()
         updateVisibleContent()
     }
 
-    private func updateDimVisibility() {
-        let isRegular = chromePlacement == .regular
-        dimView.isHidden = !(isRegular && !isHidden)
-        if isRegular, !dimView.isHidden {
-            sendSubviewToBack(dimView)
-        }
-    }
-
-    // MARK: - Private
+    // MARK: - Private Setup
 
     private func setup() {
         backgroundColor = .clear
-        setupDimHierarchy()
-        setupContentHierarchy()
-        setupCapsuleHierarchy()
-        setupTextFieldHierarchy()
-        setupDoneHierarchy()
+        setupCompactHierarchy()
+        setupRegularHierarchy()
+        setupSharedInputs()
         setupStaticConstraints()
         setupPlacementConstraints()
+        applyPlacement()
     }
 
-    private func setupDimHierarchy() {
-        dimView.translatesAutoresizingMaskIntoConstraints = false
-        dimView.backgroundColor = .clear
-        dimView.isHidden = true
-        dimView.isUserInteractionEnabled = false
-        addSubview(dimView)
-
-        dimBlurView.translatesAutoresizingMaskIntoConstraints = false
-        dimBlurView.isUserInteractionEnabled = false
-        dimView.addSubview(dimBlurView)
-
-        dimOverlayView.translatesAutoresizingMaskIntoConstraints = false
-        dimOverlayView.backgroundColor = UIColor.black.withAlphaComponent(Self.dimAlpha)
-        dimOverlayView.isUserInteractionEnabled = false
-        dimView.addSubview(dimOverlayView)
-
-        NSLayoutConstraint.activate([
-            dimBlurView.leadingAnchor.constraint(equalTo: dimView.leadingAnchor),
-            dimBlurView.trailingAnchor.constraint(equalTo: dimView.trailingAnchor),
-            dimBlurView.topAnchor.constraint(equalTo: dimView.topAnchor),
-            dimBlurView.bottomAnchor.constraint(equalTo: dimView.bottomAnchor),
-            dimOverlayView.leadingAnchor.constraint(equalTo: dimView.leadingAnchor),
-            dimOverlayView.trailingAnchor.constraint(equalTo: dimView.trailingAnchor),
-            dimOverlayView.topAnchor.constraint(equalTo: dimView.topAnchor),
-            dimOverlayView.bottomAnchor.constraint(equalTo: dimView.bottomAnchor)
-        ])
-    }
-
-    private func setupContentHierarchy() {
+    private func setupCompactHierarchy() {
         contentAreaContainer.translatesAutoresizingMaskIntoConstraints = false
         contentAreaContainer.backgroundColor = .clear
         addSubview(contentAreaContainer)
 
-        suggestionsTableView.translatesAutoresizingMaskIntoConstraints = false
-        suggestionsTableView.backgroundColor = .systemBackground
-        suggestionsTableView.keyboardDismissMode = .onDrag
-        suggestionsTableView.rowHeight = UITableView.automaticDimension
-        suggestionsTableView.estimatedRowHeight = 60
-        suggestionsTableView.dataSource = self
-        suggestionsTableView.delegate = self
-        suggestionsTableView.register(UITableViewCell.self, forCellReuseIdentifier: "SuggestionCell")
-        contentAreaContainer.addSubview(suggestionsTableView)
-    }
-
-    private func setupCapsuleHierarchy() {
         bottomBarContainer.translatesAutoresizingMaskIntoConstraints = false
         bottomBarContainer.backgroundColor = .clear
         bottomBarContainer.layer.cornerRadius = 0
@@ -377,9 +438,133 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
             capsuleBackground.topAnchor.constraint(equalTo: capsuleView.topAnchor),
             capsuleBackground.bottomAnchor.constraint(equalTo: capsuleView.bottomAnchor)
         ])
+
+        let capsuleTap = UITapGestureRecognizer(target: self, action: #selector(handleCapsuleTap))
+        capsuleView.addGestureRecognizer(capsuleTap)
+        fieldRowStack.addArrangedSubview(capsuleView)
+
+        inputErrorLabel.translatesAutoresizingMaskIntoConstraints = false
+        inputErrorLabel.font = .preferredFont(forTextStyle: .footnote)
+        inputErrorLabel.adjustsFontForContentSizeCategory = true
+        inputErrorLabel.textColor = .systemRed
+        inputErrorLabel.numberOfLines = 2
+        inputErrorLabel.isHidden = true
+        bottomBarContainer.addSubview(inputErrorLabel)
     }
 
-    private func setupTextFieldHierarchy() {
+    private func setupRegularHierarchy() {
+        dismissBackdropControl.translatesAutoresizingMaskIntoConstraints = false
+        dismissBackdropControl.backgroundColor = .clear
+        dismissBackdropControl.isAccessibilityElement = false
+        dismissBackdropControl.isHidden = true
+        dismissBackdropControl.addAction(UIAction { [weak self] _ in
+            self?.handleDone()
+        }, for: .touchUpInside)
+        addSubview(dismissBackdropControl)
+
+        regularCardShadowView.translatesAutoresizingMaskIntoConstraints = false
+        regularCardShadowView.backgroundColor = .clear
+        regularCardShadowView.layer.shadowColor = UIColor.black.cgColor
+        regularCardShadowView.layer.shadowOpacity = 0.28
+        regularCardShadowView.layer.shadowRadius = 28
+        regularCardShadowView.layer.shadowOffset = CGSize(width: 0, height: 12)
+        regularCardShadowView.isHidden = true
+        addSubview(regularCardShadowView)
+
+        regularCardView.translatesAutoresizingMaskIntoConstraints = false
+        regularCardView.backgroundColor = .clear
+        regularCardView.clipsToBounds = true
+        regularCardView.layer.cornerRadius = Self.panelRadius
+        regularCardView.layer.cornerCurve = .continuous
+        regularCardView.layer.borderWidth = 0.5
+        regularCardView.layer.borderColor = UIColor.white.withAlphaComponent(0.16).cgColor
+        regularCardShadowView.addSubview(regularCardView)
+
+        regularBlurView.translatesAutoresizingMaskIntoConstraints = false
+        regularBlurView.isUserInteractionEnabled = false
+        regularCardView.addSubview(regularBlurView)
+
+        regularHeaderRow.translatesAutoresizingMaskIntoConstraints = false
+        regularHeaderRow.backgroundColor = .clear
+        let headerTap = UITapGestureRecognizer(target: self, action: #selector(handleCapsuleTap))
+        regularHeaderRow.addGestureRecognizer(headerTap)
+        regularCardView.addSubview(regularHeaderRow)
+
+        leadingIconBadge.translatesAutoresizingMaskIntoConstraints = false
+        leadingIconBadge.backgroundColor = .tertiarySystemFill
+        leadingIconBadge.layer.cornerRadius = 14
+        leadingIconBadge.clipsToBounds = true
+        leadingIconBadge.isUserInteractionEnabled = false
+        regularHeaderRow.addSubview(leadingIconBadge)
+
+        leadingIconImageView.translatesAutoresizingMaskIntoConstraints = false
+        leadingIconImageView.contentMode = .scaleAspectFit
+        leadingIconImageView.tintColor = .secondaryLabel
+        leadingIconImageView.layer.cornerRadius = 10
+        leadingIconImageView.clipsToBounds = true
+        leadingIconBadge.addSubview(leadingIconImageView)
+
+        regularErrorLabel.translatesAutoresizingMaskIntoConstraints = false
+        regularErrorLabel.font = .preferredFont(forTextStyle: .footnote)
+        regularErrorLabel.adjustsFontForContentSizeCategory = true
+        regularErrorLabel.textColor = .systemRed
+        regularErrorLabel.numberOfLines = 2
+        regularErrorLabel.isHidden = true
+        regularCardView.addSubview(regularErrorLabel)
+
+        regularHeaderDivider.translatesAutoresizingMaskIntoConstraints = false
+        regularHeaderDivider.backgroundColor = UIColor.separator.withAlphaComponent(0.45)
+        regularHeaderDivider.isHidden = true
+        regularCardView.addSubview(regularHeaderDivider)
+
+        regularBodyContainer.translatesAutoresizingMaskIntoConstraints = false
+        regularBodyContainer.backgroundColor = .clear
+        regularCardView.addSubview(regularBodyContainer)
+
+        regularFavoritesContainer.translatesAutoresizingMaskIntoConstraints = false
+        regularFavoritesContainer.backgroundColor = .clear
+        regularBodyContainer.addSubview(regularFavoritesContainer)
+
+        favoritesHeaderLabel.translatesAutoresizingMaskIntoConstraints = false
+        favoritesHeaderLabel.text = "Favorites"
+        favoritesHeaderLabel.font = .preferredFont(forTextStyle: .headline)
+        favoritesHeaderLabel.adjustsFontForContentSizeCategory = true
+        favoritesHeaderLabel.textColor = .label
+        regularFavoritesContainer.addSubview(favoritesHeaderLabel)
+
+        favoritesCollectionView.translatesAutoresizingMaskIntoConstraints = false
+        favoritesCollectionView.backgroundColor = .clear
+        favoritesCollectionView.alwaysBounceVertical = true
+        favoritesCollectionView.keyboardDismissMode = .onDrag
+        favoritesCollectionView.dataSource = self
+        favoritesCollectionView.delegate = self
+        favoritesCollectionView.register(
+            FavoriteTileCell.self,
+            forCellWithReuseIdentifier: FavoriteTileCell.reuseIdentifier
+        )
+        regularFavoritesContainer.addSubview(favoritesCollectionView)
+
+        favoritesEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        favoritesEmptyLabel.text = "Favorites you add appear here"
+        favoritesEmptyLabel.font = .preferredFont(forTextStyle: .subheadline)
+        favoritesEmptyLabel.adjustsFontForContentSizeCategory = true
+        favoritesEmptyLabel.textColor = .secondaryLabel
+        favoritesEmptyLabel.textAlignment = .center
+        favoritesEmptyLabel.isHidden = true
+        regularFavoritesContainer.addSubview(favoritesEmptyLabel)
+    }
+
+    private func setupSharedInputs() {
+        suggestionsTableView.translatesAutoresizingMaskIntoConstraints = false
+        suggestionsTableView.backgroundColor = .systemBackground
+        suggestionsTableView.keyboardDismissMode = .onDrag
+        suggestionsTableView.rowHeight = UITableView.automaticDimension
+        suggestionsTableView.estimatedRowHeight = 60
+        suggestionsTableView.dataSource = self
+        suggestionsTableView.delegate = self
+        suggestionsTableView.register(UITableViewCell.self, forCellReuseIdentifier: "SuggestionCell")
+        contentAreaContainer.addSubview(suggestionsTableView)
+
         textField.translatesAutoresizingMaskIntoConstraints = false
         textField.clearButtonMode = .whileEditing
         textField.returnKeyType = .go
@@ -395,49 +580,11 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
             self.clearInputError()
             let currentText = self.textField.text ?? ""
             self.isTypingMode = !currentText.isEmpty
+            self.updateRegularLeadingIcon()
             self.updateVisibleContent()
             self.onTextChanged?(currentText)
         }, for: .editingChanged)
         capsuleView.addSubview(textField)
-
-        let capsuleTap = UITapGestureRecognizer(target: self, action: #selector(handleCapsuleTap))
-        capsuleView.addGestureRecognizer(capsuleTap)
-        NSLayoutConstraint.activate([
-            textField.leadingAnchor.constraint(equalTo: capsuleView.leadingAnchor, constant: 16),
-            textField.trailingAnchor.constraint(equalTo: capsuleView.trailingAnchor, constant: -12),
-            textField.topAnchor.constraint(equalTo: capsuleView.topAnchor),
-            textField.bottomAnchor.constraint(equalTo: capsuleView.bottomAnchor)
-        ])
-
-        fieldRowStack.addArrangedSubview(capsuleView)
-    }
-
-    private func setupDoneHierarchy() {
-        doneButton.translatesAutoresizingMaskIntoConstraints = false
-        doneButton.setImage(
-            UIImage(systemName: "checkmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .bold)),
-            for: .normal
-        )
-        doneButton.tintColor = .white
-        doneButton.backgroundColor = .systemBlue
-        doneButton.accessibilityLabel = "Done"
-        doneButton.layer.cornerRadius = Self.doneDiameter / 2
-        doneButton.clipsToBounds = true
-        doneButton.isHidden = true
-        doneButton.addAction(UIAction { [weak self] _ in self?.handleDone() }, for: .touchUpInside)
-        NSLayoutConstraint.activate([
-            doneButton.widthAnchor.constraint(equalToConstant: Self.doneDiameter),
-            doneButton.heightAnchor.constraint(equalToConstant: Self.doneDiameter)
-        ])
-        fieldRowStack.addArrangedSubview(doneButton)
-
-        inputErrorLabel.translatesAutoresizingMaskIntoConstraints = false
-        inputErrorLabel.font = .preferredFont(forTextStyle: .footnote)
-        inputErrorLabel.adjustsFontForContentSizeCategory = true
-        inputErrorLabel.textColor = .systemRed
-        inputErrorLabel.numberOfLines = 2
-        inputErrorLabel.isHidden = true
-        bottomBarContainer.addSubview(inputErrorLabel)
     }
 
     private func setupStaticConstraints() {
@@ -448,18 +595,29 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
             equalTo: fieldRowStack.topAnchor, constant: -4
         )
         inputErrorHeightConstraint = inputErrorLabel.heightAnchor.constraint(equalToConstant: 0)
+        regularErrorHeightConstraint = regularErrorLabel.heightAnchor.constraint(equalToConstant: 0)
+
+        let headerHeight = regularHeaderRow.heightAnchor.constraint(equalToConstant: Self.regularHeaderHeight)
+        headerHeight.priority = UILayoutPriority(999)
+        let badgeLeading = leadingIconBadge.leadingAnchor.constraint(equalTo: regularHeaderRow.leadingAnchor, constant: 18)
+        badgeLeading.priority = UILayoutPriority(999)
+        let favHeaderTop = favoritesHeaderLabel.topAnchor.constraint(equalTo: regularFavoritesContainer.topAnchor, constant: 10)
+        favHeaderTop.priority = UILayoutPriority(999)
+        let favHeaderLeading = favoritesHeaderLabel.leadingAnchor.constraint(equalTo: regularFavoritesContainer.leadingAnchor, constant: 24)
+        favHeaderLeading.priority = UILayoutPriority(999)
+        let favHeaderTrailing = favoritesHeaderLabel.trailingAnchor.constraint(lessThanOrEqualTo: regularFavoritesContainer.trailingAnchor, constant: -24)
+        favHeaderTrailing.priority = UILayoutPriority(999)
+        let favGridTop = favoritesCollectionView.topAnchor.constraint(equalTo: favoritesHeaderLabel.bottomAnchor, constant: 4)
+        favGridTop.priority = UILayoutPriority(999)
+
         NSLayoutConstraint.activate([
-            dimView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            dimView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            dimView.topAnchor.constraint(equalTo: topAnchor),
-            dimView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            dismissBackdropControl.leadingAnchor.constraint(equalTo: leadingAnchor),
+            dismissBackdropControl.trailingAnchor.constraint(equalTo: trailingAnchor),
+            dismissBackdropControl.topAnchor.constraint(equalTo: topAnchor),
+            dismissBackdropControl.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             contentAreaContainer.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor),
             contentAreaContainer.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor),
-
-            suggestionsTableView.leadingAnchor.constraint(equalTo: contentAreaContainer.leadingAnchor),
-            suggestionsTableView.trailingAnchor.constraint(equalTo: contentAreaContainer.trailingAnchor),
-            suggestionsTableView.topAnchor.constraint(equalTo: contentAreaContainer.topAnchor),
 
             fieldRowStack.leadingAnchor.constraint(equalTo: bottomBarContainer.leadingAnchor),
             fieldRowStack.trailingAnchor.constraint(equalTo: bottomBarContainer.trailingAnchor),
@@ -467,14 +625,69 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
             capsuleView.heightAnchor.constraint(equalToConstant: Self.fieldHeight),
 
             inputErrorLabel.leadingAnchor.constraint(equalTo: bottomBarContainer.leadingAnchor, constant: 8),
-            inputErrorLabel.trailingAnchor.constraint(equalTo: bottomBarContainer.trailingAnchor, constant: -8)
+            inputErrorLabel.trailingAnchor.constraint(equalTo: bottomBarContainer.trailingAnchor, constant: -8),
+
+            regularCardView.leadingAnchor.constraint(equalTo: regularCardShadowView.leadingAnchor),
+            regularCardView.trailingAnchor.constraint(equalTo: regularCardShadowView.trailingAnchor),
+            regularCardView.topAnchor.constraint(equalTo: regularCardShadowView.topAnchor),
+            regularCardView.bottomAnchor.constraint(equalTo: regularCardShadowView.bottomAnchor),
+
+            regularBlurView.leadingAnchor.constraint(equalTo: regularCardView.leadingAnchor),
+            regularBlurView.trailingAnchor.constraint(equalTo: regularCardView.trailingAnchor),
+            regularBlurView.topAnchor.constraint(equalTo: regularCardView.topAnchor),
+            regularBlurView.bottomAnchor.constraint(equalTo: regularCardView.bottomAnchor),
+
+            regularHeaderRow.topAnchor.constraint(equalTo: regularCardView.topAnchor),
+            regularHeaderRow.leadingAnchor.constraint(equalTo: regularCardView.leadingAnchor),
+            regularHeaderRow.trailingAnchor.constraint(equalTo: regularCardView.trailingAnchor),
+            headerHeight,
+
+            badgeLeading,
+            leadingIconBadge.centerYAnchor.constraint(equalTo: regularHeaderRow.centerYAnchor),
+            leadingIconBadge.widthAnchor.constraint(equalToConstant: 28),
+            leadingIconBadge.heightAnchor.constraint(equalToConstant: 28),
+
+            leadingIconImageView.centerXAnchor.constraint(equalTo: leadingIconBadge.centerXAnchor),
+            leadingIconImageView.centerYAnchor.constraint(equalTo: leadingIconBadge.centerYAnchor),
+            leadingIconImageView.widthAnchor.constraint(equalToConstant: 20),
+            leadingIconImageView.heightAnchor.constraint(equalToConstant: 20),
+
+            regularErrorLabel.topAnchor.constraint(equalTo: regularHeaderRow.bottomAnchor),
+            regularErrorLabel.leadingAnchor.constraint(equalTo: regularCardView.leadingAnchor, constant: 24),
+            regularErrorLabel.trailingAnchor.constraint(lessThanOrEqualTo: regularCardView.trailingAnchor, constant: -24),
+
+            regularHeaderDivider.topAnchor.constraint(equalTo: regularErrorLabel.bottomAnchor),
+            regularHeaderDivider.leadingAnchor.constraint(equalTo: regularCardView.leadingAnchor),
+            regularHeaderDivider.trailingAnchor.constraint(equalTo: regularCardView.trailingAnchor),
+            regularHeaderDivider.heightAnchor.constraint(equalToConstant: 0.5),
+
+            regularBodyContainer.topAnchor.constraint(equalTo: regularHeaderDivider.bottomAnchor),
+            regularBodyContainer.leadingAnchor.constraint(equalTo: regularCardView.leadingAnchor),
+            regularBodyContainer.trailingAnchor.constraint(equalTo: regularCardView.trailingAnchor),
+            regularBodyContainer.bottomAnchor.constraint(equalTo: regularCardView.bottomAnchor),
+
+            regularFavoritesContainer.topAnchor.constraint(equalTo: regularBodyContainer.topAnchor),
+            regularFavoritesContainer.leadingAnchor.constraint(equalTo: regularBodyContainer.leadingAnchor),
+            regularFavoritesContainer.trailingAnchor.constraint(equalTo: regularBodyContainer.trailingAnchor),
+            regularFavoritesContainer.bottomAnchor.constraint(equalTo: regularBodyContainer.bottomAnchor),
+
+            favHeaderTop,
+            favHeaderLeading,
+            favHeaderTrailing,
+
+            favGridTop,
+            favoritesCollectionView.leadingAnchor.constraint(equalTo: regularFavoritesContainer.leadingAnchor),
+            favoritesCollectionView.trailingAnchor.constraint(equalTo: regularFavoritesContainer.trailingAnchor),
+            favoritesCollectionView.bottomAnchor.constraint(equalTo: regularFavoritesContainer.bottomAnchor),
+
+            favoritesEmptyLabel.centerXAnchor.constraint(equalTo: regularFavoritesContainer.centerXAnchor),
+            favoritesEmptyLabel.centerYAnchor.constraint(equalTo: regularFavoritesContainer.centerYAnchor),
+            favoritesEmptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: regularFavoritesContainer.leadingAnchor, constant: 24),
+            favoritesEmptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: regularFavoritesContainer.trailingAnchor, constant: -24)
         ])
         updateInputErrorConstraints()
     }
 
-    /// Collapses the error label (and its 4 pt gap) when hidden so the panel
-    /// does not retain label height with nil text. When visible the label pins
-    /// top-to-bottomBar and bottom-to-field with the standard gap.
     private func updateInputErrorConstraints() {
         guard inputErrorTopConstraint != nil else { return }
         let hasError = !inputErrorLabel.isHidden
@@ -483,11 +696,13 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
             inputErrorBottomConstraint.constant = -4
             inputErrorTopConstraint.isActive = true
             inputErrorBottomConstraint.isActive = true
+            regularErrorHeightConstraint.isActive = false
         } else {
             inputErrorTopConstraint.isActive = false
             inputErrorBottomConstraint.constant = 0
             inputErrorBottomConstraint.isActive = true
             inputErrorHeightConstraint.isActive = true
+            regularErrorHeightConstraint.isActive = true
         }
     }
 
@@ -502,12 +717,10 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         return nil
     }
 
-    /// Tracks the toolbar's bottom edge on regular so the panel follows the
-    /// pinned toolbar (physical top) instead of assuming safeArea.top origin.
-    /// Falls back to the safe-area plus bar-height anchor when no toolbar is
-    /// in the hierarchy (isolated unit tests).
+    /// Pins the floating regular card 18 pt below the toolbar's top edge so the
+    /// 56 pt input row centers directly on the 46 pt address bar line.
     private func refreshRegularTopConstraint() {
-        guard let current = regularBarTopConstraint, let toolbar = resolveToolbarView() else { return }
+        guard let current = regularCardTopConstraint, let toolbar = resolveToolbarView() else { return }
         if let second = current.secondItem as? UIView, second === toolbar {
             return
         }
@@ -516,10 +729,11 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         if let index = regularConstraints.firstIndex(where: { $0 === current }) {
             regularConstraints.remove(at: index)
         }
-        let replacement = bottomBarContainer.topAnchor.constraint(
-            equalTo: toolbar.bottomAnchor, constant: 8
+        let replacement = regularCardShadowView.topAnchor.constraint(
+            equalTo: toolbar.topAnchor,
+            constant: Self.panelTopOffset
         )
-        regularBarTopConstraint = replacement
+        regularCardTopConstraint = replacement
         regularConstraints.append(replacement)
         if wasActive, chromePlacement == .regular {
             replacement.isActive = true
@@ -527,6 +741,47 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     }
 
     private func setupPlacementConstraints() {
+        let compactFieldLead = textField.leadingAnchor.constraint(equalTo: capsuleView.leadingAnchor, constant: 16)
+        compactFieldLead.priority = UILayoutPriority(999)
+        let compactFieldTrail = textField.trailingAnchor.constraint(equalTo: capsuleView.trailingAnchor, constant: -12)
+        compactFieldTrail.priority = UILayoutPriority(999)
+        compactTextFieldConstraints = [
+            compactFieldLead,
+            compactFieldTrail,
+            textField.topAnchor.constraint(equalTo: capsuleView.topAnchor),
+            textField.bottomAnchor.constraint(equalTo: capsuleView.bottomAnchor)
+        ]
+
+        let regularFieldLead = textField.leadingAnchor.constraint(equalTo: leadingIconBadge.trailingAnchor, constant: 12)
+        regularFieldLead.priority = UILayoutPriority(999)
+        let regularFieldTrail = textField.trailingAnchor.constraint(equalTo: regularHeaderRow.trailingAnchor, constant: -16)
+        regularFieldTrail.priority = UILayoutPriority(999)
+        regularTextFieldConstraints = [
+            regularFieldLead,
+            regularFieldTrail,
+            textField.topAnchor.constraint(equalTo: regularHeaderRow.topAnchor),
+            textField.bottomAnchor.constraint(equalTo: regularHeaderRow.bottomAnchor)
+        ]
+
+        compactTableConstraints = [
+            suggestionsTableView.leadingAnchor.constraint(equalTo: contentAreaContainer.leadingAnchor),
+            suggestionsTableView.trailingAnchor.constraint(equalTo: contentAreaContainer.trailingAnchor),
+            suggestionsTableView.topAnchor.constraint(equalTo: contentAreaContainer.topAnchor),
+            suggestionsTableView.bottomAnchor.constraint(equalTo: contentAreaContainer.bottomAnchor)
+        ]
+
+        suggestionsMaxHeightConstraint = suggestionsTableView.heightAnchor.constraint(
+            lessThanOrEqualToConstant: Self.suggestionsMaxHeight
+        )
+        suggestionsMaxHeightConstraint.priority = .defaultHigh
+        regularTableConstraints = [
+            suggestionsTableView.leadingAnchor.constraint(equalTo: regularBodyContainer.leadingAnchor),
+            suggestionsTableView.trailingAnchor.constraint(equalTo: regularBodyContainer.trailingAnchor),
+            suggestionsTableView.topAnchor.constraint(equalTo: regularBodyContainer.topAnchor),
+            suggestionsTableView.bottomAnchor.constraint(equalTo: regularBodyContainer.bottomAnchor),
+            suggestionsMaxHeightConstraint
+        ]
+
         let compactContentTop = contentAreaContainer.topAnchor.constraint(
             equalTo: safeAreaLayoutGuide.topAnchor, constant: 8
         )
@@ -542,45 +797,91 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         let compactBarTrailing = bottomBarContainer.trailingAnchor.constraint(
             equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -8
         )
-        let compactTableBottom = suggestionsTableView.bottomAnchor.constraint(
-            equalTo: contentAreaContainer.bottomAnchor
-        )
         compactConstraints = [
             compactContentTop, compactContentBottom, compactBarBottom,
-            compactBarLeading, compactBarTrailing, compactTableBottom
+            compactBarLeading, compactBarTrailing
         ]
 
-        let regularBarTop = bottomBarContainer.topAnchor.constraint(
-            equalTo: safeAreaLayoutGuide.topAnchor,
-            constant: TopBarView.barHeight + 8
+        let regularTop = regularCardShadowView.topAnchor.constraint(
+            equalTo: topAnchor,
+            constant: Self.panelTopOffset
         )
-        regularBarTopConstraint = regularBarTop
-        let regularBarLeading = bottomBarContainer.leadingAnchor.constraint(
-            equalTo: safeAreaLayoutGuide.leadingAnchor, constant: Self.panelMargin
+        regularCardTopConstraint = regularTop
+        let regularCenterX = regularCardShadowView.centerXAnchor.constraint(equalTo: centerXAnchor)
+        let regularWidthCap = regularCardShadowView.widthAnchor.constraint(
+            lessThanOrEqualToConstant: Self.panelMaxWidth
         )
-        let regularBarTrailing = bottomBarContainer.trailingAnchor.constraint(
-            equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -Self.panelMargin
+        let regularWidthFill = regularCardShadowView.widthAnchor.constraint(
+            equalTo: safeAreaLayoutGuide.widthAnchor,
+            constant: -(Self.panelMargin * 2)
         )
-        let regularContentTop = contentAreaContainer.topAnchor.constraint(
-            equalTo: bottomBarContainer.bottomAnchor, constant: 8
+        regularWidthFill.priority = .defaultHigh
+        let regularMinLeading = regularCardShadowView.leadingAnchor.constraint(
+            greaterThanOrEqualTo: safeAreaLayoutGuide.leadingAnchor,
+            constant: Self.panelMargin
         )
-        let regularContentBottom = contentAreaContainer.bottomAnchor.constraint(
-            equalTo: keyboardLayoutGuide.topAnchor, constant: -8
+        regularMinLeading.priority = UILayoutPriority(999)
+        let regularMaxTrailing = regularCardShadowView.trailingAnchor.constraint(
+            lessThanOrEqualTo: safeAreaLayoutGuide.trailingAnchor,
+            constant: -Self.panelMargin
         )
-        let regularTableBottom = suggestionsTableView.bottomAnchor.constraint(
-            equalTo: contentAreaContainer.bottomAnchor
+        regularMaxTrailing.priority = UILayoutPriority(999)
+        let regularPreferredHeight = regularCardShadowView.heightAnchor.constraint(
+            equalToConstant: Self.panelPreferredHeight
         )
-        regularTableBottom.priority = .defaultHigh
-        suggestionsMaxHeightConstraint = suggestionsTableView.heightAnchor.constraint(
-            lessThanOrEqualToConstant: Self.suggestionsMaxHeight
+        regularPreferredHeight.priority = .defaultHigh
+        let regularMinHeight = regularCardShadowView.heightAnchor.constraint(
+            greaterThanOrEqualToConstant: 180
         )
+        regularMinHeight.priority = UILayoutPriority(900)
+        let regularMaxBottomKeyboard = regularCardShadowView.bottomAnchor.constraint(
+            lessThanOrEqualTo: keyboardLayoutGuide.topAnchor,
+            constant: -12
+        )
+        regularMaxBottomKeyboard.priority = UILayoutPriority(999)
+        let regularMaxBottomSafe = regularCardShadowView.bottomAnchor.constraint(
+            lessThanOrEqualTo: safeAreaLayoutGuide.bottomAnchor,
+            constant: -12
+        )
+        regularMaxBottomSafe.priority = UILayoutPriority(999)
+
         regularConstraints = [
-            regularBarTop, regularBarLeading, regularBarTrailing,
-            regularContentTop, regularContentBottom,
-            regularTableBottom, suggestionsMaxHeightConstraint
+            regularTop,
+            regularCenterX,
+            regularWidthCap,
+            regularWidthFill,
+            regularMinLeading,
+            regularMaxTrailing,
+            regularPreferredHeight,
+            regularMinHeight,
+            regularMaxBottomKeyboard,
+            regularMaxBottomSafe
         ]
+    }
 
-        NSLayoutConstraint.activate(compactConstraints)
+    private func updateRegularLeadingIcon() {
+        let trimmed = (textField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !isTypingMode, !trimmed.isEmpty, let url = activePageURL {
+            leadingIconImageView.image = FaviconService.shared.cachedFaviconOrMonogram(for: url, size: 20)
+            leadingIconImageView.tintColor = nil
+        } else {
+            let config = UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+            leadingIconImageView.image = UIImage(systemName: "magnifyingglass", withConfiguration: config)
+            leadingIconImageView.tintColor = .secondaryLabel
+        }
+    }
+
+    private func updateFavoritesItemSize() {
+        let availableWidth = regularCardView.bounds.width - 48
+        guard availableWidth > 80 else { return }
+        let columns = availableWidth >= 420 ? 4 : max(2, Int(availableWidth / 96))
+        let spacing = CGFloat(max(columns - 1, 0)) * favoritesFlowLayout.minimumInteritemSpacing
+        let itemWidth = max(FavoriteTileCell.tileLength, floor((availableWidth - spacing) / CGFloat(columns)))
+        let size = CGSize(width: itemWidth, height: FavoriteTileCell.cellHeight)
+        if favoritesFlowLayout.itemSize != size {
+            favoritesFlowLayout.itemSize = size
+            favoritesFlowLayout.invalidateLayout()
+        }
     }
 
     private func updateVisibleContent() {
@@ -590,6 +891,10 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
 
         if chromePlacement == .regular {
             suggestionsTableView.isHidden = !shouldShowSuggestions
+            regularFavoritesContainer.isHidden = shouldShowSuggestions
+            favoritesCollectionView.isHidden = favorites.isEmpty
+            favoritesEmptyLabel.isHidden = !favorites.isEmpty
+            regularHeaderDivider.isHidden = !(shouldShowSuggestions || !regularErrorLabel.isHidden)
             contentAreaContainer.backgroundColor = .clear
             backgroundColor = .clear
             return
@@ -636,7 +941,7 @@ extension AddressEditorView: UITableViewDataSource, UITableViewDelegate {
         content.secondaryText = viewModel.secondary
         content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
         content.secondaryTextProperties.color = .secondaryLabel
-        content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16)
+        content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20)
         content.textToSecondaryTextVerticalPadding = 2
         cell.contentConfiguration = content
         cell.backgroundColor = .clear
@@ -648,6 +953,36 @@ extension AddressEditorView: UITableViewDataSource, UITableViewDelegate {
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         onSelectSuggestion?(suggestions[indexPath.row])
+    }
+}
+
+// MARK: - UICollectionViewDataSource, UICollectionViewDelegate
+
+extension AddressEditorView: UICollectionViewDataSource, UICollectionViewDelegate {
+    func collectionView(_: UICollectionView, numberOfItemsInSection _: Int) -> Int {
+        favorites.count
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        cellForItemAt indexPath: IndexPath
+    ) -> UICollectionViewCell {
+        guard let cell = collectionView.dequeueReusableCell(
+            withReuseIdentifier: FavoriteTileCell.reuseIdentifier,
+            for: indexPath
+        ) as? FavoriteTileCell
+        else {
+            return UICollectionViewCell()
+        }
+        let bookmark = favorites[indexPath.item]
+        cell.configure(with: bookmark)
+        return cell
+    }
+
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        collectionView.deselectItem(at: indexPath, animated: true)
+        let bookmark = favorites[indexPath.item]
+        onSelectFavorite?(bookmark.url)
     }
 }
 

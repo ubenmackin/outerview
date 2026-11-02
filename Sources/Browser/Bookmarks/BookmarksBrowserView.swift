@@ -9,7 +9,7 @@ import UIKit
 
 /// Subtitle-style cell so dequeued reuse keeps its detail label.
 @MainActor
-final class BookmarkRowCell: UITableViewCell {
+final class BookmarkRowCell: LibrarySubtitleCell {
     override init(style _: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: .subtitle, reuseIdentifier: reuseIdentifier)
     }
@@ -27,17 +27,33 @@ final class BookmarksBrowserView: UIView {
     var onOpenURL: ((URL) -> Void)?
     var onOpenInNewTab: ((URL) -> Void)?
     var onRequestEdit: ((BookmarkEditorTarget) -> Void)?
+    var onNavigationStateChanged: (() -> Void)?
+    var onDidMutateBookmarks: (() -> Void)?
 
-    private let bookmarkStore: BookmarkStore
+    let bookmarkStore: BookmarkStore
+    let defaults: UserDefaults
     private var folderStack: [BookmarkFolder] = []
-    private var isViewingFavorites: Bool = false
+    private(set) var isViewingFavorites: Bool = false
     private var currentFolders: [BookmarkFolder] = []
     private var currentBookmarks: [Bookmark] = []
+    private var combinedEntries: [BookmarkListEntry] = []
+    private var favoritesCount: Int = 0
+    private var folderItemCounts: [UUID: Int] = [:]
+    private var hidesInlineHeaderBar = false
+
+    var displayMode: BookmarksDisplayMode = .compact
+    var sortMode: BookmarksSortMode = .none
+    var showsFoldersOnTop: Bool = true
+    var isSelectionMode: Bool = false
+    var selectedBookmarkIDs: Set<UUID> = []
+    var selectedFolderIDs: Set<UUID> = []
 
     private let navBar = UIView()
+    private var navBarTopConstraint: NSLayoutConstraint!
+    private var navBarHeightConstraint: NSLayoutConstraint!
     private let backButton = UIButton(type: .system)
     private let titleLabel = UILabel()
-    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
+    let tableView = UITableView(frame: .zero, style: .insetGrouped)
     private let searchHeader = LibrarySearchHeaderView(
         frame: CGRect(x: 0, y: 0, width: 0, height: LibrarySearchHeaderView.defaultHeight)
     )
@@ -45,12 +61,72 @@ final class BookmarksBrowserView: UIView {
     private var searchResults: [Bookmark] = []
     private let searchTuck = LibrarySearchTuckController()
 
+    var effectiveDisplayMode: BookmarksDisplayMode {
+        hidesInlineHeaderBar ? displayMode : .large
+    }
+
+    var effectiveSortMode: BookmarksSortMode {
+        hidesInlineHeaderBar ? sortMode : .none
+    }
+
+    var effectiveShowsFoldersOnTop: Bool {
+        hidesInlineHeaderBar ? showsFoldersOnTop : true
+    }
+
     var isEditingBookmarks: Bool {
         tableView.isEditing
     }
 
+    var hasSelectedItems: Bool {
+        !selectedBookmarkIDs.isEmpty || !selectedFolderIDs.isEmpty
+    }
+
+    var hasSelectableItems: Bool {
+        if !searchQuery.isEmpty {
+            return !searchResults.isEmpty
+        }
+        return !currentFolders.isEmpty || !currentBookmarks.isEmpty
+    }
+
     var canCreateFolder: Bool {
         !isViewingFavorites && searchQuery.isEmpty
+    }
+
+    var isAtRoot: Bool {
+        folderStack.isEmpty && !isViewingFavorites
+    }
+
+    var currentNavigationTitle: String {
+        if isViewingFavorites {
+            return "Favorites"
+        }
+        return folderStack.last?.title ?? "Bookmarks"
+    }
+
+    var backNavigationAccessibilityLabel: String {
+        backButton.accessibilityLabel ?? "Back to Bookmarks"
+    }
+
+    func setHeaderBarHidden(_ hidden: Bool) {
+        let changed = hidesInlineHeaderBar != hidden
+        hidesInlineHeaderBar = hidden
+        if !hidden, isSelectionMode {
+            isSelectionMode = false
+            selectedBookmarkIDs.removeAll()
+            selectedFolderIDs.removeAll()
+        }
+        navBar.isHidden = hidden
+        navBarTopConstraint.constant = hidden ? 0 : 4
+        navBarHeightConstraint.constant = hidden ? 0 : 40
+        if changed {
+            reload()
+        } else {
+            tableView.reloadData()
+        }
+    }
+
+    func popNavigation() {
+        popFolder()
     }
 
     enum Section: Equatable {
@@ -58,10 +134,15 @@ final class BookmarksBrowserView: UIView {
         case pinnedFavorites
         case folders
         case bookmarks
+        case combinedItems
     }
 
-    init(bookmarkStore: BookmarkStore) {
+    init(bookmarkStore: BookmarkStore, defaults: UserDefaults = .standard) {
         self.bookmarkStore = bookmarkStore
+        self.defaults = defaults
+        self.displayMode = Self.storedDisplayMode(defaults: defaults)
+        self.sortMode = Self.storedSortMode(defaults: defaults)
+        self.showsFoldersOnTop = Self.storedShowsFoldersOnTop(defaults: defaults)
         super.init(frame: .zero)
         setup()
         reload()
@@ -73,17 +154,33 @@ final class BookmarksBrowserView: UIView {
     }
 
     func reload() {
+        favoritesCount = bookmarkStore.fetchFavorites().count
+        let activeSort = effectiveSortMode
+
         if isViewingFavorites {
             currentFolders = []
-            currentBookmarks = bookmarkStore.fetchFavorites()
+            currentBookmarks = Self.sortedBookmarks(bookmarkStore.fetchFavorites(), by: activeSort)
+            combinedEntries = []
+            folderItemCounts = [:]
             backButton.isHidden = false
             backButton.setTitle(" Bookmarks", for: .normal)
             backButton.accessibilityLabel = "Back to Bookmarks"
             titleLabel.text = "Favorites"
         } else {
             let currentParentID = folderStack.last?.id
-            currentFolders = bookmarkStore.fetchFolders(parentId: currentParentID)
-            currentBookmarks = bookmarkStore.fetchBookmarks(folderId: currentParentID)
+            let rawFolders = bookmarkStore.fetchFolders(parentId: currentParentID)
+            let rawBookmarks = bookmarkStore.fetchBookmarks(folderId: currentParentID)
+            var counts: [UUID: Int] = [:]
+            for folder in rawFolders {
+                counts[folder.id] = bookmarkStore.fetchFolders(parentId: folder.id).count
+                    + bookmarkStore.fetchBookmarks(folderId: folder.id).count
+            }
+            folderItemCounts = counts
+            currentFolders = Self.sortedFolders(rawFolders, by: activeSort)
+            currentBookmarks = Self.sortedBookmarks(rawBookmarks, by: activeSort)
+            combinedEntries = effectiveShowsFoldersOnTop
+                ? []
+                : Self.mergedEntries(folders: currentFolders, bookmarks: currentBookmarks, sortMode: activeSort)
 
             let isRoot = folderStack.isEmpty
             backButton.isHidden = isRoot
@@ -96,8 +193,26 @@ final class BookmarksBrowserView: UIView {
             }
             titleLabel.text = folderStack.last?.title ?? "Bookmarks"
         }
+
+        if !searchQuery.isEmpty {
+            let matches = bookmarkStore.fetchAll().filter {
+                $0.title.localizedCaseInsensitiveContains(searchQuery) ||
+                    $0.url.absoluteString.localizedCaseInsensitiveContains(searchQuery)
+            }
+            searchResults = Self.sortedBookmarks(matches, by: activeSort)
+        }
+
+        let validBookmarkIDs = Set((searchQuery.isEmpty ? currentBookmarks : searchResults).map(\.id))
+        let validFolderIDs = Set(currentFolders.map(\.id))
+        selectedBookmarkIDs.formIntersection(validBookmarkIDs)
+        selectedFolderIDs.formIntersection(validFolderIDs)
+        if !hasSelectableItems, isSelectionMode {
+            isSelectionMode = false
+        }
+
         tableView.reloadData()
         reassertSearchTuck()
+        onNavigationStateChanged?()
     }
 
     override func layoutSubviews() {
@@ -111,15 +226,21 @@ final class BookmarksBrowserView: UIView {
         }
         if isViewingFavorites {
             return .bookmarks
-        } else if folderStack.isEmpty {
+        }
+        if !effectiveShowsFoldersOnTop {
+            if folderStack.isEmpty {
+                return section == 0 ? .pinnedFavorites : .combinedItems
+            }
+            return .combinedItems
+        }
+        if folderStack.isEmpty {
             switch section {
             case 0: return .pinnedFavorites
             case 1: return .folders
             default: return .bookmarks
             }
-        } else {
-            return section == 0 ? .folders : .bookmarks
         }
+        return section == 0 ? .folders : .bookmarks
     }
 
     static func clampedMoveTarget(
@@ -171,31 +292,27 @@ final class BookmarksBrowserView: UIView {
             onQueryChanged: { [weak self] query in
                 guard let self else { return }
                 self.searchQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !self.searchQuery.isEmpty {
-                    self.searchResults = self.bookmarkStore.fetchAll().filter {
-                        $0.title.localizedCaseInsensitiveContains(self.searchQuery) ||
-                            $0.url.absoluteString.localizedCaseInsensitiveContains(self.searchQuery)
-                    }
-                } else {
+                if self.searchQuery.isEmpty {
                     self.searchResults = []
                 }
-                self.tableView.reloadData()
-                self.reassertSearchTuck()
+                self.reload()
             },
             onCleared: { [weak self] in
                 guard let self else { return }
                 self.searchQuery = ""
                 self.searchResults = []
-                self.tableView.reloadData()
-                self.reassertSearchTuck()
+                self.reload()
             }
         )
+
+        navBarTopConstraint = navBar.topAnchor.constraint(equalTo: topAnchor, constant: 4)
+        navBarHeightConstraint = navBar.heightAnchor.constraint(equalToConstant: 40)
 
         NSLayoutConstraint.activate([
             navBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             navBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            navBar.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            navBar.heightAnchor.constraint(equalToConstant: 40),
+            navBarTopConstraint,
+            navBarHeightConstraint,
 
             backButton.leadingAnchor.constraint(equalTo: navBar.leadingAnchor),
             backButton.centerYAnchor.constraint(equalTo: navBar.centerYAnchor),
@@ -211,6 +328,9 @@ final class BookmarksBrowserView: UIView {
     }
 
     private func popFolder() {
+        isSelectionMode = false
+        selectedBookmarkIDs.removeAll()
+        selectedFolderIDs.removeAll()
         if isViewingFavorites {
             isViewingFavorites = false
             reload()
@@ -222,8 +342,15 @@ final class BookmarksBrowserView: UIView {
     }
 
     func toggleEditMode() {
+        if isSelectionMode {
+            isSelectionMode = false
+            selectedBookmarkIDs.removeAll()
+            selectedFolderIDs.removeAll()
+        }
         let editing = !tableView.isEditing
         tableView.setEditing(editing, animated: true)
+        tableView.reloadData()
+        onNavigationStateChanged?()
     }
 
     func promptNewFolder() {
@@ -232,6 +359,10 @@ final class BookmarksBrowserView: UIView {
               let rootVC = windowScene.windows.first(where: \.isKeyWindow)?.rootViewController
         else {
             return
+        }
+        var presenter = rootVC
+        while let next = presenter.presentedViewController {
+            presenter = next
         }
 
         let alert = UIAlertController(title: "New Folder", message: "Enter a name for this folder.", preferredStyle: .alert)
@@ -251,7 +382,110 @@ final class BookmarksBrowserView: UIView {
             }
             self.reload()
         })
-        rootVC.present(alert, animated: true)
+        presenter.present(alert, animated: true)
+    }
+
+    private static func roundedFavicon(for url: URL, size: CGFloat = 26, cornerRadius: CGFloat = 6) -> UIImage {
+        let base = FaviconService.shared.cachedFaviconOrMonogram(for: url, size: size)
+        let targetSize = CGSize(width: size, height: size)
+        return UIGraphicsImageRenderer(size: targetSize).image { _ in
+            let rect = CGRect(origin: .zero, size: targetSize)
+            UIBezierPath(roundedRect: rect, cornerRadius: cornerRadius).addClip()
+            base.draw(in: rect)
+        }
+    }
+
+    private func entryAt(_ indexPath: IndexPath) -> BookmarkListEntry? {
+        switch sectionType(for: indexPath.section) {
+        case .pinnedFavorites:
+            nil
+        case .searchResults:
+            indexPath.row < searchResults.count ? .bookmark(searchResults[indexPath.row]) : nil
+        case .folders:
+            indexPath.row < currentFolders.count ? .folder(currentFolders[indexPath.row]) : nil
+        case .bookmarks:
+            indexPath.row < currentBookmarks.count ? .bookmark(currentBookmarks[indexPath.row]) : nil
+        case .combinedItems:
+            indexPath.row < combinedEntries.count ? combinedEntries[indexPath.row] : nil
+        }
+    }
+
+    func visibleBookmarkID(at indexPath: IndexPath) -> UUID? {
+        guard case let .bookmark(bookmark) = entryAt(indexPath) else { return nil }
+        return bookmark.id
+    }
+
+    func visibleFolderID(at indexPath: IndexPath) -> UUID? {
+        guard case let .folder(folder) = entryAt(indexPath) else { return nil }
+        return folder.id
+    }
+
+    private func configureRegularCell(_ cell: UITableViewCell, at indexPath: IndexPath) {
+        let verticalPadding: CGFloat = effectiveDisplayMode == .large ? 12 : 9
+        let type = sectionType(for: indexPath.section)
+        if type == .pinnedFavorites {
+            var content = UIListContentConfiguration.valueCell()
+            content.directionalLayoutMargins = NSDirectionalEdgeInsets(
+                top: verticalPadding, leading: 16, bottom: verticalPadding, trailing: 16
+            )
+            content.text = "Favorites"
+            content.secondaryText = favoritesCount > 0 ? "\(favoritesCount)" : nil
+            content.image = UIImage(systemName: "star.fill")
+            content.imageProperties.tintColor = .systemYellow
+            cell.contentConfiguration = content
+            cell.backgroundColor = .secondarySystemGroupedBackground
+            cell.accessoryType = isSelectionMode ? .none : .disclosureIndicator
+            (cell as? LibrarySubtitleCell)?.configureSelectionIndicator(visible: false, isSelected: false)
+            return
+        }
+
+        guard let entry = entryAt(indexPath) else { return }
+        let leadingMargin: CGFloat = isSelectionMode ? LibrarySubtitleCell.selectionLeadingInset : 16
+        switch entry {
+        case let .folder(folder):
+            let isSelected = isSelectionMode && selectedFolderIDs.contains(folder.id)
+            var content = UIListContentConfiguration.valueCell()
+            content.directionalLayoutMargins = NSDirectionalEdgeInsets(
+                top: verticalPadding, leading: leadingMargin, bottom: verticalPadding, trailing: 16
+            )
+            content.text = folder.title
+            let itemCount = folderItemCounts[folder.id] ?? 0
+            content.secondaryText = itemCount > 0 ? "\(itemCount)" : nil
+            content.image = UIImage(systemName: "folder.fill")
+            content.imageProperties.tintColor = .systemYellow
+            cell.contentConfiguration = content
+            cell.backgroundColor = isSelected ? .tertiarySystemGroupedBackground : .secondarySystemGroupedBackground
+            cell.accessoryType = isSelectionMode ? .none : .disclosureIndicator
+            (cell as? LibrarySubtitleCell)?.configureSelectionIndicator(visible: isSelectionMode, isSelected: isSelected)
+
+        case let .bookmark(bookmark):
+            let isSelected = isSelectionMode && selectedBookmarkIDs.contains(bookmark.id)
+            let isLarge = effectiveDisplayMode == .large
+            var content = isLarge ? UIListContentConfiguration.subtitleCell() : UIListContentConfiguration.cell()
+            content.directionalLayoutMargins = NSDirectionalEdgeInsets(
+                top: verticalPadding, leading: leadingMargin, bottom: verticalPadding, trailing: 16
+            )
+            content.text = Self.bookmarkDisplayTitle(bookmark)
+            content.textProperties.color = .label
+            if isLarge {
+                let bodyFont = UIFont.preferredFont(forTextStyle: .body)
+                content.textProperties.font = UIFont.systemFont(ofSize: bodyFont.pointSize, weight: .semibold)
+                content.textProperties.numberOfLines = 2
+                content.textToSecondaryTextVerticalPadding = 3
+                content.secondaryText = HostFormatter.host(of: bookmark.url)
+                content.secondaryTextProperties.font = .preferredFont(forTextStyle: .subheadline)
+                content.secondaryTextProperties.color = .secondaryLabel
+                content.image = Self.roundedFavicon(for: bookmark.url, size: 36, cornerRadius: 8)
+            } else {
+                content.textProperties.font = .preferredFont(forTextStyle: .body)
+                content.textProperties.numberOfLines = 1
+                content.image = Self.roundedFavicon(for: bookmark.url, size: 22, cornerRadius: 5)
+            }
+            cell.contentConfiguration = content
+            cell.backgroundColor = isSelected ? .tertiarySystemGroupedBackground : .secondarySystemGroupedBackground
+            cell.accessoryType = .none
+            (cell as? LibrarySubtitleCell)?.configureSelectionIndicator(visible: isSelectionMode, isSelected: isSelected)
+        }
     }
 
     func presentEditor(for target: BookmarkEditorTarget) {
@@ -263,16 +497,13 @@ final class BookmarksBrowserView: UIView {
 
 extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
     func numberOfSections(in _: UITableView) -> Int {
-        if !searchQuery.isEmpty {
+        if !searchQuery.isEmpty || isViewingFavorites {
             return 1
         }
-        if isViewingFavorites {
-            return 1
-        } else if folderStack.isEmpty {
-            return 3
-        } else {
-            return 2
+        if !effectiveShowsFoldersOnTop {
+            return folderStack.isEmpty ? 2 : 1
         }
+        return folderStack.isEmpty ? 3 : 2
     }
 
     func tableView(_: UITableView, numberOfRowsInSection section: Int) -> Int {
@@ -285,6 +516,8 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
             currentFolders.count
         case .bookmarks:
             currentBookmarks.count
+        case .combinedItems:
+            combinedEntries.count
         }
     }
 
@@ -298,6 +531,8 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
             currentFolders.isEmpty ? nil : "Folders"
         case .bookmarks:
             currentBookmarks.isEmpty ? nil : "Bookmarks"
+        case .combinedItems:
+            combinedEntries.isEmpty ? nil : "Bookmarks"
         }
     }
 
@@ -305,10 +540,17 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
         let cell = tableView.dequeueReusableCell(withIdentifier: "BookmarkRowCell", for: indexPath)
         cell.backgroundColor = .secondarySystemGroupedBackground
 
+        if hidesInlineHeaderBar {
+            configureRegularCell(cell, at: indexPath)
+            return cell
+        }
+
+        (cell as? LibrarySubtitleCell)?.configureSelectionIndicator(visible: false, isSelected: false)
+        cell.contentConfiguration = nil
         switch sectionType(for: indexPath.section) {
-        case .searchResults:
-            let bookmark = searchResults[indexPath.row]
-            cell.textLabel?.text = bookmark.title.isEmpty ? HostFormatter.host(of: bookmark.url) : bookmark.title
+        case .searchResults, .bookmarks, .combinedItems:
+            guard case let .bookmark(bookmark) = entryAt(indexPath) else { return cell }
+            cell.textLabel?.text = Self.bookmarkDisplayTitle(bookmark)
             cell.detailTextLabel?.text = HostFormatter.host(of: bookmark.url)
             cell.imageView?.image = UIImage(systemName: bookmark.isFavorite ? "star.fill" : "bookmark.fill")
             cell.imageView?.tintColor = bookmark.isFavorite ? .systemOrange : .systemBlue
@@ -328,14 +570,6 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
             cell.imageView?.tintColor = .systemYellow
             cell.accessoryType = .disclosureIndicator
             cell.detailTextLabel?.text = nil
-
-        case .bookmarks:
-            let bookmark = currentBookmarks[indexPath.row]
-            cell.textLabel?.text = bookmark.title.isEmpty ? HostFormatter.host(of: bookmark.url) : bookmark.title
-            cell.detailTextLabel?.text = HostFormatter.host(of: bookmark.url)
-            cell.imageView?.image = UIImage(systemName: bookmark.isFavorite ? "star.fill" : "bookmark.fill")
-            cell.imageView?.tintColor = bookmark.isFavorite ? .systemOrange : .systemBlue
-            cell.accessoryType = .none
         }
 
         return cell
@@ -344,32 +578,43 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         let type = sectionType(for: indexPath.section)
-
-        switch type {
-        case .searchResults:
-            let bookmark = searchResults[indexPath.row]
-            if tableView.isEditing {
-                presentEditor(for: .editBookmark(bookmark))
-            } else {
-                onOpenURL?(bookmark.url)
-            }
-
-        case .pinnedFavorites:
-            guard !tableView.isEditing else { return }
+        if type == .pinnedFavorites {
+            guard !tableView.isEditing, !isSelectionMode else { return }
             isViewingFavorites = true
             reload()
+            return
+        }
 
-        case .folders:
-            let folder = currentFolders[indexPath.row]
+        guard let entry = entryAt(indexPath) else { return }
+        if isSelectionMode {
+            switch entry {
+            case let .folder(folder):
+                if selectedFolderIDs.contains(folder.id) {
+                    selectedFolderIDs.remove(folder.id)
+                } else {
+                    selectedFolderIDs.insert(folder.id)
+                }
+            case let .bookmark(bookmark):
+                if selectedBookmarkIDs.contains(bookmark.id) {
+                    selectedBookmarkIDs.remove(bookmark.id)
+                } else {
+                    selectedBookmarkIDs.insert(bookmark.id)
+                }
+            }
+            tableView.reloadRows(at: [indexPath], with: .none)
+            onNavigationStateChanged?()
+            return
+        }
+
+        switch entry {
+        case let .folder(folder):
             if tableView.isEditing {
                 presentEditor(for: .editFolder(folder))
             } else {
                 folderStack.append(folder)
                 reload()
             }
-
-        case .bookmarks:
-            let bookmark = currentBookmarks[indexPath.row]
+        case let .bookmark(bookmark):
             if tableView.isEditing {
                 presentEditor(for: .editBookmark(bookmark))
             } else {
@@ -379,6 +624,7 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
     }
 
     func tableView(_: UITableView, canEditRowAt indexPath: IndexPath) -> Bool {
+        guard !isSelectionMode else { return false }
         let type = sectionType(for: indexPath.section)
         return type != .pinnedFavorites && type != .searchResults
     }
@@ -387,24 +633,20 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
         _: UITableView,
         trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
     ) -> UISwipeActionsConfiguration? {
-        let type = sectionType(for: indexPath.section)
-        guard type != .pinnedFavorites else { return nil }
+        guard !isSelectionMode, let entry = entryAt(indexPath) else { return nil }
 
         let deleteAction = UIContextualAction(style: .destructive, title: "Delete") { [weak self] _, _, completion in
             guard let self else { completion(false); return }
             do {
-                if type == .searchResults {
-                    let bookmark = self.searchResults[indexPath.row]
-                    try self.bookmarkStore.delete(id: bookmark.id)
-                    self.searchResults.remove(at: indexPath.row)
-                } else if type == .folders {
-                    let folder = self.currentFolders[indexPath.row]
+                switch entry {
+                case let .folder(folder):
                     try self.bookmarkStore.deleteFolder(id: folder.id)
-                } else {
-                    let bookmark = self.currentBookmarks[indexPath.row]
+                case let .bookmark(bookmark):
                     try self.bookmarkStore.delete(id: bookmark.id)
+                    self.searchResults.removeAll { $0.id == bookmark.id }
                 }
                 self.reload()
+                self.onDidMutateBookmarks?()
                 completion(true)
             } catch {
                 completion(false)
@@ -415,8 +657,9 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
     }
 
     func tableView(_: UITableView, canMoveRowAt indexPath: IndexPath) -> Bool {
+        guard !isSelectionMode, effectiveSortMode == .none, effectiveShowsFoldersOnTop else { return false }
         let type = sectionType(for: indexPath.section)
-        return type != .pinnedFavorites && type != .searchResults
+        return type == .folders || type == .bookmarks
     }
 
     func tableView(
@@ -465,53 +708,10 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
         contextMenuConfigurationForRowAt indexPath: IndexPath,
         point _: CGPoint
     ) -> UIContextMenuConfiguration? {
-        let type = sectionType(for: indexPath.section)
-        switch type {
-        case .pinnedFavorites:
-            return nil
-
-        case .searchResults:
-            guard indexPath.row < searchResults.count else { return nil }
-            let bookmark = searchResults[indexPath.row]
-            return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-                let openAction = UIAction(
-                    title: "Open",
-                    image: UIImage(systemName: "safari")
-                ) { _ in
-                    self?.onOpenURL?(bookmark.url)
-                }
-                let openNewTabAction = UIAction(
-                    title: "Open in New Tab",
-                    image: UIImage(systemName: "plus.square")
-                ) { _ in
-                    self?.onOpenInNewTab?(bookmark.url)
-                }
-                let copyAction = UIAction(
-                    title: "Copy Link",
-                    image: UIImage(systemName: "doc.on.doc")
-                ) { _ in
-                    UIPasteboard.general.url = bookmark.url
-                }
-                let deleteAction = UIAction(
-                    title: "Delete",
-                    image: UIImage(systemName: "trash"),
-                    attributes: .destructive
-                ) { _ in
-                    do {
-                        try self?.bookmarkStore.delete(id: bookmark.id)
-                        self?.searchResults.removeAll(where: { $0.id == bookmark.id })
-                        self?.reload()
-                    } catch {
-                        Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
-                            .error("deleteBookmark failed: \(error.localizedDescription, privacy: .public)")
-                    }
-                }
-                return UIMenu(children: [openAction, openNewTabAction, copyAction, deleteAction])
-            }
-
-        case .folders:
-            guard indexPath.row < currentFolders.count else { return nil }
-            let folder = currentFolders[indexPath.row]
+        guard !isSelectionMode, let entry = entryAt(indexPath) else { return nil }
+        let isSearchResult = sectionType(for: indexPath.section) == .searchResults
+        switch entry {
+        case let .folder(folder):
             return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
                 let editAction = UIAction(
                     title: "Edit…",
@@ -527,6 +727,7 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
                     do {
                         try self?.bookmarkStore.deleteFolder(id: folder.id)
                         self?.reload()
+                        self?.onDidMutateBookmarks?()
                     } catch {
                         Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
                             .error("deleteFolder failed: \(error.localizedDescription, privacy: .public)")
@@ -535,9 +736,7 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
                 return UIMenu(children: [editAction, deleteAction])
             }
 
-        case .bookmarks:
-            guard indexPath.row < currentBookmarks.count else { return nil }
-            let bookmark = currentBookmarks[indexPath.row]
+        case let .bookmark(bookmark):
             return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
                 let openAction = UIAction(
                     title: "Open",
@@ -570,13 +769,20 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
                 ) { _ in
                     do {
                         try self?.bookmarkStore.delete(id: bookmark.id)
+                        self?.searchResults.removeAll { $0.id == bookmark.id }
                         self?.reload()
+                        self?.onDidMutateBookmarks?()
                     } catch {
                         Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
                             .error("deleteBookmark failed: \(error.localizedDescription, privacy: .public)")
                     }
                 }
-                return UIMenu(children: [openAction, openNewTabAction, copyAction, editAction, deleteAction])
+                var actions = [openAction, openNewTabAction, copyAction]
+                if !isSearchResult {
+                    actions.append(editAction)
+                }
+                actions.append(deleteAction)
+                return UIMenu(children: actions)
             }
         }
     }

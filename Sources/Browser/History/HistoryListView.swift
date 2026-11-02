@@ -9,14 +9,52 @@ import UIKit
 /// Shared base for library list rows so later lists reuse one cell pattern.
 @MainActor
 class LibrarySubtitleCell: UITableViewCell {
+    nonisolated static let selectionLeadingInset: CGFloat = 50
+
+    private let selectionIndicatorView = UIImageView()
+    private(set) var isShowingSelectionIndicator = false
+    private(set) var isSelectionIndicatorChecked = false
+
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         backgroundColor = .secondarySystemGroupedBackground
+        setupSelectionIndicator()
     }
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if !selectionIndicatorView.isHidden {
+            contentView.bringSubviewToFront(selectionIndicatorView)
+        }
+    }
+
+    func configureSelectionIndicator(visible: Bool, isSelected: Bool) {
+        isShowingSelectionIndicator = visible
+        isSelectionIndicatorChecked = visible && isSelected
+        selectionIndicatorView.isHidden = !visible
+        guard visible else { return }
+        let symbol = isSelected ? "checkmark.circle.fill" : "circle"
+        let config = UIImage.SymbolConfiguration(pointSize: 20, weight: .regular)
+        selectionIndicatorView.image = UIImage(systemName: symbol, withConfiguration: config)
+        selectionIndicatorView.tintColor = isSelected ? .systemBlue : .tertiaryLabel
+    }
+
+    private func setupSelectionIndicator() {
+        selectionIndicatorView.translatesAutoresizingMaskIntoConstraints = false
+        selectionIndicatorView.contentMode = .scaleAspectFit
+        selectionIndicatorView.isHidden = true
+        contentView.addSubview(selectionIndicatorView)
+        NSLayoutConstraint.activate([
+            selectionIndicatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            selectionIndicatorView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            selectionIndicatorView.widthAnchor.constraint(equalToConstant: 22),
+            selectionIndicatorView.heightAnchor.constraint(equalToConstant: 22)
+        ])
     }
 }
 
@@ -34,29 +72,93 @@ final class HistoryEntryCell: LibrarySubtitleCell {
 }
 
 /// Displays visited history segmented into Safari-style time buckets
-/// with clear-all, pull-down to reveal search, and swipe-to-delete capabilities.
+/// with clear-all, multi-select deletion, pull-down to reveal search, and swipe-to-delete capabilities.
 @MainActor
 final class HistoryListView: UIView {
     var onOpenURL: ((URL) -> Void)?
+    var onStateChanged: (() -> Void)?
+    var onDidMutateHistory: (() -> Void)?
 
     private let historyStore: HistoryStore
     private var sections: [HistorySection] = []
 
     private(set) var searchQuery: String = ""
+    private(set) var isSelectionMode: Bool = false
+    private(set) var selectedEntryIDs: Set<UUID> = []
 
     var canClearHistory: Bool {
-        !sections.isEmpty
+        !sections.isEmpty || !searchQuery.isEmpty && !historyStore.fetchAll(limit: 1).isEmpty
+    }
+
+    var hasSelectedEntries: Bool {
+        !selectedEntryIDs.isEmpty
     }
 
     private let headerBar = UIView()
+    private var headerTopConstraint: NSLayoutConstraint!
+    private var headerHeightConstraint: NSLayoutConstraint!
+    private var hidesInlineHeaderBar = false
     private let titleLabel = UILabel()
-    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
+    let tableView = UITableView(frame: .zero, style: .insetGrouped)
     private let emptyLabel = UILabel()
     private let searchHeader = LibrarySearchHeaderView(
         frame: CGRect(x: 0, y: 0, width: 0, height: LibrarySearchHeaderView.defaultHeight)
     )
 
     private let searchTuck = LibrarySearchTuckController()
+
+    func setHeaderBarHidden(_ hidden: Bool) {
+        hidesInlineHeaderBar = hidden
+        if !hidden, isSelectionMode {
+            isSelectionMode = false
+            selectedEntryIDs.removeAll()
+        }
+        headerBar.isHidden = hidden
+        headerTopConstraint.constant = hidden ? 0 : 4
+        headerHeightConstraint.constant = hidden ? 0 : 40
+        tableView.reloadData()
+    }
+
+    func enterSelectionMode() {
+        isSelectionMode = true
+        selectedEntryIDs.removeAll()
+        tableView.reloadData()
+        reassertSearchTuck()
+        onStateChanged?()
+    }
+
+    func exitSelectionMode() {
+        guard isSelectionMode || !selectedEntryIDs.isEmpty else { return }
+        isSelectionMode = false
+        selectedEntryIDs.removeAll()
+        tableView.reloadData()
+        reassertSearchTuck()
+        onStateChanged?()
+    }
+
+    func deleteSelectedEntries() {
+        guard !selectedEntryIDs.isEmpty else { return }
+        do {
+            try historyStore.delete(ids: selectedEntryIDs)
+        } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
+                .error("delete selected history entries failed: \(error.localizedDescription, privacy: .public)")
+        }
+        selectedEntryIDs.removeAll()
+        reload()
+        if sections.isEmpty {
+            isSelectionMode = false
+        }
+        onDidMutateHistory?()
+        onStateChanged?()
+    }
+
+    func visibleEntryID(at indexPath: IndexPath) -> UUID? {
+        guard indexPath.section < sections.count,
+              indexPath.row < sections[indexPath.section].entries.count
+        else { return nil }
+        return sections[indexPath.section].entries[indexPath.row].id
+    }
 
     init(historyStore: HistoryStore) {
         self.historyStore = historyStore
@@ -72,6 +174,11 @@ final class HistoryListView: UIView {
 
     func reload() {
         let all = historyStore.fetchAll(limit: 500)
+        let validIDs = Set(all.map(\.id))
+        selectedEntryIDs.formIntersection(validIDs)
+        if all.isEmpty {
+            isSelectionMode = false
+        }
         let filtered: [HistoryEntry]
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         if !query.isEmpty {
@@ -144,11 +251,14 @@ final class HistoryListView: UIView {
             }
         )
 
+        headerTopConstraint = headerBar.topAnchor.constraint(equalTo: topAnchor, constant: 4)
+        headerHeightConstraint = headerBar.heightAnchor.constraint(equalToConstant: 40)
+
         NSLayoutConstraint.activate([
             headerBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             headerBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            headerBar.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            headerBar.heightAnchor.constraint(equalToConstant: 40),
+            headerTopConstraint,
+            headerHeightConstraint,
 
             titleLabel.centerXAnchor.constraint(equalTo: headerBar.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
@@ -171,6 +281,10 @@ final class HistoryListView: UIView {
         else {
             return
         }
+        var presenter = rootVC
+        while let next = presenter.presentedViewController {
+            presenter = next
+        }
 
         let sheet = UIAlertController(title: "Clear History", message: "Clearing history will remove browsing data from OuterView.", preferredStyle: .actionSheet)
         sheet.addAction(UIAlertAction(title: "Clear All History", style: .destructive) { [weak self] _ in
@@ -181,15 +295,34 @@ final class HistoryListView: UIView {
                 Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
                     .error("clear history failed: \(error.localizedDescription, privacy: .public)")
             }
+            self.isSelectionMode = false
+            self.selectedEntryIDs.removeAll()
             self.reload()
+            self.onDidMutateHistory?()
+            self.onStateChanged?()
         })
         sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         if let popover = sheet.popoverPresentationController {
-            popover.sourceView = headerBar
-            popover.sourceRect = headerBar.bounds
+            if headerBar.isHidden {
+                popover.sourceView = self
+                popover.sourceRect = CGRect(x: bounds.midX, y: 24, width: 1, height: 1)
+            } else {
+                popover.sourceView = headerBar
+                popover.sourceRect = headerBar.bounds
+            }
             popover.permittedArrowDirections = []
         }
-        rootVC.present(sheet, animated: true)
+        presenter.present(sheet, animated: true)
+    }
+
+    private static func roundedFavicon(for url: URL, size: CGFloat = 26) -> UIImage {
+        let base = FaviconService.shared.cachedFaviconOrMonogram(for: url, size: size)
+        let targetSize = CGSize(width: size, height: size)
+        return UIGraphicsImageRenderer(size: targetSize).image { _ in
+            let rect = CGRect(origin: .zero, size: targetSize)
+            UIBezierPath(roundedRect: rect, cornerRadius: 6).addClip()
+            base.draw(in: rect)
+        }
     }
 }
 
@@ -210,9 +343,34 @@ extension HistoryListView: UITableViewDataSource, UITableViewDelegate {
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "HistoryEntryCell", for: indexPath)
-        cell.backgroundColor = .secondarySystemGroupedBackground
-
         let entry = sections[indexPath.section].entries[indexPath.row]
+        let isRowSelected = isSelectionMode && selectedEntryIDs.contains(entry.id)
+        cell.backgroundColor = isRowSelected ? .tertiarySystemGroupedBackground : .secondarySystemGroupedBackground
+
+        if hidesInlineHeaderBar {
+            let leadingMargin: CGFloat = isSelectionMode ? LibrarySubtitleCell.selectionLeadingInset : 16
+            var content = UIListContentConfiguration.subtitleCell()
+            content.directionalLayoutMargins = NSDirectionalEdgeInsets(
+                top: 10, leading: leadingMargin, bottom: 10, trailing: 16
+            )
+            content.textToSecondaryTextVerticalPadding = 3
+            content.text = entry.title.isEmpty ? HostFormatter.host(of: entry.url) : entry.title
+            content.textProperties.font = .preferredFont(forTextStyle: .body)
+            content.textProperties.color = .label
+            content.secondaryText = entry.url.absoluteString
+            content.secondaryTextProperties.font = .preferredFont(forTextStyle: .subheadline)
+            content.secondaryTextProperties.color = .secondaryLabel
+            content.image = Self.roundedFavicon(for: entry.url)
+            cell.contentConfiguration = content
+            (cell as? LibrarySubtitleCell)?.configureSelectionIndicator(
+                visible: isSelectionMode,
+                isSelected: isRowSelected
+            )
+            return cell
+        }
+
+        (cell as? LibrarySubtitleCell)?.configureSelectionIndicator(visible: false, isSelected: false)
+        cell.contentConfiguration = nil
         cell.textLabel?.text = entry.title.isEmpty ? HostFormatter.host(of: entry.url) : entry.title
         cell.detailTextLabel?.text = HostFormatter.host(of: entry.url)
         cell.imageView?.image = UIImage(systemName: "clock")
@@ -224,6 +382,16 @@ extension HistoryListView: UITableViewDataSource, UITableViewDelegate {
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         let entry = sections[indexPath.section].entries[indexPath.row]
+        if isSelectionMode {
+            if selectedEntryIDs.contains(entry.id) {
+                selectedEntryIDs.remove(entry.id)
+            } else {
+                selectedEntryIDs.insert(entry.id)
+            }
+            tableView.reloadRows(at: [indexPath], with: .none)
+            onStateChanged?()
+            return
+        }
         onOpenURL?(entry.url)
     }
 
@@ -231,12 +399,15 @@ extension HistoryListView: UITableViewDataSource, UITableViewDelegate {
         _: UITableView,
         trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
     ) -> UISwipeActionsConfiguration? {
+        guard !isSelectionMode else { return nil }
         let entry = sections[indexPath.section].entries[indexPath.row]
         let deleteAction = UIContextualAction(style: .destructive, title: "Delete") { [weak self] _, _, completion in
             guard let self else { completion(false); return }
             do {
                 try self.historyStore.delete(id: entry.id)
                 self.reload()
+                self.onDidMutateHistory?()
+                self.onStateChanged?()
                 completion(true)
             } catch {
                 completion(false)
