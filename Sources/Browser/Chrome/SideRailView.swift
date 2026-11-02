@@ -283,25 +283,9 @@ final class SideRailView: UIView {
         )
     }
 
-    /// Menu button frame in the bottom right corner, aligned with minified address pill.
-    nonisolated static func menuButtonFrame(
-        bounds: CGRect,
-        safeAreaBottom: CGFloat,
-        safeAreaRight: CGFloat = 0
-    ) -> CGRect {
-        let originX = columnOriginX(boundsMaxX: bounds.maxX, safeAreaRight: safeAreaRight)
-        let buttonX = originX + (columnWidth - buttonDiameter) / 2
-        let bottomOffset = max(safeAreaBottom, 20)
-        let buttonY = bounds.maxY - bottomOffset - buttonDiameter
-        return CGRect(x: buttonX, y: buttonY, width: buttonDiameter, height: buttonDiameter)
-    }
-
     /// Camera/system occlusion union whose maxY pushes the column down. Read
     /// live in `layoutSubviews` together with the safe area.
     var reservedOcclusionUnion: CGRect = .zero
-
-    /// Called when the bottom-right quick menu button is tapped.
-    var onQuickMenuTapped: (() -> Void)?
 
     /// Last rail state actually applied through `setRailState`. A repeat
     /// request for the same rail skips the spring so buttons never restart.
@@ -312,16 +296,6 @@ final class SideRailView: UIView {
 
     private let topStack = UIStackView()
     private let bottomStack = UIStackView()
-    private lazy var quickMenuButton: RailButton = {
-        let action = RailAction(
-            systemImageName: "line.3.horizontal",
-            accessibilityLabel: "Page and Navigation Menu",
-            handler: { [weak self] in
-                self?.onQuickMenuTapped?()
-            }
-        )
-        return RailButton(action: action)
-    }()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -380,18 +354,9 @@ final class SideRailView: UIView {
             verticalFittingPriority: .fittingSizeLevel
         ).height
         bottomStack.frame = CGRect(x: originX, y: bottom - bottomHeight, width: width, height: bottomHeight)
-
-        quickMenuButton.frame = Self.menuButtonFrame(
-            bounds: bounds,
-            safeAreaBottom: safeAreaInsets.bottom,
-            safeAreaRight: safeAreaInsets.right
-        )
     }
 
     override func point(inside point: CGPoint, with _: UIEvent?) -> Bool {
-        if quickMenuButton.alpha > 0.1, quickMenuButton.frame.contains(point) {
-            return true
-        }
         if topStack.alpha > 0.1, topStack.frame.contains(point) {
             return true
         }
@@ -405,9 +370,6 @@ final class SideRailView: UIView {
         guard rail != lastAppliedRail else { return }
         let update = { [weak self] in
             guard let self else { return }
-            // Quick menu appears as soon as the rail collapses so a restore
-            // affordance remains before the pill minifies.
-            let showMenu = (rail == .hidden)
             let showStacks = (rail == .visible)
 
             self.topStack.alpha = showStacks ? 1 : 0
@@ -417,10 +379,6 @@ final class SideRailView: UIView {
             self.bottomStack.alpha = showStacks ? 1 : 0
             self.bottomStack.transform = showStacks ? .identity : CGAffineTransform(translationX: 30, y: 0)
             self.bottomStack.accessibilityElementsHidden = !showStacks
-
-            self.quickMenuButton.alpha = showMenu ? 1 : 0
-            self.quickMenuButton.transform = showMenu ? .identity : CGAffineTransform(scaleX: 0.5, y: 0.5)
-            self.quickMenuButton.accessibilityElementsHidden = !showMenu
         }
         if animated {
             UIView.animate(
@@ -449,8 +407,5 @@ final class SideRailView: UIView {
             stack.spacing = Self.spacing
             addSubview(stack)
         }
-        addSubview(quickMenuButton)
-        quickMenuButton.alpha = 0
-        quickMenuButton.transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
     }
 }

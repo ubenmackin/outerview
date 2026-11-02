@@ -83,6 +83,9 @@ final class AddressBarView: UIView {
     var onStop: (() -> Void)?
     var onPillTap: (() -> Void)?
     var onDownloadsTap: (() -> Void)?
+    var onSwipeLeft: (() -> Void)?
+    var onSwipeRight: (() -> Void)?
+    var onSwipeUp: (() -> Void)?
 
     private var currentPill: PillState = .expanded
     private var currentURL: URL?
@@ -299,13 +302,34 @@ final class AddressBarView: UIView {
         domainContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         domainContainer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let tap = UITapGestureRecognizer(target: self, action: #selector(handlePillTap))
-        addGestureRecognizer(tap)
+        setupPillGestures()
 
         observeContentSizeCategory()
         updatePresentation()
         updateDomain()
         updateAction()
+    }
+
+    private func setupPillGestures() {
+        // SOLE pill gesture owner: tap waits for swipes so directional
+        // swipes win; swipes cancel touches to keep pill taps clean.
+        let swipeLeft = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipeLeft))
+        swipeLeft.direction = .left
+        swipeLeft.cancelsTouchesInView = true
+        let swipeRight = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipeRight))
+        swipeRight.direction = .right
+        swipeRight.cancelsTouchesInView = true
+        let swipeUp = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipeUp))
+        swipeUp.direction = .up
+        swipeUp.cancelsTouchesInView = true
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handlePillTap))
+        tap.require(toFail: swipeLeft)
+        tap.require(toFail: swipeRight)
+        tap.require(toFail: swipeUp)
+        addGestureRecognizer(swipeLeft)
+        addGestureRecognizer(swipeRight)
+        addGestureRecognizer(swipeUp)
+        addGestureRecognizer(tap)
     }
 
     private func observeContentSizeCategory() {
@@ -364,6 +388,18 @@ final class AddressBarView: UIView {
 
     @objc private func handlePillTap() {
         onPillTap?()
+    }
+
+    @objc private func handleSwipeLeft() {
+        onSwipeLeft?()
+    }
+
+    @objc private func handleSwipeRight() {
+        onSwipeRight?()
+    }
+
+    @objc private func handleSwipeUp() {
+        onSwipeUp?()
     }
 }
 

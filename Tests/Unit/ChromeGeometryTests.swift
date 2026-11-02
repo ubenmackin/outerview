@@ -22,13 +22,32 @@ final class ChromeGeometryTests: XCTestCase {
         XCTAssertEqual(originXFallback, 394)
     }
 
-    func testMenuButtonFrameCalculation() {
-        let frame = SideRailView.menuButtonFrame(
-            bounds: CGRect(x: 0, y: 0, width: 466, height: 678),
-            safeAreaBottom: 34,
-            safeAreaRight: 84
-        )
-        XCTAssertEqual(frame, CGRect(x: 402, y: 600, width: 44, height: 44))
+    @MainActor
+    func testRailHiddenShowsNoQuickMenuViews() {
+        let rail = SideRailView(frame: CGRect(x: 0, y: 0, width: 466, height: 678))
+        rail.setItems(prefix: [RailAction.back {}], suffix: [RailAction.tabs {}])
+        rail.setRailState(.hidden, pill: .expanded, animated: false)
+        let stacks = rail.subviews.compactMap { $0 as? UIStackView }
+        XCTAssertEqual(stacks.count, 2)
+        for stack in stacks {
+            XCTAssertEqual(stack.alpha, 0)
+        }
+        // No replacement affordance when collapsed; only stacks remain.
+        XCTAssertTrue(rail.subviews.allSatisfy { $0 is UIStackView })
+    }
+
+    @MainActor
+    func testSetRailStateTogglesStacksOnly() {
+        let rail = SideRailView(frame: CGRect(x: 0, y: 0, width: 466, height: 678))
+        rail.setItems(prefix: [RailAction.back {}], suffix: [RailAction.tabs {}])
+        let subviewCount = rail.subviews.count
+        rail.setRailState(.hidden, pill: .expanded, animated: false)
+        rail.setRailState(.visible, pill: .expanded, animated: false)
+        // Toggling visibility fades stacks without adding views.
+        XCTAssertEqual(rail.subviews.count, subviewCount)
+        for stack in rail.subviews.compactMap({ $0 as? UIStackView }) {
+            XCTAssertEqual(stack.alpha, 1)
+        }
     }
 
     func testAddressBarWidthForBounds() {
