@@ -107,9 +107,6 @@ extension BrowserRootViewController {
 
     func setupRail() {
         railView.translatesAutoresizingMaskIntoConstraints = false
-        railView.onQuickMenuTapped = { [weak self] in
-            self?.applyRailMenuTapped()
-        }
         view.addSubview(railView)
         NSLayoutConstraint.activate([
             railView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -224,6 +221,12 @@ extension BrowserRootViewController {
             pillTrailingConstraint
         ])
         pillView.onPillTap = { [weak self] in self?.handlePillTap() }
+        pillView.onSwipeLeft = { [weak self] in self?.handlePillSwipe(direction: .left) }
+        pillView.onSwipeRight = { [weak self] in self?.handlePillSwipe(direction: .right) }
+        pillView.onSwipeUp = { [weak self] in
+            guard let self, !self.isEditingAddress, self.chromeController.state.pill != .editing, !self.isFindActive, !self.isOverviewVisible else { return }
+            self.setOverviewVisible(true)
+        }
         pillView.onPageMenu = { [weak self] in self?.showPageMenu() }
         pillView.pageMenuProvider = { [weak self] in
             self?.makePageMenu() ?? UIMenu()

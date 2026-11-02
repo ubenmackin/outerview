@@ -10,7 +10,7 @@ extension BrowserRootViewController {
 
     enum PillTapRoute: Sendable, Equatable { case restoreChrome, beginEditing }
 
-    static func routePillTap(pill: PillState, isEditing: Bool) -> PillTapRoute? {
+    static func routePillTap(pill: PillState, isEditing: Bool, rail: RailState) -> PillTapRoute? {
         if isEditing {
             return nil
         }
@@ -20,17 +20,17 @@ extension BrowserRootViewController {
         case .minified:
             return .restoreChrome
         case .expanded:
-            return .beginEditing
+            return rail == .hidden ? .restoreChrome : .beginEditing
         }
     }
 
     func handlePillTap() {
-        guard let route = Self.routePillTap(pill: chromeController.state.pill, isEditing: isEditingAddress) else {
+        guard let route = Self.routePillTap(pill: chromeController.state.pill, isEditing: isEditingAddress, rail: chromeController.state.rail) else {
             return
         }
         switch route {
         case .restoreChrome:
-            applyBrowsingResumed(animated: true)
+            applyRailMenuTapped()
         case .beginEditing:
             beginEditing()
         }

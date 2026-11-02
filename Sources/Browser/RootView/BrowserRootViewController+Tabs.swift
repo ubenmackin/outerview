@@ -5,6 +5,11 @@
 
 import UIKit
 
+enum PillSwipeDirection: Sendable {
+    case left
+    case right
+}
+
 extension BrowserRootViewController {
     // MARK: - Tabs
 
@@ -176,6 +181,96 @@ extension BrowserRootViewController {
             logPersistenceError(error, operation: "saveSession")
         }
         displaySelectedTab()
+    }
+
+    func handlePillSwipe(direction: PillSwipeDirection) {
+        guard !isEditingAddress, !isFindActive, !isOverviewVisible, let selected = selectedTabID else { return }
+        let scope = TabOverviewViewController.visibleTabs(overviewItems(), mode: overviewMode, query: "", groupId: overviewController.selectedGroupID)
+        guard let currentIndex = scope.firstIndex(where: { $0.id == selected }) else { return }
+        switch direction {
+        case .left:
+            // Clamp at the first tab so a leading-edge swipe keeps selection.
+            guard currentIndex > 0 else { return }
+            slideToTab(id: scope[currentIndex - 1].id, direction: direction)
+        case .right:
+            if currentIndex + 1 < scope.count {
+                slideToTab(id: scope[currentIndex + 1].id, direction: direction)
+            } else {
+                createNewTabInCurrentScope()
+            }
+        }
+    }
+
+    func createNewTabInCurrentScope() {
+        let outgoing = contentContainer.snapshotView(afterScreenUpdates: false)
+        // Private scope never inherits a group; standard scope stays grouped.
+        let groupId = overviewMode.isPrivate ? nil : overviewController.selectedGroupID
+        let record = TabRecord(isPrivate: overviewMode.isPrivate, groupId: groupId)
+        tabs.append(record)
+        tabPool.create(record)
+        do {
+            try tabStore?.saveSession(tabs: tabs, selected: record.id)
+        } catch {
+            logPersistenceError(error, operation: "saveSession")
+        }
+        selectedTabID = record.id
+        displaySelectedTab()
+        runPillSwipeSlide(outgoingSnapshot: outgoing, direction: .right)
+    }
+
+    private func slideToTab(id: UUID, direction: PillSwipeDirection) {
+        let outgoing = contentContainer.snapshotView(afterScreenUpdates: false)
+        guard tabs.contains(where: { $0.id == id }) else {
+            outgoing?.removeFromSuperview()
+            return
+        }
+        selectedTabID = id
+        if let index = tabs.firstIndex(where: { $0.id == id }) {
+            tabs[index].lastActiveAt = Date()
+        }
+        do {
+            try tabStore?.saveSession(tabs: tabs, selected: id)
+        } catch {
+            logPersistenceError(error, operation: "saveSession")
+        }
+        displaySelectedTab()
+        runPillSwipeSlide(outgoingSnapshot: outgoing, direction: direction)
+    }
+
+    private func runPillSwipeSlide(outgoingSnapshot: UIView?, direction: PillSwipeDirection) {
+        guard let outgoing = outgoingSnapshot else { return }
+        let width = contentContainer.bounds.width
+        guard width > 0 else {
+            outgoing.removeFromSuperview()
+            return
+        }
+        let incoming: UIView?
+        if !startPageContainer.isHidden {
+            incoming = startPageContainer
+        } else if let webView = peekActivePage()?.webView, webView.superview === contentContainer {
+            incoming = webView
+        } else {
+            outgoing.removeFromSuperview()
+            return
+        }
+        guard let incoming else {
+            outgoing.removeFromSuperview()
+            return
+        }
+        // Positive shift follows a right swipe; negative follows a left swipe.
+        let shift: CGFloat = direction == .right ? width : -width
+        outgoing.frame = contentContainer.bounds
+        contentContainer.addSubview(outgoing)
+        incoming.transform = CGAffineTransform(translationX: -shift, y: 0)
+        let animator = UIViewPropertyAnimator(duration: 0.25, curve: .easeInOut) {
+            outgoing.transform = CGAffineTransform(translationX: shift, y: 0)
+            incoming.transform = .identity
+        }
+        animator.addCompletion { _ in
+            outgoing.removeFromSuperview()
+            incoming.transform = .identity
+        }
+        animator.startAnimation()
     }
 
     func activePage() -> WebPageController? {
