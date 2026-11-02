@@ -203,7 +203,8 @@ extension BrowserRootViewController {
         pillSlotCenterXConstraint = pillView.centerXAnchor.constraint(
             equalTo: topBarView.centerXAnchor
         )
-        pillSlotCenterXConstraint.priority = .defaultHigh
+        // Bar-centered wins so an asymmetric slot never drags the capsule off-center.
+        pillSlotCenterXConstraint.priority = .required
         pillSlotWidthConstraint = pillView.widthAnchor.constraint(
             equalToConstant: AddressBarView.minifiedMaxWidth
         )
@@ -211,9 +212,11 @@ extension BrowserRootViewController {
         pillSlotMinLeadingConstraint = pillView.leadingAnchor.constraint(
             greaterThanOrEqualTo: topBarView.pillSlotView.leadingAnchor
         )
+        pillSlotMinLeadingConstraint.priority = .defaultHigh
         pillSlotMaxTrailingConstraint = pillView.trailingAnchor.constraint(
             lessThanOrEqualTo: topBarView.pillSlotView.trailingAnchor
         )
+        pillSlotMaxTrailingConstraint.priority = .defaultHigh
         NSLayoutConstraint.activate([
             pillBottomConstraint,
             pillHeightConstraint,
