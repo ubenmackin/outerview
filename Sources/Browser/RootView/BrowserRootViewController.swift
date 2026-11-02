@@ -459,6 +459,14 @@ final class BrowserRootViewController: UIViewController {
         self.overviewMode = TabOverviewViewController.storedOverviewMode(defaults: defaults)
         if let database {
             self.database = database
+        } else if Self.isScreenshotRun {
+            do {
+                self.database = try OuterViewDatabase(inMemory: true)
+            } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "BrowserRoot")
+                    .error("Screenshot database init failed: \(error.localizedDescription, privacy: .public)")
+                self.database = nil
+            }
         } else {
             do {
                 self.database = try OuterViewDatabase()
@@ -506,6 +514,8 @@ final class BrowserRootViewController: UIViewController {
         lastVerticalBarPlacement = chromePlacement
         updateRailItems()
         loadInitialTabs()
+        // Seed last so restore cannot clobber the fixture tabs.
+        applyScreenshotSeedIfNeeded()
         applyContentInsets()
         applyChromeViews(animated: false)
         subscribeToDownloadProgress()

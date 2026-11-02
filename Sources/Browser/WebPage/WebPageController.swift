@@ -122,6 +122,10 @@ final class WebPageController: NSObject {
     }
 
     func load(_ url: URL) {
+        // Screenshot mode allows only inline content; network loads cancel.
+        if BrowserRootViewController.isScreenshotRun {
+            guard url.absoluteString.lowercased() == "about:blank" else { return }
+        }
         // Central allowlist: rejected schemes surface a navigation error
         // instead of reaching the web view.
         guard URLNormalizer.isLoadable(url) else {
@@ -324,6 +328,15 @@ extension WebPageController: WKNavigationDelegate {
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
     ) {
+        // Screenshot mode keeps inline fixture only; every network
+        // navigation cancels before the web view commits.
+        if BrowserRootViewController.isScreenshotRun {
+            let target = navigationAction.request.url?.absoluteString.lowercased()
+            if target != nil, target != "about:blank" {
+                decisionHandler(.cancel)
+                return
+            }
+        }
         if navigationAction.shouldPerformDownload {
             decisionHandler(.download)
             return
@@ -344,6 +357,15 @@ extension WebPageController: WKNavigationDelegate {
         decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
     ) {
+        // Screenshot mode keeps inline fixture only; every network
+        // response cancels before commit.
+        if BrowserRootViewController.isScreenshotRun {
+            let target = navigationResponse.response.url?.absoluteString.lowercased()
+            if target != nil, target != "about:blank" {
+                decisionHandler(.cancel)
+                return
+            }
+        }
         guard URLNormalizer.isLoadable(navigationResponse.response.url) else {
             rejectUnsupportedScheme(navigationResponse.response.url)
             decisionHandler(.cancel)

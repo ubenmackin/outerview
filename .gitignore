@@ -85,17 +85,18 @@ Carthage/Build/
 Dependencies/
 .accio/
 
-# fastlane
-#
-# It is recommended to not store the screenshots in the git repo.
-# Instead, use fastlane to re-generate the screenshots whenever they are needed.
-# For more information about the recommended setup visit:
-# https://docs.fastlane.tools/best-practices/source-control/#source-control
-
+# fastlane — outputs untracked, lane configs tracked.
+# Regenerate via `bundle exec fastlane`; never commit outputs.
+# Tracked: Fastfile, Snapfile, Appfile. Untracked below.
 fastlane/report.xml
 fastlane/Preview.html
-fastlane/screenshots/**/*.png
-fastlane/test_output
+fastlane/screenshots/
+fastlane/test_output/
+
+# Bundler
+# Local gem installs stay untracked; lane config stays tracked.
+.bundle
+vendor/bundle
 
 # Code Injection
 #
