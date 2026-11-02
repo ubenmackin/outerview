@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: com.volcrypt
   deploymentTarget:
     iOS: "27.1"
+
 targets:
   OuterView:
     type: application
@@ -25,12 +26,22 @@ targets:
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         DEVELOPMENT_TEAM: LYYD96F2J8
-        INFOPLIST_KEY_CFBundleDisplayName: Outer View
-        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+        IPHONEOS_DEPLOYMENT_TARGET: "27.1"
+        INFOPLIST_KEY_CFBundleDisplayName: "Outer View"
+        INFOPLIST_KEY_CKSharingSupported: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown"
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.utilities"
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        PRODUCT_NAME: OuterView
       configs:
         Debug:
           base:
             SWIFT_ENABLE_TESTABILITY: "YES"
+
   OuterViewTests:
     type: bundle.unit-test
     platform: iOS
@@ -46,6 +57,7 @@ targets:
         GENERATE_INFOPLIST_FILE: "YES"
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/OuterView.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/OuterView
         BUNDLE_LOADER: $(TEST_HOST)
+
 schemes:
   OuterView:
     build:
