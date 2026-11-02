@@ -38,6 +38,10 @@ final class FaviconService {
     /// Fetches favicon asynchronously, returning cached or newly fetched image.
     /// Falls back to monogram on network failure.
     func favicon(for url: URL, size: CGFloat = 88) async -> UIImage {
+        // Screenshot runs stay offline; monograms keep captures deterministic.
+        if BrowserRootViewController.isScreenshotRun {
+            return generateMonogram(for: HostFormatter.host(of: url), size: size)
+        }
         let nsURL = url as NSURL
         if let cached = memoryCache.object(forKey: nsURL) {
             return resizedForDisplay(cached, size: size)
@@ -121,7 +125,8 @@ final class FaviconService {
     }
 
     private func fetchRemoteFavicon(host: String) async -> UIImage? {
-        guard !host.isEmpty else {
+        // Screenshot runs never hit the network.
+        guard !BrowserRootViewController.isScreenshotRun, !host.isEmpty else {
             return nil
         }
         var components = URLComponents(string: "https://www.google.com/s2/favicons")
@@ -173,7 +178,9 @@ final class FaviconService {
     }
 
     private func saveToDisk(image: UIImage, forHost host: String) {
-        guard let url = diskURL(forHost: host),
+        // Screenshot runs keep favicons in memory only.
+        guard !BrowserRootViewController.isScreenshotRun,
+              let url = diskURL(forHost: host),
               let data = image.pngData()
         else {
             return

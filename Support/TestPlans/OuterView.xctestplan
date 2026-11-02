@@ -31,6 +31,14 @@
         "identifier" : "OuterViewTests",
         "name" : "OuterViewTests"
       }
+    },
+    {
+      "parallelizable" : false,
+      "target" : {
+        "containerPath" : "container:OuterView.xcodeproj",
+        "identifier" : "OuterViewUITests",
+        "name" : "OuterViewUITests"
+      }
     }
   ],
   "version" : 1

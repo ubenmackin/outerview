@@ -9,6 +9,10 @@ extension BrowserRootViewController {
     // MARK: - Tabs
 
     func loadInitialTabs() {
+        // Screenshot runs seed fixed tabs; restore would clobber them.
+        guard !Self.isScreenshotRun else {
+            return
+        }
         if let argIndex = ProcessInfo.processInfo.arguments.firstIndex(of: "-openURL"),
            argIndex + 1 < ProcessInfo.processInfo.arguments.count,
            let url = URL(string: ProcessInfo.processInfo.arguments[argIndex + 1]),

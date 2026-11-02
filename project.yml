@@ -58,12 +58,27 @@ targets:
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/OuterView.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/OuterView
         BUNDLE_LOADER: $(TEST_HOST)
 
+  OuterViewUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - OuterViewUITests
+    dependencies:
+      - target: OuterView
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        GENERATE_INFOPLIST_FILE: "YES"
+        TEST_TARGET_NAME: OuterView
+
 schemes:
   OuterView:
     build:
       targets:
         OuterView: all
         OuterViewTests: [test]
+        OuterViewUITests: [test]
     run:
       config: Debug
     test:

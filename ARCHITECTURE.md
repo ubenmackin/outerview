@@ -179,10 +179,11 @@ The page menu accessed from the address capsule adheres strictly to Safari's str
   ```bash
   xcodebuild test -scheme OuterView -destination "platform=iOS Simulator,name=iPhone 17 Pro" -only-testing:OuterViewTests
   ```
-- **Test Scope & Architecture**: All tests are contained in the `OuterViewTests` bundle (`bundle.unit-test`).
+- **Test Scope & Architecture**: Tests span two bundles: `OuterViewTests` (`bundle.unit-test`) for in-process logic and layout, plus `OuterViewUITests` (`bundle.ui-testing`, `TEST_TARGET_NAME: OuterView`) for out-of-process store screenshot capture via the Fastlane snapshot pipeline.
   - **Unit Tests (`Tests/Unit/`)**: Pure business logic, parsers, algorithms, view models, and state controllers.
-  - **View Integration Tests (`Tests/Views/`)**: In-process UIKit hierarchy and layout verification anchored to `TestWindow.swift`. Out-of-process `XCUI` tests (`XCUIApplication`) are deliberately omitted to avoid test runner flakiness and overhead.
-  - **Test Plans**: Managed via `Support/TestPlans/OuterView.xctestplan` (default, all tests, randomized ordering) and `Support/TestPlans/OuterViewFast.xctestplan` (fast logic/model tests only).
+  - **View Integration Tests (`Tests/Views/`)**: In-process UIKit hierarchy and layout verification anchored to `TestWindow.swift`. Out-of-process `XCUIApplication` coverage lives only in `OuterViewUITests`, never duplicated here.
+  - **Screenshot UI Tests (`OuterViewUITests/`)**: Out-of-process `XCUIApplication` capture (`OuterViewScreenshots`) asserting `BrowserRootViewController.placement` behavior (compact vs regular) and producing store screenshots through the `Snapfile`/`Fastfile` snapshot pipeline on locked simulators.
+  - **Test Plans**: Managed via `Support/TestPlans/OuterView.xctestplan` (default, all tests: `OuterViewTests` plus `OuterViewUITests`, randomized ordering) and `Support/TestPlans/OuterViewFast.xctestplan` (fast logic/model unit tests only: `OuterViewTests` with slow view suites skipped, `OuterViewUITests` excluded by design).
 - **Project Maintenance**: Whenever files are added, removed, or project configuration changes, `xcodegen generate` must be run to synchronize `OuterView.xcodeproj` from `project.yml`.
 
 ### Architectural Invariants

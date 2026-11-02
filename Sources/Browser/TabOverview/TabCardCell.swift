@@ -119,6 +119,11 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         if let url = item.url {
             let display = HostFormatter.displayTitle(url: url, title: item.title)
             titleLabel.text = display.isEmpty ? "New Tab" : display
+        } else if let title = item.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !title.isEmpty
+        {
+            // URL-less tabs surface their title so seeded fixtures stay visible.
+            titleLabel.text = title
         } else {
             titleLabel.text = "New Tab"
         }
