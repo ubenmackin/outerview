@@ -176,6 +176,14 @@ extension BrowserRootViewController {
             proxy.onDragBegan = { [weak self] in
                 self?.handleDragBegan()
             }
+            proxy.topInsetProvider = { [weak self] in
+                guard let self else { return 0 }
+                return Self.topContentInset(
+                    for: self.chromePlacement,
+                    state: self.chromeController.state,
+                    stripVisible: !self.tabStripView.isHidden
+                )
+            }
             scrollProxies[id] = proxy
         }
         proxy.attach(to: page.webView.scrollView)
@@ -212,7 +220,7 @@ extension BrowserRootViewController {
                         newTop: newTop
                     )
                     let scrollView = webView.scrollView
-                    let minOffsetY = -scrollView.adjustedContentInset.top
+                    let minOffsetY = -newTop
                     let maxOffsetY = scrollView.contentSize.height - scrollView.bounds.height + bottom
                     let clampedY = min(max(compensated.y, minOffsetY), max(maxOffsetY, minOffsetY))
                     webView.scrollView.contentOffset = CGPoint(x: compensated.x, y: clampedY)

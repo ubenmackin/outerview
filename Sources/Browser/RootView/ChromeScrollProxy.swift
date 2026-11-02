@@ -31,6 +31,10 @@ final class ChromeScrollProxy: NSObject, UIScrollViewDelegate {
     /// Called when the user's finger starts dragging the page.
     var onDragBegan: (() -> Void)?
 
+    /// Returns the active top chrome obstruction inset (e.g. 84 or 128 pt on
+    /// regular width) so top-of-content boundary checks match resting scroll.
+    var topInsetProvider: (() -> CGFloat)?
+
     /// Previous delegate kept for pass-through of the scroll callbacks.
     weak var forwardedDelegate: any UIScrollViewDelegate?
 
@@ -69,12 +73,13 @@ final class ChromeScrollProxy: NSObject, UIScrollViewDelegate {
         forwardedDelegate?.scrollViewDidScroll?(scrollView)
         guard !suppressDeltas else { return }
         if Self.isUserDriven(isDragging: scrollView.isDragging, isDecelerating: scrollView.isDecelerating) {
-            if currentY <= 0 {
+            let topBound = -(topInsetProvider?() ?? 0)
+            if currentY <= topBound {
                 // At the top of content (or during rubber-band overscroll), ensure chrome
-                // expands and never treat the bounce-back toward 0 as downward scrolling.
+                // expands and never treat the bounce-back toward resting top as downward scrolling.
                 if change < 0 {
                     onScrollDelta?(change)
-                } else if currentY == 0, change == 0 {
+                } else if currentY == topBound, change == 0 {
                     onScrollDelta?(-ChromeStateController.revealThreshold)
                 }
             } else {

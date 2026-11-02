@@ -8,8 +8,11 @@ import UIKit
 @MainActor
 final class TabStripView: UIView {
     nonisolated static let stripHeight: CGFloat = 44
-    nonisolated static let cellWidth: CGFloat = 160
-    nonisolated static let cellHeight: CGFloat = 36
+    nonisolated static let horizontalInset: CGFloat = 28
+    nonisolated static let trackHeight: CGFloat = 32
+    nonisolated static let cellHeight: CGFloat = 32
+    nonisolated static let minCellWidth: CGFloat = 140
+    nonisolated static let cellWidth: CGFloat = minCellWidth
 
     var onSelectTab: ((UUID) -> Void)?
     var onCloseTab: ((UUID) -> Void)?
@@ -18,13 +21,28 @@ final class TabStripView: UIView {
     private(set) var displayedTabs: [TabOverviewItem] = []
     private(set) var displayedSelectedID: UUID?
 
+    let trackView = UIView()
     let collectionView: UICollectionView
     let newTabButton = UIButton(type: .system)
     private let flowLayout = UICollectionViewFlowLayout()
     private let blurView = UIVisualEffectView(effect: RegularHeaderBackground.makeBlurEffect())
+    private var lastCollectionBoundsSize: CGSize = .zero
 
     var isBlurVisible: Bool {
         !blurView.isHidden
+    }
+
+    nonisolated static func tabWidth(at index: Int, count: Int, availableWidth: CGFloat) -> CGFloat {
+        guard count > 0, availableWidth > 0 else { return minCellWidth }
+        let totalWidth = floor(availableWidth)
+        let rawEqual = totalWidth / CGFloat(count)
+        guard rawEqual >= minCellWidth else {
+            return minCellWidth
+        }
+        let clampedIndex = max(0, min(index, count - 1))
+        let start = floor(CGFloat(clampedIndex) * totalWidth / CGFloat(count))
+        let end = floor(CGFloat(clampedIndex + 1) * totalWidth / CGFloat(count))
+        return max(1, end - start)
     }
 
     func applyHeaderBackground() {
@@ -46,21 +64,54 @@ final class TabStripView: UIView {
         CGSize(width: UIView.noIntrinsicMetric, height: Self.stripHeight)
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateTrackBorder()
+        if collectionView.bounds.size != lastCollectionBoundsSize {
+            lastCollectionBoundsSize = collectionView.bounds.size
+            updateScrollBounce()
+            flowLayout.invalidateLayout()
+        }
+    }
+
     func render(tabs: [TabOverviewItem], selectedID: UUID?) {
         displayedTabs = tabs
         displayedSelectedID = selectedID
+        updateScrollBounce()
         collectionView.reloadData()
+        flowLayout.invalidateLayout()
+    }
+
+    private func updateScrollBounce() {
+        let contentMinimum = CGFloat(displayedTabs.count) * Self.minCellWidth
+        collectionView.alwaysBounceHorizontal = collectionView.bounds.width > 0
+            && contentMinimum > floor(collectionView.bounds.width)
+    }
+
+    private func updateTrackBorder() {
+        let scale = max(1, traitCollection.displayScale)
+        trackView.layer.borderWidth = 1.0 / scale
+        trackView.layer.borderColor = UIColor.separator.withAlphaComponent(0.35).resolvedColor(with: traitCollection).cgColor
     }
 
     private func setup() {
         RegularHeaderBackground.pinBlur(blurView, in: self)
         applyHeaderBackground()
 
+        trackView.translatesAutoresizingMaskIntoConstraints = false
+        trackView.backgroundColor = .tertiarySystemFill
+        trackView.layer.cornerRadius = Self.trackHeight / 2
+        trackView.layer.cornerCurve = .continuous
+        trackView.clipsToBounds = true
+        addSubview(trackView)
+        updateTrackBorder()
+
         flowLayout.scrollDirection = .horizontal
-        flowLayout.minimumInteritemSpacing = 8
-        flowLayout.minimumLineSpacing = 8
-        flowLayout.sectionInset = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
-        flowLayout.itemSize = CGSize(width: Self.cellWidth, height: Self.cellHeight)
+        flowLayout.minimumInteritemSpacing = 0
+        flowLayout.minimumLineSpacing = 0
+        flowLayout.sectionInset = .zero
+        flowLayout.estimatedItemSize = .zero
+        flowLayout.itemSize = CGSize(width: Self.minCellWidth, height: Self.cellHeight)
 
         collectionView.backgroundColor = .clear
         collectionView.showsHorizontalScrollIndicator = false
@@ -68,31 +119,57 @@ final class TabStripView: UIView {
         collectionView.dataSource = self
         collectionView.delegate = self
         collectionView.register(TabStripCell.self, forCellWithReuseIdentifier: TabStripCell.reuseIdentifier)
-        addSubview(collectionView)
+        trackView.addSubview(collectionView)
 
+        // Retained hidden for programmatic callers; TopBarView owns the visible `+` action on regular.
         newTabButton.setImage(UIImage(systemName: "plus"), for: .normal)
         newTabButton.tintColor = .label
         newTabButton.accessibilityLabel = "New Tab"
-        newTabButton.translatesAutoresizingMaskIntoConstraints = false
+        newTabButton.isHidden = true
         newTabButton.addAction(UIAction { [weak self] _ in self?.onNewTab?() }, for: .touchUpInside)
-        addSubview(newTabButton)
+
+        let trackLeading = trackView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.horizontalInset)
+        let trackTrailing = trackView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.horizontalInset)
+        trackTrailing.priority = UILayoutPriority(999)
+        let trackHeight = trackView.heightAnchor.constraint(equalToConstant: Self.trackHeight)
+        trackHeight.priority = UILayoutPriority(999)
 
         NSLayoutConstraint.activate([
-            collectionView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            collectionView.trailingAnchor.constraint(equalTo: newTabButton.leadingAnchor, constant: -8),
-            collectionView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            collectionView.heightAnchor.constraint(equalToConstant: Self.cellHeight),
-            newTabButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            newTabButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            newTabButton.widthAnchor.constraint(equalToConstant: 36),
-            newTabButton.heightAnchor.constraint(equalToConstant: 36)
+            trackLeading,
+            trackTrailing,
+            trackView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            trackHeight,
+            collectionView.leadingAnchor.constraint(equalTo: trackView.leadingAnchor),
+            collectionView.trailingAnchor.constraint(equalTo: trackView.trailingAnchor),
+            collectionView.topAnchor.constraint(equalTo: trackView.topAnchor),
+            collectionView.bottomAnchor.constraint(equalTo: trackView.bottomAnchor)
         ])
+
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (self: Self, _: UITraitCollection) in
+            self.updateTrackBorder()
+        }
     }
 }
 
-extension TabStripView: UICollectionViewDataSource, UICollectionViewDelegate {
+extension TabStripView: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
     func collectionView(_: UICollectionView, numberOfItemsInSection _: Int) -> Int {
         displayedTabs.count
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        layout _: UICollectionViewLayout,
+        sizeForItemAt indexPath: IndexPath
+    ) -> CGSize {
+        let width = Self.tabWidth(
+            at: indexPath.item,
+            count: displayedTabs.count,
+            availableWidth: collectionView.bounds.width
+        )
+        let resolvedHeight = collectionView.bounds.height > 0
+            ? min(Self.cellHeight, collectionView.bounds.height)
+            : Self.cellHeight
+        return CGSize(width: width, height: max(1, resolvedHeight))
     }
 
     func collectionView(
@@ -121,18 +198,28 @@ extension TabStripView: UICollectionViewDataSource, UICollectionViewDelegate {
     }
 }
 
-/// Fixed 160 by 36 cell with favicon plus title plus close affordance.
+/// Equal-width Safari capsule tab cell with centered `[favicon + title]` and a leading
+/// `xmark.circle.fill` close button on the active tab.
 @MainActor
 final class TabStripCell: UICollectionViewCell {
     static let reuseIdentifier = "TabStripCell"
+    nonisolated static let activeLeadingClearance: CGFloat = 34
+    nonisolated static let inactiveHorizontalPadding: CGFloat = 14
 
     var onClose: (() -> Void)?
 
+    private let closeButton = AccessibleButton(type: .system)
+    private let titleGroupStack = UIStackView()
     private let faviconView = UIImageView()
     private let titleLabel = UILabel()
-    private let closeButton = UIButton(type: .system)
+    private var titleGroupMinLeadingConstraint: NSLayoutConstraint!
     private var currentID: UUID?
+    private var isTabSelected = false
     private var faviconTask: Task<Void, Never>?
+
+    var isCloseButtonVisible: Bool {
+        !closeButton.isHidden
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -150,14 +237,18 @@ final class TabStripCell: UICollectionViewCell {
         faviconTask = nil
         onClose = nil
         currentID = nil
+        isTabSelected = false
         faviconView.image = nil
         titleLabel.text = nil
+        closeButton.isHidden = true
     }
 
     func configure(with item: TabOverviewItem, isSelected: Bool) {
         faviconTask?.cancel()
         faviconTask = nil
         currentID = item.id
+        isTabSelected = isSelected
+
         if let url = item.url {
             titleLabel.text = HostFormatter.displayTitle(url: url, title: item.title)
             faviconView.image = FaviconService.shared.cachedFaviconOrMonogram(for: url, size: 16)
@@ -168,64 +259,117 @@ final class TabStripCell: UICollectionViewCell {
             }
         } else {
             titleLabel.text = "New Tab"
-            faviconView.image = UIImage(systemName: "globe")
+            let globeConfig = UIImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+            faviconView.image = UIImage(systemName: "globe", withConfiguration: globeConfig)
         }
-        contentView.backgroundColor = isSelected ? .secondarySystemFill : .clear
+
+        let baseFont = UIFont.systemFont(ofSize: 13, weight: isSelected ? .semibold : .medium)
+        titleLabel.font = UIFontMetrics(forTextStyle: .footnote).scaledFont(for: baseFont)
+        titleLabel.textColor = isSelected ? .label : UIColor.label.withAlphaComponent(0.85)
+
+        closeButton.isHidden = !isSelected
+        titleGroupMinLeadingConstraint.constant = isSelected
+            ? Self.activeLeadingClearance
+            : Self.inactiveHorizontalPadding
+
+        applySelectionAppearance()
+
         isAccessibilityElement = true
         accessibilityTraits = isSelected ? [.button, .selected] : [.button]
         accessibilityLabel = titleLabel.text
     }
 
+    private func applySelectionAppearance() {
+        if isTabSelected {
+            contentView.backgroundColor = .secondarySystemFill
+            let scale = max(1, traitCollection.displayScale)
+            contentView.layer.borderWidth = 1.0 / scale
+            contentView.layer.borderColor = UIColor.separator
+                .withAlphaComponent(0.55)
+                .resolvedColor(with: traitCollection)
+                .cgColor
+        } else {
+            contentView.backgroundColor = .clear
+            contentView.layer.borderWidth = 0
+            contentView.layer.borderColor = nil
+        }
+    }
+
     private func setup() {
-        contentView.layer.cornerRadius = 8
+        contentView.layer.cornerRadius = TabStripView.trackHeight / 2
+        contentView.layer.cornerCurve = .continuous
         contentView.clipsToBounds = true
-
-        faviconView.contentMode = .scaleAspectFit
-        faviconView.tintColor = .secondaryLabel
-        faviconView.translatesAutoresizingMaskIntoConstraints = false
-        faviconView.setContentHuggingPriority(.required, for: .horizontal)
-        NSLayoutConstraint.activate([
-            faviconView.widthAnchor.constraint(equalToConstant: 16),
-            faviconView.heightAnchor.constraint(equalToConstant: 16)
-        ])
-
-        titleLabel.font = .preferredFont(forTextStyle: .caption1)
-        titleLabel.adjustsFontForContentSizeCategory = true
-        titleLabel.textColor = .label
-        titleLabel.numberOfLines = 1
-        titleLabel.lineBreakMode = .byTruncatingTail
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         closeButton.setImage(
             UIImage(
-                systemName: "xmark",
-                withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+                systemName: "xmark.circle.fill",
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
             ),
             for: .normal
         )
         closeButton.tintColor = .secondaryLabel
         closeButton.accessibilityLabel = "Close Tab"
+        closeButton.isHidden = true
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.addAction(UIAction { [weak self] _ in self?.onClose?() }, for: .touchUpInside)
-        NSLayoutConstraint.activate([
-            closeButton.widthAnchor.constraint(equalToConstant: 24),
-            closeButton.heightAnchor.constraint(equalToConstant: 24)
-        ])
+        contentView.addSubview(closeButton)
 
-        let stack = UIStackView(arrangedSubviews: [faviconView, titleLabel, closeButton])
-        stack.axis = .horizontal
-        stack.alignment = .center
-        stack.spacing = 6
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(stack)
+        faviconView.contentMode = .scaleAspectFit
+        faviconView.tintColor = .secondaryLabel
+        faviconView.layer.cornerRadius = 4
+        faviconView.clipsToBounds = true
+        faviconView.translatesAutoresizingMaskIntoConstraints = false
+        faviconView.setContentHuggingPriority(.required, for: .horizontal)
+        faviconView.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.textColor = .label
+        titleLabel.numberOfLines = 1
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        titleGroupStack.axis = .horizontal
+        titleGroupStack.alignment = .center
+        titleGroupStack.spacing = 6
+        titleGroupStack.translatesAutoresizingMaskIntoConstraints = false
+        titleGroupStack.addArrangedSubview(faviconView)
+        titleGroupStack.addArrangedSubview(titleLabel)
+        contentView.addSubview(titleGroupStack)
+
+        let closeLeading = closeButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 5)
+        closeLeading.priority = UILayoutPriority(999)
+        let centerGroup = titleGroupStack.centerXAnchor.constraint(equalTo: contentView.centerXAnchor)
+        centerGroup.priority = .defaultHigh
+        titleGroupMinLeadingConstraint = titleGroupStack.leadingAnchor.constraint(
+            greaterThanOrEqualTo: contentView.leadingAnchor,
+            constant: Self.inactiveHorizontalPadding
+        )
+        titleGroupMinLeadingConstraint.priority = UILayoutPriority(999)
+        let maxTrailing = titleGroupStack.trailingAnchor.constraint(
+            lessThanOrEqualTo: contentView.trailingAnchor,
+            constant: -Self.inactiveHorizontalPadding
+        )
+        maxTrailing.priority = UILayoutPriority(999)
+
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
-            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: 4),
-            stack.topAnchor.constraint(equalTo: contentView.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
+            closeLeading,
+            closeButton.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            closeButton.widthAnchor.constraint(equalToConstant: 24),
+            closeButton.heightAnchor.constraint(equalToConstant: 24),
+            faviconView.widthAnchor.constraint(equalToConstant: 16),
+            faviconView.heightAnchor.constraint(equalToConstant: 16),
+            centerGroup,
+            titleGroupMinLeadingConstraint,
+            maxTrailing,
+            titleGroupStack.centerYAnchor.constraint(equalTo: contentView.centerYAnchor)
         ])
 
         isAccessibilityElement = true
         accessibilityTraits = .button
+
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (self: Self, _: UITraitCollection) in
+            self.applySelectionAppearance()
+        }
     }
 }
