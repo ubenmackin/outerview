@@ -251,12 +251,13 @@ final class TabStripCell: UICollectionViewCell {
 
         if let url = item.url {
             titleLabel.text = HostFormatter.displayTitle(url: url, title: item.title)
-            faviconView.image = FaviconService.shared.cachedFaviconOrMonogram(for: url, size: 16)
-            faviconTask = Task { [weak self, targetURL = url, targetID = item.id] in
-                let image = await FaviconService.shared.favicon(for: targetURL, size: 16)
-                guard !Task.isCancelled, self?.currentID == targetID else { return }
-                self?.faviconView.image = image
-            }
+            faviconTask = FaviconService.shared.bind(
+                url: url,
+                into: faviconView,
+                identity: item.id,
+                currentIdentity: { [weak self] in self?.currentID },
+                size: 16
+            )
         } else {
             titleLabel.text = "New Tab"
             let globeConfig = UIImage.SymbolConfiguration(pointSize: 13, weight: .medium)

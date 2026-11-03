@@ -82,10 +82,13 @@ def prepare_simulator(device_name)
   sh("xcrun simctl erase \"#{udid}\"")
   sh("xcrun simctl boot \"#{udid}\" || true", log: false)
   sh("xcrun simctl bootstatus \"#{udid}\" -b")
+  sh("open -a Simulator.app --args -CurrentDeviceUDID \"#{udid}\" || true", log: false)
+  sleep 2
   udid
 end
 
-# Resolves Outer Display devicetype; nil lets caller abort listing devices.
+# Resolves the Outer Display devicetype only; never substitutes another type.
+# nil lets the caller abort fail-closed with the full diagnostic listing.
 def duo_outer_devicetype_id(devicetypes_json)
   require "json"
   types = JSON.parse(devicetypes_json)["devicetypes"] || []
@@ -146,23 +149,60 @@ lane :screenshots_iphone do
   ensure_simulator_present("iPhone 17 Pro", listing)
   prepare_simulator("iPhone 17 Pro")
   # Pre-erased plus pre-booted; first lane clears the shared root for a clean run.
-  snapshot(devices: ["iPhone 17 Pro"], erase_simulator: false, override_status_bar: true, clear_previous_screenshots: true)
+  snapshot(
+    devices: ["iPhone 17 Pro"],
+    erase_simulator: false,
+    override_status_bar: true,
+    clear_previous_screenshots: true,
+    localize_simulator: false,
+    launch_arguments: ["-OuterViewScreenshots"]
+  )
+end
+
+def hinge_bin
+  File.expand_path("../Scripts/hinge", __dir__)
 end
 
 # Outer compact runs on the Outer Display simulator; inner regular runs on Duo.
 lane :screenshots_duo_outer do
   ensure_outer_display_simulator
-  prepare_simulator("iPhone Duo - Outer Display")
+  udid = prepare_simulator("iPhone Duo - Outer Display")
+  # Hinge close must succeed: a silent failure leaves inner content on the outer lane.
+  sh("\"#{hinge_bin}\" -d \"#{udid}\" close")
   # Pre-erased plus pre-booted; appends so prior device output survives.
-  snapshot(devices: ["iPhone Duo - Outer Display"], erase_simulator: false, override_status_bar: true, clear_previous_screenshots: false)
+  snapshot(
+    devices: ["iPhone Duo - Outer Display"],
+    erase_simulator: false,
+    override_status_bar: true,
+    clear_previous_screenshots: false,
+    localize_simulator: false,
+    launch_arguments: ["-OuterViewScreenshots"]
+  )
 end
 
 lane :screenshots_duo_inner do
   listing = sh("xcrun simctl list devices -j", log: false)
   ensure_simulator_present("iPhone Duo", listing)
-  prepare_simulator("iPhone Duo")
-  # Pre-erased plus pre-booted; appends so prior device output survives.
-  snapshot(devices: ["iPhone Duo"], erase_simulator: false, override_status_bar: true, clear_previous_screenshots: false)
+  udid = prepare_simulator("iPhone Duo")
+  sh("\"#{hinge_bin}\" -d \"#{udid}\" open")
+  # Keep hinge open in background if Simulator.app or test harness resets it
+  watcher_pid = Process.spawn(
+    "while true; do \"#{hinge_bin}\" -d \"#{udid}\" open >/dev/null 2>&1; sleep 3; done"
+  )
+  begin
+    # Pre-erased plus pre-booted; appends so prior device output survives.
+    snapshot(
+      devices: ["iPhone Duo"],
+      erase_simulator: false,
+      override_status_bar: true,
+      clear_previous_screenshots: false,
+      localize_simulator: false,
+      launch_arguments: ["-OuterViewScreenshots", "-OuterViewInnerDisplay"]
+    )
+  ensure
+    Process.kill("TERM", watcher_pid) rescue nil
+    Process.wait(watcher_pid) rescue nil
+  end
 end
 
 # Sequential single-root capture; only the first lane clears.

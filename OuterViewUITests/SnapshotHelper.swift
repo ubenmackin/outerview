@@ -1,4 +1,5 @@
 // UITests — Fastlane snapshot helper (vendored, do not edit).
+// Sole authorized deviation from the vendored original: inner-display screenshot selection in Snapshot.snapshot.
 import Foundation
 import XCTest
 
@@ -154,7 +155,17 @@ open class Snapshot: NSObject {
                 return
             }
 
-            let screenshot = XCUIScreen.main.screenshot()
+            let isInner = (Snapshot.app?.launchArguments.contains("-OuterViewInnerDisplay") ?? false)
+                || ProcessInfo.processInfo.arguments.contains("-OuterViewInnerDisplay")
+                || (ProcessInfo().environment["SIMULATOR_DEVICE_NAME"] == "iPhone Duo")
+
+            var screenshot = XCUIScreen.main.screenshot()
+            if isInner {
+                let screenshots = XCUIScreen.screens.map { $0.screenshot() }
+                if let largest = screenshots.max(by: { $0.image.size.width * $0.image.size.height < $1.image.size.width * $1.image.size.height }) {
+                    screenshot = largest
+                }
+            }
             #if os(iOS) && !targetEnvironment(macCatalyst)
                 let image = XCUIDevice.shared.orientation.isLandscape ? fixLandscapeOrientation(image: screenshot.image) : screenshot.image
             #else

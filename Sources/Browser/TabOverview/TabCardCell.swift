@@ -87,6 +87,8 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private let hostLabel = UILabel()
     private let closeButton = UIButton(type: .system)
     private let swipePanRecognizer = CardSwipePanGestureRecognizer()
+    private var faviconTask: Task<Void, Never>?
+    private var currentID: UUID?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -101,6 +103,10 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     override func prepareForReuse() {
         super.prepareForReuse()
         onClose = nil
+        faviconTask?.cancel()
+        faviconTask = nil
+        currentID = nil
+        faviconView.image = UIImage(systemName: "globe")
         previewImageView.image = nil
         previewImageView.isHidden = true
         titleLabel.text = nil
@@ -115,6 +121,22 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     }
 
     func configure(with item: TabOverviewItem, preview: UIImage?, isSelected: Bool) {
+        faviconTask?.cancel()
+        faviconTask = nil
+        currentID = item.id
+
+        if let url = item.url {
+            faviconTask = FaviconService.shared.bind(
+                url: url,
+                into: faviconView,
+                identity: item.id,
+                currentIdentity: { [weak self] in self?.currentID },
+                size: 16
+            )
+        } else {
+            faviconView.image = UIImage(systemName: "globe")
+        }
+
         let host = item.host
         if let url = item.url {
             let display = HostFormatter.displayTitle(url: url, title: item.title)

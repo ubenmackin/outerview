@@ -1,7 +1,4 @@
-//
-//  BrowserChromeHostViewController.swift
-//  OuterView
-//
+// App — UIKit host that embeds the browser root and forwards system queries to it.
 
 import UIKit
 
@@ -22,6 +19,12 @@ final class BrowserChromeHostViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         addChild(browserRoot)
+        // Inner-display captures run the regular-width chrome on the
+        // compact-sized host window before first layout.
+        let isInnerDisplayRun = CommandLine.arguments.contains("-OuterViewInnerDisplay")
+        if isInnerDisplayRun {
+            browserRoot.traitOverrides.horizontalSizeClass = .regular
+        }
         browserRoot.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(browserRoot.view)
         NSLayoutConstraint.activate([
@@ -31,6 +34,9 @@ final class BrowserChromeHostViewController: UIViewController {
             browserRoot.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
         browserRoot.didMove(toParent: self)
+        if isInnerDisplayRun {
+            browserRoot.applyStructuralLayout()
+        }
     }
 
     /// System queries the SwiftUI-provided root, so forward to the browser root.

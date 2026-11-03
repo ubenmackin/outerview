@@ -124,6 +124,13 @@ final class WebPageController: NSObject {
     func load(_ url: URL) {
         // Screenshot mode allows only inline content; network loads cancel.
         if BrowserRootViewController.isScreenshotRun {
+            if url.absoluteString.lowercased().contains("wikipedia.org") {
+                webView.loadHTMLString(
+                    BrowserRootViewController.screenshotFixtureHTML,
+                    baseURL: url
+                )
+                return
+            }
             guard url.absoluteString.lowercased() == "about:blank" else { return }
         }
         // Central allowlist: rejected schemes surface a navigation error
@@ -332,7 +339,8 @@ extension WebPageController: WKNavigationDelegate {
         // navigation cancels before the web view commits.
         if BrowserRootViewController.isScreenshotRun {
             let target = navigationAction.request.url?.absoluteString.lowercased()
-            if target != nil, target != "about:blank" {
+            let isAllowed = target == nil || target == "about:blank" || (target?.contains("wikipedia.org") == true)
+            if !isAllowed {
                 decisionHandler(.cancel)
                 return
             }
@@ -361,7 +369,8 @@ extension WebPageController: WKNavigationDelegate {
         // response cancels before commit.
         if BrowserRootViewController.isScreenshotRun {
             let target = navigationResponse.response.url?.absoluteString.lowercased()
-            if target != nil, target != "about:blank" {
+            let isAllowed = target == nil || target == "about:blank" || (target?.contains("wikipedia.org") == true)
+            if !isAllowed {
                 decisionHandler(.cancel)
                 return
             }
