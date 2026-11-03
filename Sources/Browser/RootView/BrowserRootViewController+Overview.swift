@@ -313,13 +313,13 @@ extension BrowserRootViewController {
         let height = view.bounds.height
         guard height > 0, translation < 0 else { return }
         let progress = min(1, -translation / height)
-        let clampedY = min(0, max(translation, -height))
-        let scale = 1 - AddressBarView.overviewCardScaleShrink * progress
-        // Scale first, then translate, so ty stays finger-tracking 1:1 and
-        // the shrink centers instead of skewing toward the origin.
+        let scale = AddressBarView.overviewDragScale(progress: progress)
+        let drift = AddressBarView.overviewDragDrift(translation: translation)
+        // Scale first, then translate, so the page shrinks in place
+        // with a slight upward drift instead of sliding off-screen.
         contentContainer.transform = CGAffineTransform(scaleX: scale, y: scale)
-            .concatenating(CGAffineTransform(translationX: 0, y: clampedY))
-        contentContainer.layer.cornerRadius = AddressBarView.overviewCardRadius * progress
+            .concatenating(CGAffineTransform(translationX: 0, y: drift))
+        contentContainer.layer.cornerRadius = AddressBarView.overviewDragRadius(progress: progress)
         overviewView.alpha = progress
     }
 
@@ -335,17 +335,18 @@ extension BrowserRootViewController {
         }
         let commit = translation < 0 && AddressBarView.shouldCommitVertical(translationY: translation, height: height)
         if commit {
-            let clampedY = min(0, max(translation, -height))
-            let remaining = abs(-height - clampedY)
+            let progress = min(1, -translation / height)
+            let remaining = (1 - progress) * height * 0.20
             let duration = AddressBarView.settleDuration(remaining: remaining, velocity: velocity)
-            let cardScale = 1 - AddressBarView.overviewCardScaleShrink
+            let cardScale = AddressBarView.overviewDragScale(progress: 1)
+            let drift = AddressBarView.overviewDragDrift(translation: -height)
             let target = CGAffineTransform(scaleX: cardScale, y: cardScale)
-                .concatenating(CGAffineTransform(translationX: 0, y: -height))
+                .concatenating(CGAffineTransform(translationX: 0, y: drift))
             let container = contentContainer
             let overview = overviewView
             let animator = UIViewPropertyAnimator(duration: duration, curve: .easeOut) {
                 container.transform = target
-                container.layer.cornerRadius = AddressBarView.overviewCardRadius
+                container.layer.cornerRadius = AddressBarView.overviewDragRadius(progress: 1)
                 overview.alpha = 1
             }
             overviewDragAnimator = animator

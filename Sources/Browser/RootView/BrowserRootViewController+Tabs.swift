@@ -328,12 +328,12 @@ extension BrowserRootViewController {
         // Locked direction owns the settle side; a reversed finger still
         // settles toward the locked target or back based on magnitude.
         let sign: CGFloat = direction == .right ? 1 : -1
-        let shouldCommit = AddressBarView.shouldCommitHorizontal(translationX: clamped, width: width)
         // Right-at-first always bounces with no selection change.
         if direction == .right, session.originIndex == 0 {
             cancelHorizontalSwitch(session: session, velocity: velocity)
             return
         }
+        let shouldCommit = AddressBarView.shouldCommitHorizontal(translationX: clamped, width: width, velocityX: velocity, direction: direction)
         if session.targetID != nil {
             if shouldCommit {
                 commitHorizontalSwitch(session: session, width: width, sign: sign, velocity: velocity)

@@ -36,19 +36,43 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
     nonisolated static let minifiedWidthPadding: CGFloat = 28
     nonisolated static let downloadRingSize: CGFloat = 24
     nonisolated static let horizontalCommitFraction: CGFloat = 0.40
+    nonisolated static let horizontalFlingVelocity: CGFloat = 800
     nonisolated static let verticalCommitFraction: CGFloat = 0.30
     /// First excursion past this locks the pan to the larger-magnitude axis.
     nonisolated static let axisLockThreshold: CGFloat = 8
     /// Reduced travel for clamped edge previews that have no incoming tab.
     nonisolated static let elasticFactor: CGFloat = 0.35
     /// Drag-to-overview card shrink per unit progress and corner radius.
-    nonisolated static let overviewCardScaleShrink: CGFloat = 0.12
-    nonisolated static let overviewCardRadius: CGFloat = 16
+    nonisolated static let overviewCardScaleShrink: CGFloat = 0.30
+    nonisolated static let overviewCardDriftFactor: CGFloat = 0.15
+    nonisolated static let overviewCardRadius: CGFloat = 24
 
-    /// Commits once the horizontal drag reaches 40% of content width.
-    nonisolated static func shouldCommitHorizontal(translationX: CGFloat, width: CGFloat) -> Bool {
+    /// Commits at 40% width, else on a same-direction 800 pt/s fling.
+    nonisolated static func shouldCommitHorizontal(translationX: CGFloat, width: CGFloat, velocityX: CGFloat, direction: PillSwipeDirection) -> Bool {
         guard width > 0 else { return false }
-        return abs(translationX) >= width * horizontalCommitFraction
+        if abs(translationX) >= width * horizontalCommitFraction {
+            return true
+        }
+        guard abs(velocityX) >= horizontalFlingVelocity else {
+            return false
+        }
+        switch direction {
+        case .left: return velocityX < 0
+        case .right: return velocityX > 0
+        }
+    }
+
+    /// Card math for the in-place overview drag.
+    nonisolated static func overviewDragScale(progress: CGFloat) -> CGFloat {
+        1 - overviewCardScaleShrink * progress
+    }
+
+    nonisolated static func overviewDragDrift(translation: CGFloat) -> CGFloat {
+        translation * overviewCardDriftFactor
+    }
+
+    nonisolated static func overviewDragRadius(progress: CGFloat) -> CGFloat {
+        overviewCardRadius * progress
     }
 
     /// Commits once the upward drag reaches 30% of view height.
