@@ -25,7 +25,7 @@
   },
   "testTargets" : [
     {
-      "parallelizable" : true,
+      "parallelizable" : false,
       "skippedTests" : [
         "AccessibilityTests",
         "DownloadsSheetTests",

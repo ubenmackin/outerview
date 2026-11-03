@@ -5,11 +5,24 @@
 
 import UIKit
 
+/// Locked axis for a single pill pan gesture.
+enum PillPanAxis: Sendable {
+    case horizontal
+    case vertical
+}
+
+/// Pan lifecycle carrying only the locked-axis value.
+enum PillPanEvent: Sendable {
+    case began
+    case changed(translation: CGFloat, velocity: CGFloat)
+    case ended(translation: CGFloat, velocity: CGFloat)
+}
+
 /// Single address pill with expanded (44 pt) and minified (30 pt)
 /// presentations. Frames stay with the root controller; this view only
 /// switches its arranged content via `setAddressState`.
 @MainActor
-final class AddressBarView: UIView {
+final class AddressBarView: UIView, UIGestureRecognizerDelegate {
     nonisolated static let expandedHeight: CGFloat = 44
     nonisolated static let minifiedHeight: CGFloat = 30
     nonisolated static let placeholder = "Search or Enter Website"
@@ -22,6 +35,37 @@ final class AddressBarView: UIView {
     /// (8pt each side) plus domain stack inset so text never touches the edge.
     nonisolated static let minifiedWidthPadding: CGFloat = 28
     nonisolated static let downloadRingSize: CGFloat = 24
+    nonisolated static let horizontalCommitFraction: CGFloat = 0.40
+    nonisolated static let verticalCommitFraction: CGFloat = 0.30
+    /// First excursion past this locks the pan to the larger-magnitude axis.
+    nonisolated static let axisLockThreshold: CGFloat = 8
+    /// Reduced travel for clamped edge previews that have no incoming tab.
+    nonisolated static let elasticFactor: CGFloat = 0.35
+    /// Drag-to-overview card shrink per unit progress and corner radius.
+    nonisolated static let overviewCardScaleShrink: CGFloat = 0.12
+    nonisolated static let overviewCardRadius: CGFloat = 16
+
+    /// Commits once the horizontal drag reaches 40% of content width.
+    nonisolated static func shouldCommitHorizontal(translationX: CGFloat, width: CGFloat) -> Bool {
+        guard width > 0 else { return false }
+        return abs(translationX) >= width * horizontalCommitFraction
+    }
+
+    /// Commits once the upward drag reaches 30% of view height.
+    nonisolated static func shouldCommitVertical(translationY: CGFloat, height: CGFloat) -> Bool {
+        guard height > 0 else { return false }
+        return -translationY >= height * verticalCommitFraction
+    }
+
+    /// Shared settle curve: faster flings settle sooner, clamped to 0.12–0.30 s.
+    nonisolated static func settleDuration(remaining: CGFloat, velocity: CGFloat) -> TimeInterval {
+        min(0.30, max(0.12, remaining / max(abs(velocity), 400)))
+    }
+
+    /// Locks to the axis with the larger absolute translation.
+    nonisolated static func lockedAxis(tx: CGFloat, ty: CGFloat) -> PillPanAxis {
+        abs(tx) >= abs(ty) ? .horizontal : .vertical
+    }
 
     /// Pure geometry so tests and the frame owner share one source of truth.
     nonisolated static func heightForState(_ pill: PillState) -> CGFloat {
@@ -83,9 +127,8 @@ final class AddressBarView: UIView {
     var onStop: (() -> Void)?
     var onPillTap: (() -> Void)?
     var onDownloadsTap: (() -> Void)?
-    var onSwipeLeft: (() -> Void)?
-    var onSwipeRight: (() -> Void)?
-    var onSwipeUp: (() -> Void)?
+    var onHorizontalPan: ((PillPanEvent) -> Void)?
+    var onVerticalPan: ((PillPanEvent) -> Void)?
 
     private var currentPill: PillState = .expanded
     private var currentURL: URL?
@@ -95,6 +138,7 @@ final class AddressBarView: UIView {
     private var cachedMinifiedWidth: CGFloat?
     private var cachedMinifiedHost: String?
     private var cachedMinifiedMinimumWidth: CGFloat?
+    private var lockedPanAxis: PillPanAxis?
 
     private let backgroundEffectView = UIVisualEffectView(effect: GlassEffect.make())
     private let contentStack = UIStackView()
@@ -311,24 +355,13 @@ final class AddressBarView: UIView {
     }
 
     private func setupPillGestures() {
-        // SOLE pill gesture owner: tap waits for swipes so directional
-        // swipes win; swipes cancel touches to keep pill taps clean.
-        let swipeLeft = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipeLeft))
-        swipeLeft.direction = .left
-        swipeLeft.cancelsTouchesInView = true
-        let swipeRight = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipeRight))
-        swipeRight.direction = .right
-        swipeRight.cancelsTouchesInView = true
-        let swipeUp = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipeUp))
-        swipeUp.direction = .up
-        swipeUp.cancelsTouchesInView = true
+        // Tap loses to the pan so a drag never fires a restore.
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePillPan(_:)))
+        pan.cancelsTouchesInView = true
+        pan.delegate = self
         let tap = UITapGestureRecognizer(target: self, action: #selector(handlePillTap))
-        tap.require(toFail: swipeLeft)
-        tap.require(toFail: swipeRight)
-        tap.require(toFail: swipeUp)
-        addGestureRecognizer(swipeLeft)
-        addGestureRecognizer(swipeRight)
-        addGestureRecognizer(swipeUp)
+        tap.require(toFail: pan)
+        addGestureRecognizer(pan)
         addGestureRecognizer(tap)
     }
 
@@ -390,16 +423,70 @@ final class AddressBarView: UIView {
         onPillTap?()
     }
 
-    @objc private func handleSwipeLeft() {
-        onSwipeLeft?()
+    @objc private func handlePillPan(_ pan: UIPanGestureRecognizer) {
+        switch pan.state {
+        case .began:
+            lockedPanAxis = nil
+        case .changed:
+            let translation = pan.translation(in: self)
+            let velocity = pan.velocity(in: self)
+            if let locked = lockedPanAxis {
+                emitPanChanged(locked: locked, translation: translation, velocity: velocity)
+            } else {
+                // First excursion past the threshold locks to the larger
+                // magnitude axis for the rest of the gesture.
+                guard max(abs(translation.x), abs(translation.y)) > Self.axisLockThreshold else { return }
+                let locked = Self.lockedAxis(tx: translation.x, ty: translation.y)
+                lockedPanAxis = locked
+                emitPanBeganThenChanged(locked: locked, translation: translation, velocity: velocity)
+            }
+        case .ended:
+            guard let locked = lockedPanAxis else { return }
+            lockedPanAxis = nil
+            let translation = pan.translation(in: self)
+            let velocity = pan.velocity(in: self)
+            emitPanEnded(locked: locked, translation: translation, velocity: velocity)
+        case .cancelled, .failed:
+            // Zeroed end forces a bounce-back with no tab change.
+            guard let locked = lockedPanAxis else { return }
+            lockedPanAxis = nil
+            emitPanEnded(locked: locked, translation: .zero, velocity: .zero)
+        default:
+            break
+        }
     }
 
-    @objc private func handleSwipeRight() {
-        onSwipeRight?()
+    private func emitPanChanged(locked: PillPanAxis, translation: CGPoint, velocity: CGPoint) {
+        if locked == .horizontal {
+            onHorizontalPan?(.changed(translation: translation.x, velocity: velocity.x))
+        } else {
+            onVerticalPan?(.changed(translation: translation.y, velocity: velocity.y))
+        }
     }
 
-    @objc private func handleSwipeUp() {
-        onSwipeUp?()
+    private func emitPanBeganThenChanged(locked: PillPanAxis, translation: CGPoint, velocity: CGPoint) {
+        if locked == .horizontal {
+            onHorizontalPan?(.began)
+            onHorizontalPan?(.changed(translation: translation.x, velocity: velocity.x))
+        } else {
+            onVerticalPan?(.began)
+            onVerticalPan?(.changed(translation: translation.y, velocity: velocity.y))
+        }
+    }
+
+    private func emitPanEnded(locked: PillPanAxis, translation: CGPoint, velocity: CGPoint) {
+        if locked == .horizontal {
+            onHorizontalPan?(.ended(translation: translation.x, velocity: velocity.x))
+        } else {
+            onVerticalPan?(.ended(translation: translation.y, velocity: velocity.y))
+        }
+    }
+
+    func gestureRecognizer(
+        _: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith _: UIGestureRecognizer
+    ) -> Bool {
+        false
     }
 }
 

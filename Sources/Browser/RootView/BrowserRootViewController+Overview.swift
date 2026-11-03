@@ -18,8 +18,9 @@ extension BrowserRootViewController {
 
     func setOverviewVisible(_ visible: Bool) {
         isOverviewVisible = visible
-        overviewView.isHidden = !visible
         if visible {
+            overviewView.alpha = 1
+            overviewView.isHidden = false
             let groups = overviewGroups()
             // A stored group resolving to no existing group restores as nil.
             let candidate = overviewController.selectedGroupID
@@ -46,6 +47,8 @@ extension BrowserRootViewController {
             applyOverviewChromeItems()
             bringChromeToFront()
         } else {
+            overviewView.isHidden = true
+            overviewView.alpha = 1
             updateRailItems()
             applyChromeViews(animated: false)
         }
@@ -250,6 +253,138 @@ extension BrowserRootViewController {
         snapshotListenerIDs[id] = nil
         boundListenerPages[id] = nil
         forcedStartPageTabs.remove(id)
+    }
+}
+
+extension BrowserRootViewController {
+    // MARK: - Vertical overview drag
+
+    func handleVerticalPan(_ event: PillPanEvent) {
+        guard !isEditingAddress, !isFindActive, !isOverviewVisible else { return }
+        switch event {
+        case .began:
+            beginOverviewDrag()
+        case let .changed(translation: translation, velocity: _):
+            updateOverviewDrag(translation: translation)
+        case let .ended(translation: translation, velocity: velocity):
+            finishOverviewDrag(translation: translation, velocity: velocity)
+        }
+    }
+
+    private func beginOverviewDrag() {
+        guard !isEditingAddress, !isFindActive, !isOverviewVisible else { return }
+        overviewDragAnimator?.stopAnimation(true)
+        overviewDragAnimator = nil
+        if let existing = horizontalSwitchSession {
+            // Interrupted switch: silence its animator and drop the views;
+            // restore the origin only when no commit had started.
+            horizontalSwitchAnimator?.stopAnimation(true)
+            horizontalSwitchAnimator = nil
+            existing.outgoingSnapshot.removeFromSuperview()
+            existing.incomingView?.transform = .identity
+            if !existing.didCommit, selectedTabID != existing.originID {
+                selectTab(id: existing.originID)
+            }
+            horizontalSwitchSession = nil
+        }
+        let groups = overviewGroups()
+        let candidate = overviewController.selectedGroupID
+            ?? TabOverviewViewController.storedOverviewGroupID(defaults: selectionDefaults)
+        let validFilter = candidate.flatMap { id in
+            groups.contains(where: { $0.id == id }) ? id : nil
+        }
+        overviewController.configure(
+            tabs: overviewItems(groups: groups),
+            selectedID: selectedTabID,
+            mode: overviewMode,
+            groups: groups,
+            selectedGroupID: validFilter
+        )
+        contentContainer.transform = .identity
+        contentContainer.layer.cornerRadius = 0
+        contentContainer.clipsToBounds = true
+        overviewView.alpha = 0
+        overviewView.isHidden = false
+        view.insertSubview(overviewView, belowSubview: contentContainer)
+    }
+
+    private func updateOverviewDrag(translation: CGFloat) {
+        guard !isEditingAddress, !isFindActive, !isOverviewVisible, !overviewView.isHidden else { return }
+        let height = view.bounds.height
+        guard height > 0, translation < 0 else { return }
+        let progress = min(1, -translation / height)
+        let clampedY = min(0, max(translation, -height))
+        let scale = 1 - AddressBarView.overviewCardScaleShrink * progress
+        // Scale first, then translate, so ty stays finger-tracking 1:1 and
+        // the shrink centers instead of skewing toward the origin.
+        contentContainer.transform = CGAffineTransform(scaleX: scale, y: scale)
+            .concatenating(CGAffineTransform(translationX: 0, y: clampedY))
+        contentContainer.layer.cornerRadius = AddressBarView.overviewCardRadius * progress
+        overviewView.alpha = progress
+    }
+
+    private func finishOverviewDrag(translation: CGFloat, velocity: CGFloat) {
+        guard !isEditingAddress, !isFindActive, !isOverviewVisible, !overviewView.isHidden else { return }
+        let height = view.bounds.height
+        guard height > 0 else {
+            contentContainer.transform = .identity
+            contentContainer.layer.cornerRadius = 0
+            overviewView.alpha = 0
+            overviewView.isHidden = true
+            return
+        }
+        let commit = translation < 0 && AddressBarView.shouldCommitVertical(translationY: translation, height: height)
+        if commit {
+            let clampedY = min(0, max(translation, -height))
+            let remaining = abs(-height - clampedY)
+            let duration = AddressBarView.settleDuration(remaining: remaining, velocity: velocity)
+            let cardScale = 1 - AddressBarView.overviewCardScaleShrink
+            let target = CGAffineTransform(scaleX: cardScale, y: cardScale)
+                .concatenating(CGAffineTransform(translationX: 0, y: -height))
+            let container = contentContainer
+            let overview = overviewView
+            let animator = UIViewPropertyAnimator(duration: duration, curve: .easeOut) {
+                container.transform = target
+                container.layer.cornerRadius = AddressBarView.overviewCardRadius
+                overview.alpha = 1
+            }
+            overviewDragAnimator = animator
+            animator.addCompletion { [weak self, weak animator] _ in
+                guard let self else { return }
+                self.setOverviewVisible(true)
+                self.contentContainer.transform = .identity
+                self.contentContainer.layer.cornerRadius = 0
+                self.contentContainer.clipsToBounds = false
+                if self.overviewDragAnimator === animator {
+                    self.overviewDragAnimator = nil
+                }
+            }
+            animator.startAnimation()
+        } else {
+            // Cancel pops back from the presented displacement with no tab change.
+            let remaining = abs(contentContainer.transform.ty)
+            let duration = AddressBarView.settleDuration(remaining: remaining, velocity: velocity)
+            let container = contentContainer
+            let overview = overviewView
+            let animator = UIViewPropertyAnimator(duration: duration, curve: .easeOut) {
+                container.transform = .identity
+                container.layer.cornerRadius = 0
+                overview.alpha = 0
+            }
+            overviewDragAnimator = animator
+            animator.addCompletion { [weak self, weak animator] _ in
+                guard let self else { return }
+                self.overviewView.isHidden = true
+                self.contentContainer.transform = .identity
+                self.contentContainer.layer.cornerRadius = 0
+                self.contentContainer.clipsToBounds = false
+                self.bringChromeToFront()
+                if self.overviewDragAnimator === animator {
+                    self.overviewDragAnimator = nil
+                }
+            }
+            animator.startAnimation()
+        }
     }
 }
 

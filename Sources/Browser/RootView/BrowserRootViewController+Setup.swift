@@ -221,12 +221,8 @@ extension BrowserRootViewController {
             pillTrailingConstraint
         ])
         pillView.onPillTap = { [weak self] in self?.handlePillTap() }
-        pillView.onSwipeLeft = { [weak self] in self?.handlePillSwipe(direction: .left) }
-        pillView.onSwipeRight = { [weak self] in self?.handlePillSwipe(direction: .right) }
-        pillView.onSwipeUp = { [weak self] in
-            guard let self, !self.isEditingAddress, self.chromeController.state.pill != .editing, !self.isFindActive, !self.isOverviewVisible else { return }
-            self.setOverviewVisible(true)
-        }
+        pillView.onHorizontalPan = { [weak self] event in self?.handleHorizontalPan(event) }
+        pillView.onVerticalPan = { [weak self] event in self?.handleVerticalPan(event) }
         pillView.onPageMenu = { [weak self] in self?.showPageMenu() }
         pillView.pageMenuProvider = { [weak self] in
             self?.makePageMenu() ?? UIMenu()

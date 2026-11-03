@@ -395,6 +395,11 @@ final class BrowserRootViewController: UIViewController {
     var startPageTopToBarConstraint: NSLayoutConstraint?
     var pillAnimator: UIViewPropertyAnimator?
     var topBarAnimator: UIViewPropertyAnimator?
+    /// Live horizontal pill-switch session plus its settle animator. Stored on
+    /// the instance so gestures never outlive the controller via a global.
+    var horizontalSwitchSession: HorizontalSwitchSession?
+    var horizontalSwitchAnimator: UIViewPropertyAnimator?
+    var overviewDragAnimator: UIViewPropertyAnimator?
     var lastStatusBarHidden: Bool?
     private var structuralTask: Task<Void, Never>?
     private var horizontalSizeClassRegistration: UITraitChangeRegistration?
