@@ -19,7 +19,6 @@ targets:
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
         INFOPLIST_FILE: Support/Info.plist
-        GENERATE_INFOPLIST_FILE: "NO"
         PRODUCT_BUNDLE_IDENTIFIER: com.volcrypt.OuterView
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
@@ -35,8 +34,13 @@ targets:
         INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.utilities"
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         PRODUCT_NAME: OuterView
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+        STRING_CATALOG_GENERATE_SYMBOLS: YES
+        SWIFT_EMIT_LOC_STRINGS: YES
       configs:
         Debug:
           base:
@@ -57,6 +61,8 @@ targets:
         GENERATE_INFOPLIST_FILE: "YES"
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/OuterView.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/OuterView
         BUNDLE_LOADER: $(TEST_HOST)
+        ENABLE_APP_INTENTS_METADATA_EXTRACTION: NO
+        ENABLE_APP_INTENTS_METADATA_GENERATION: NO
 
   OuterViewUITests:
     type: bundle.ui-testing
@@ -71,6 +77,8 @@ targets:
         SWIFT_STRICT_CONCURRENCY: complete
         GENERATE_INFOPLIST_FILE: "YES"
         TEST_TARGET_NAME: OuterView
+        ENABLE_APP_INTENTS_METADATA_EXTRACTION: NO
+        ENABLE_APP_INTENTS_METADATA_GENERATION: NO
 
 schemes:
   OuterView:

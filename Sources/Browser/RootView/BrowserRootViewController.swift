@@ -489,6 +489,7 @@ final class BrowserRootViewController: UIViewController {
         super.init(nibName: nil, bundle: nil)
         overviewController.selectionDefaults = defaults
         elementContextActions = makeElementContextActions()
+        wireDownloadSplit()
         if let database = self.database {
             bookmarkStore = BookmarkStore(database: database)
             historyStore = HistoryStore(database: database)
@@ -609,10 +610,14 @@ extension BrowserRootViewController {
     // MARK: - App lifecycle
 
     /// Scene changes forwarded from the app entry. Persistence is owned by the
-    /// restore coordinator; foreground only refreshes pool recency so eviction
-    /// stays ordered by real activity. Chrome state is intentionally untouched.
+    /// restore coordinator; background fails foreground transfers, active only
+    /// refreshes pool recency. Chrome state is intentionally untouched.
     func handleScenePhase(_ phase: ScenePhase) {
         restoreCoordinator?.handleScenePhase(phase)
+        if phase == .background {
+            // Suspend fail-closed: private work fails, daemon tasks survive.
+            downloadsManager.suspendForegroundDownloads()
+        }
         if phase == .active {
             markActivePageActivated()
         }
@@ -625,13 +630,19 @@ extension BrowserRootViewController {
 
     // MARK: - Snapshots
 
-    func ensureSnapshotListener(for id: UUID, page: WebPageController) {
-        // A recreated page (after eviction) is a new instance with no
-        // listeners; the old controller and its subscriptions are gone. It
-        // also arrives with no menu wiring, so context actions reattach here.
+    /// Single owner for page wiring: menus, zoom, downloads plus privacy routing.
+    /// Called at checkout before load so standard tabs never take private path.
+    func wirePage(_ page: WebPageController, for id: UUID) {
         page.contextActions = elementContextActions
         page.siteZoomStore = siteZoomStore
         page.downloadsManager = downloadsManager
+        page.isPrivateTab = tabs.first(where: { $0.id == id })?.isPrivate ?? true
+        page.backgroundService = BackgroundDownloadService.shared
+    }
+
+    func ensureSnapshotListener(for id: UUID, page: WebPageController) {
+        // Recreated pages arrive unwired; reassert routing before listening.
+        wirePage(page, for: id)
         if let bound = boundListenerPages[id],
            bound == ObjectIdentifier(page),
            snapshotListenerIDs[id] != nil
@@ -650,7 +661,8 @@ extension BrowserRootViewController {
         var didChange = false
         var didCommitNewURL = false
         var didTitleChange = false
-        var isPrivateTab = false
+        // Fail-closed: a missing tab never records history.
+        var isPrivateTab = true
         // Rejected schemes never persist: neither the in-memory strip nor the
         // stores may adopt them, even if the web view somehow reports one.
         let isSnapshotURLAllowed = snapshot.url.map(URLNormalizer.isLoadable) ?? true

@@ -26,7 +26,7 @@ struct DownloadRow: Identifiable, Equatable, Sendable {
     var fileURL: URL?
 }
 
-/// WKDownloadDelegate pipeline writing to Documents/Downloads.
+/// Row, progress and destination owner writing to Documents/Downloads.
 @Observable
 @MainActor
 final class DownloadsManager: NSObject {
@@ -58,6 +58,9 @@ final class DownloadsManager: NSObject {
     private var downloadIDs: [ObjectIdentifier: UUID] = [:]
     @ObservationIgnored
     private var observations: [UUID: NSKeyValueObservation] = [:]
+    /// Sole daemon transfer owner; cancel/delete forward so no orphan task survives.
+    @ObservationIgnored
+    weak var backgroundService: BackgroundDownloadService?
 
     init(directoryURL: URL? = nil, fileManager: FileManager = .default) {
         let resolved: URL = if let directoryURL {
@@ -74,7 +77,7 @@ final class DownloadsManager: NSObject {
             try fileManager.createDirectory(at: resolved, withIntermediateDirectories: true)
         } catch {
             Logger(subsystem: "com.volcrypt.OuterView", category: "Downloads")
-                .error("createDirectory failed: \(error.localizedDescription, privacy: .public)")
+                .error("createDirectory failed: \(error.localizedDescription, privacy: .private)")
         }
     }
 
@@ -99,8 +102,28 @@ final class DownloadsManager: NSObject {
         if candidate.isEmpty || candidate == "." || candidate == ".." {
             return "download"
         }
-        if candidate.count > 255 {
-            candidate = String(candidate.prefix(255))
+        // Cap at 255 bytes preserving the extension so the type survives.
+        if candidate.utf8.count > 255 {
+            let ext = (candidate as NSString).pathExtension
+            var base = (candidate as NSString).deletingPathExtension
+            if ext.isEmpty {
+                while base.utf8.count > 255, !base.isEmpty {
+                    base = String(base.dropLast())
+                }
+                candidate = base.isEmpty ? "download" : base
+            } else {
+                let maxBaseBytes = max(0, 255 - ext.utf8.count - 1)
+                while base.utf8.count > maxBaseBytes, !base.isEmpty {
+                    base = String(base.dropLast())
+                }
+                if base.isEmpty {
+                    base = "download"
+                }
+                candidate = base + "." + ext
+                while candidate.utf8.count > 255, !candidate.isEmpty {
+                    candidate = String(candidate.dropLast())
+                }
+            }
         }
         return candidate
     }
@@ -162,6 +185,37 @@ final class DownloadsManager: NSObject {
             fileManager: fileManager,
             reservedNames: reservedFileNames(excluding: excludedID)
         )
+    }
+
+    // MARK: - Background service seams
+
+    /// Destination seam for BackgroundDownloadService: first free name in Documents/Downloads.
+    func nextDestinationURL(for fileName: String, excluding excludedID: UUID? = nil) -> URL {
+        uniqueDestination(for: fileName, excluding: excludedID)
+    }
+
+    /// Reserved destination for an in-flight row, so daemon finalize reuses it.
+    func reservedDestination(for id: UUID) -> URL? {
+        destinations[id] ?? rows.first(where: { $0.id == id })?.fileURL
+    }
+
+    /// Adopts a relaunched row created on the wake fallback manager.
+    func importRow(_ row: DownloadRow) {
+        guard !rows.contains(where: { $0.id == row.id }) else { return }
+        rows.append(row)
+        if let fileURL = row.fileURL {
+            destinations[row.id] = fileURL
+        }
+    }
+
+    /// Applies the resolved destination (name + URL) to an in-progress row.
+    func renameRow(id: UUID, name: String, fileURL: URL?) {
+        guard let index = rows.firstIndex(where: { $0.id == id }) else { return }
+        rows[index].name = name
+        rows[index].fileURL = fileURL
+        if let fileURL {
+            destinations[id] = fileURL
+        }
     }
 
     // MARK: - Tracking
@@ -242,14 +296,54 @@ final class DownloadsManager: NSObject {
     }
 
     func cancel(id: UUID) {
-        guard let download = downloads[id] else { return }
-        download.cancel { _ in }
+        if let download = downloads[id] {
+            download.cancel { _ in }
+        }
+        // Forward to the daemon so UI cancel leaves no orphan task.
+        backgroundService?.cancel(id: id)
         observations[id]?.invalidate()
         observations[id] = nil
         if let index = rows.firstIndex(where: { $0.id == id }),
            rows[index].state == .inProgress
         {
             rows[index].state = .failed("Cancelled")
+            releaseReservationAndCleanup(id: id)
+        }
+    }
+
+    /// Suspend fail-closed: cancel foreground work; daemon tasks survive.
+    func suspendForegroundDownloads() {
+        for id in Array(downloads.keys) {
+            guard let download = downloads[id],
+                  let index = rows.firstIndex(where: { $0.id == id }),
+                  rows[index].state == .inProgress
+            else { continue }
+            download.cancel { _ in }
+            observations[id]?.invalidate()
+            observations[id] = nil
+            rows[index].state = .failed("Cancelled")
+            releaseReservationAndCleanup(id: id)
+            downloads[id] = nil
+            for (key, value) in downloadIDs where value == id {
+                downloadIDs.removeValue(forKey: key)
+            }
+        }
+    }
+
+    /// Frees the reserved name and deletes the partial file; row keeps its name.
+    private func releaseReservationAndCleanup(id: UUID) {
+        let fileURL = destinations[id] ?? rows.first(where: { $0.id == id })?.fileURL
+        if let fileURL {
+            do {
+                try fileManager.removeItem(at: fileURL)
+            } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "Downloads")
+                    .error("removeItem failed: \(error.localizedDescription, privacy: .private)")
+            }
+        }
+        destinations[id] = nil
+        if let index = rows.firstIndex(where: { $0.id == id }) {
+            rows[index].fileURL = nil
         }
     }
 
@@ -259,6 +353,8 @@ final class DownloadsManager: NSObject {
         if let download = downloads[id] {
             download.cancel { _ in }
         }
+        // Forward to the daemon so delete leaves no orphan row.
+        backgroundService?.cancel(id: id)
         downloads[id] = nil
         let fileURL = destinations[id] ?? rows.first(where: { $0.id == id })?.fileURL
         if let fileURL {
@@ -266,7 +362,7 @@ final class DownloadsManager: NSObject {
                 try fileManager.removeItem(at: fileURL)
             } catch {
                 Logger(subsystem: "com.volcrypt.OuterView", category: "Downloads")
-                    .error("removeItem failed: \(error.localizedDescription, privacy: .public)")
+                    .error("removeItem failed: \(error.localizedDescription, privacy: .private)")
             }
         }
         destinations[id] = nil

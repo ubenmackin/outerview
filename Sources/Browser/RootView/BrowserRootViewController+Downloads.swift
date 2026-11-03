@@ -10,6 +10,13 @@ import UIKit
 extension BrowserRootViewController {
     // MARK: - Downloads sheet
 
+    /// Single owner for the split: service owns transfers, manager owns rows.
+    func wireDownloadSplit() {
+        BackgroundDownloadService.shared.manager = downloadsManager
+        BackgroundDownloadService.shared.adoptFallbackRows(into: downloadsManager)
+        downloadsManager.backgroundService = BackgroundDownloadService.shared
+    }
+
     func setupDownloads() {
         downloadsContainer.translatesAutoresizingMaskIntoConstraints = false
         downloadsContainer.backgroundColor = .systemBackground
@@ -66,10 +73,20 @@ extension BrowserRootViewController {
             )
         } catch {
             Logger(subsystem: "com.volcrypt.OuterView", category: "Downloads")
-                .error("createDirectory failed: \(error.localizedDescription, privacy: .public)")
+                .error("createDirectory failed: \(error.localizedDescription, privacy: .private)")
         }
         let picker = downloadsManager.makeFilesPicker()
         presentedDownloadsPicker = picker
+        // Tests host no Files UI; recording the picker keeps the seam
+        // observable without stalling the suite on a modal presentation.
+        guard !AppEnvironment.isTestHost else { return }
+        // A windowless presentation never appears; log instead of dropping silently.
+        guard view.window != nil else {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "Downloads")
+                .error("presentDownloadsFilesPicker without window")
+            assertionFailure("presentDownloadsFilesPicker without window")
+            return
+        }
         present(picker, animated: true)
     }
 

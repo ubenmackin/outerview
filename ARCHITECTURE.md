@@ -129,7 +129,7 @@ Sources/
 - **`RecentSearchStore`**: Tracks recent search queries with individual or complete clearance.
 - **`ReadingListStore`**: URL-deduped (earliest wins, empty-title refresh), 2000-entry cap with prune-oldest, read-state flags, ordering, and clearance.
 - **`DownloadsManager`**: `@MainActor` row plus progress plus destination owner writing to `Documents/Downloads` (exposed in Files via UIFileSharingEnabled); sanitized names with `name (2).ext` collision handling; row state (inProgress/finished/failed) with cancel/delete plus batched clear; aggregate overallProgress for the address-bar ring; folder export to the Files app. Transfer ownership splits: standard tabs via `BackgroundDownloadService` (background `URLSession`), private tabs via in-process `WKDownload`.
-- **`BackgroundDownloadService`**: Singleton background `URLSession` (`com.volcrypt.OuterView.downloads`, non-discretionary, launch events) for standard tabs; resume-data retry when servers support Range plus ETag; wake handling via `DownloadBackgroundDelegate` rejoins the same identifier and completes the stored handler exactly once.
+- **`BackgroundDownloadService`**: Singleton background `URLSession` (`com.volcrypt.OuterView.downloads`, non-discretionary, launch events) for standard tabs; wake handling via `DownloadBackgroundDelegate` storing the handler and the session delegate popping it in finish-events exactly once.
 
 ---
 
