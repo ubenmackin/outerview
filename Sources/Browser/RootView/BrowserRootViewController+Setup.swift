@@ -390,7 +390,7 @@ extension BrowserRootViewController {
     }
 
     var shouldAnimateModalSheets: Bool {
-        view.window != nil && ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
+        view.window != nil && !AppEnvironment.isTestHost
     }
 
     func presentBookmarkEditor(for target: BookmarkEditorTarget) {

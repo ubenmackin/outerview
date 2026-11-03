@@ -64,6 +64,19 @@ final class WebPageController: NSObject {
     /// Shared download pipeline; nil in unit tests without a pipeline.
     weak var downloadsManager: DownloadsManager?
 
+    /// Sole transfer owner for standard-tab downloads, wired by the root;
+    /// nil only in unit tests without a pipeline, which fail closed.
+    weak var backgroundService: BackgroundDownloadService?
+
+    #if DEBUG
+        /// Test-only foreground fallback for unwired standard tabs; production fails closed.
+        var allowsForegroundFallbackForTests = false
+    #endif
+
+    /// Privacy scope of the owning tab: private tabs never schedule
+    /// background transfers (their data store is ephemeral). Fail-closed.
+    var isPrivateTab = true
+
     /// Context-menu action set handed to WKUIDelegate; nil in disconnected
     /// pages and unit tests, which turns the custom menu off (WebKit's
     /// default menu applies).
@@ -71,6 +84,12 @@ final class WebPageController: NSObject {
 
     /// Per-site text zoom; nil in unit tests without a store reads as 1.0.
     var siteZoomStore: SiteZoomStore?
+
+    /// Clears the carried method/body so a stale POST never bleeds forward.
+    private func clearPendingAction() {
+        pendingActionRequest = nil
+        pendingActionGeneration = 0
+    }
 
     private(set) var snapshot = WebPageSnapshot.make(
         url: nil,
@@ -100,11 +119,14 @@ final class WebPageController: NSObject {
     private var documentGeneration = 0
     private var readerTheme: ReaderTheme = ReaderMode.storedTheme()
     private var readerFontSize: Int = ReaderMode.storedFontSize()
+    /// Last navigation request so the response path preserves method/body.
+    /// Scoped by generation so a failed POST never bleeds into later responses.
+    private var pendingActionRequest: URLRequest?
+    private var pendingActionGeneration = 0
 
     init(configuration: WKWebViewConfiguration) {
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
-
         // Full-bleed content: no automatic safe-area or readables-content
         // insets; chrome floats above the web view instead of shrinking it.
         webView.scrollView.contentInsetAdjustmentBehavior = .never
@@ -341,22 +363,51 @@ extension WebPageController: WKNavigationDelegate {
             let target = navigationAction.request.url?.absoluteString.lowercased()
             let isAllowed = target == nil || target == "about:blank" || (target?.contains("wikipedia.org") == true)
             if !isAllowed {
+                clearPendingAction()
                 decisionHandler(.cancel)
                 return
             }
         }
         if navigationAction.shouldPerformDownload {
-            decisionHandler(.download)
+            // Same privacy split as the response decision. Fail-closed:
+            // only a proven standard tab with a wired service schedules.
+            if !isPrivateTab {
+                if let service = backgroundService,
+                   let url = navigationAction.request.url, URLNormalizer.isLoadable(url)
+                {
+                    clearPendingAction()
+                    startStandardTransfer(to: service, request: navigationAction.request, suggestedName: url.lastPathComponent)
+                    decisionHandler(.cancel)
+                } else {
+                    #if DEBUG
+                        if allowsForegroundFallbackForTests {
+                            clearPendingAction()
+                            decisionHandler(.download)
+                            return
+                        }
+                    #endif
+                    clearPendingAction()
+                    failClosedStandardDownload(suggestedName: navigationAction.request.url?.lastPathComponent ?? "download")
+                    decisionHandler(.cancel)
+                }
+            } else {
+                clearPendingAction()
+                decisionHandler(.download)
+            }
             return
         }
         // In-page navigations (links, redirects, window.location,
         // meta-refresh) bypass the address-bar normalizer, so every action
         // re-checks the allowlist before the web view commits.
         guard URLNormalizer.isLoadable(navigationAction.request.url) else {
+            clearPendingAction()
             rejectUnsupportedScheme(navigationAction.request.url)
             decisionHandler(.cancel)
             return
         }
+        // Remember the original request so the response path keeps method/body.
+        pendingActionRequest = navigationAction.request
+        pendingActionGeneration = documentGeneration + 1
         decisionHandler(.allow)
     }
 
@@ -371,19 +422,52 @@ extension WebPageController: WKNavigationDelegate {
             let target = navigationResponse.response.url?.absoluteString.lowercased()
             let isAllowed = target == nil || target == "about:blank" || (target?.contains("wikipedia.org") == true)
             if !isAllowed {
+                clearPendingAction()
                 decisionHandler(.cancel)
                 return
             }
         }
-        guard URLNormalizer.isLoadable(navigationResponse.response.url) else {
+        guard let responseURL = navigationResponse.response.url, URLNormalizer.isLoadable(responseURL) else {
+            clearPendingAction()
             rejectUnsupportedScheme(navigationResponse.response.url)
             decisionHandler(.cancel)
             return
         }
         if DownloadsManager.shouldDownload(navigationResponse: navigationResponse) {
-            decisionHandler(.download)
+            // Standard tabs cancel the web view load (WebKit 102 handover)
+            // and start a daemon task; private tabs never touch the session.
+            if !isPrivateTab {
+                if let service = backgroundService {
+                    let response = navigationResponse.response
+                    let isCurrent = pendingActionGeneration == documentGeneration
+                    let original = isCurrent && pendingActionRequest?.url == responseURL ? pendingActionRequest : nil
+                    clearPendingAction()
+                    startStandardTransfer(
+                        to: service,
+                        request: original ?? URLRequest(url: responseURL),
+                        suggestedName: response.suggestedFilename ?? responseURL.lastPathComponent
+                    )
+                    decisionHandler(.cancel)
+                } else {
+                    #if DEBUG
+                        if allowsForegroundFallbackForTests {
+                            clearPendingAction()
+                            decisionHandler(.download)
+                            return
+                        }
+                    #endif
+                    let response = navigationResponse.response
+                    clearPendingAction()
+                    failClosedStandardDownload(suggestedName: response.suggestedFilename ?? responseURL.lastPathComponent)
+                    decisionHandler(.cancel)
+                }
+            } else {
+                clearPendingAction()
+                decisionHandler(.download)
+            }
             return
         }
+        clearPendingAction()
         decisionHandler(.allow)
     }
 
@@ -414,6 +498,10 @@ extension WebPageController: WKNavigationDelegate {
         isReaderActive = false
         isReaderUnavailable = false
         documentGeneration += 1
+        // Stale method/body never bleeds: only the current generation survives.
+        if pendingActionGeneration != documentGeneration {
+            clearPendingAction()
+        }
         hasFailedServerTrustChallenge = false
         refreshSnapshot()
     }
@@ -431,6 +519,8 @@ extension WebPageController: WKNavigationDelegate {
     }
 
     func webView(_: WKWebView, didFail _: WKNavigation!, withError error: Error) {
+        // Failed method/body never bleeds into the next response.
+        clearPendingAction()
         recordNavigationFailure(error)
     }
 
@@ -439,6 +529,8 @@ extension WebPageController: WKNavigationDelegate {
         didFailProvisionalNavigation _: WKNavigation!,
         withError error: Error
     ) {
+        // Failed method/body never bleeds into the next response.
+        clearPendingAction()
         recordNavigationFailure(error)
     }
 
@@ -474,6 +566,8 @@ extension WebPageController: WKNavigationDelegate {
     }
 
     private func recordNavigationFailure(_ error: Error) {
+        // Failure drops any pending method/body even for suppressed errors.
+        clearPendingAction()
         let nsError = error as NSError
         // Interruptions of an in-flight load (navigating away, stop) surface as
         // cancellations, not page failures worth displaying.
@@ -505,184 +599,98 @@ extension WebPageController: WKNavigationDelegate {
         finishRefreshing()
         refreshSnapshot()
     }
-}
 
-// MARK: - Find in Page
-
-struct FindResponse: Decodable, Sendable {
-    var total: Int
-    var index: Int
-}
-
-extension WebPageController {
-    static let findHighlighterScript = """
-    (function() {
-      if (window.__outerviewFindInstalled) return;
-      window.__outerviewFindInstalled = true;
-      window.__outerviewFindMatches = 0;
-      window.__outerviewFindIndex = 0;
-      function clearMarks() {
-        var prev = document.querySelectorAll('.outerview-find-highlight');
-        for (var p = 0; p < prev.length; p++) {
-          var el = prev[p];
-          var parent = el.parentNode;
-          if (!parent) { continue; }
-          parent.replaceChild(document.createTextNode(el.textContent), el);
-          parent.normalize();
+    /// Hands a standard-tab transfer to the service: method/body/headers
+    /// survive from the navigation request; cookies ride from the web view store.
+    private func startStandardTransfer(
+        to service: BackgroundDownloadService,
+        request base: URLRequest,
+        suggestedName: String?
+    ) {
+        let fallback = suggestedName ?? base.url?.lastPathComponent ?? "download"
+        // Row registers synchronously so suspend during fetch still leaves a row.
+        guard let manager = downloadsManager else {
+            failClosedStandardDownload(suggestedName: fallback)
+            return
         }
-        window.__outerviewFindMatches = 0;
-        window.__outerviewFindIndex = 0;
-      }
-      function paintCurrent() {
-        var marks = document.querySelectorAll('.outerview-find-highlight');
-        for (var i = 0; i < marks.length; i++) {
-          var m = marks[i];
-          if (i === window.__outerviewFindIndex - 1) {
-            m.style.backgroundColor = '#FF9800';
-            m.style.color = '#000';
-            if (m.scrollIntoView) { m.scrollIntoView({block:'center'}); }
-          } else {
-            m.style.backgroundColor = '#FFEB3B';
-            m.style.color = '#000';
-          }
-        }
-      }
-      window.__outerviewFind = function(query) {
-        clearMarks();
-        var q = String(query || '');
-        if (!q) { return JSON.stringify({total:0,index:0}); }
-        var lower = q.toLowerCase();
-        if (!lower || !document.body) { return JSON.stringify({total:0,index:0}); }
-        var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
-        var nodes = [];
-        while (walker.nextNode()) { nodes.push(walker.currentNode); }
-        var count = 0;
-        for (var i = 0; i < nodes.length; i++) {
-          var node = nodes[i];
-          var text = node.nodeValue;
-          if (!text) { continue; }
-          var tag = node.parentNode && node.parentNode.tagName;
-          if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') { continue; }
-          if (text.toLowerCase().indexOf(lower) === -1) { continue; }
-          var frag = document.createDocumentFragment();
-          var remaining = text;
-          var lowerRemaining = remaining.toLowerCase();
-          var matched = false;
-          while (true) {
-            var j = lowerRemaining.indexOf(lower);
-            if (j === -1) {
-              frag.appendChild(document.createTextNode(remaining));
-              break;
+        let rowID = manager.registerRow(
+            name: DownloadsManager.sanitizedFileName(fallback),
+            fileURL: nil
+        )
+        // Captured upfront so deallocation during fetch still surfaces a row.
+        let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
+        let agent = webView.customUserAgent
+        Task { @MainActor [weak self] in
+            // Tests skip the store callback so the handoff never waits forever.
+            let all: [HTTPCookie] =
+                if AppEnvironment.isTestHost {
+                    []
+                } else {
+                    await withCheckedContinuation { (continuation: CheckedContinuation<[HTTPCookie], Never>) in
+                        cookieStore.getAllCookies { continuation.resume(returning: $0) }
+                    }
+                }
+            var request = base
+            if let url = base.url {
+                let matching = Self.matchingCookies(all, for: url)
+                let header = HTTPCookie.requestHeaderFields(with: matching)
+                for (field, value) in header {
+                    request.setValue(value, forHTTPHeaderField: field)
+                }
             }
-            matched = true;
-            frag.appendChild(document.createTextNode(remaining.slice(0, j)));
-            var mark = document.createElement('mark');
-            mark.className = 'outerview-find-highlight';
-            mark.style.backgroundColor = '#FFEB3B';
-            mark.style.color = '#000';
-            mark.textContent = remaining.substr(j, q.length);
-            frag.appendChild(mark);
-            count++;
-            remaining = remaining.slice(j + q.length);
-            lowerRemaining = remaining.toLowerCase();
-            if (!remaining) { break; }
-          }
-          if (matched) { node.parentNode.replaceChild(frag, node); }
-        }
-        window.__outerviewFindMatches = count;
-        window.__outerviewFindIndex = count > 0 ? 1 : 0;
-        paintCurrent();
-        return JSON.stringify({total:count,index:window.__outerviewFindIndex});
-      };
-      window.__outerviewStep = function(delta) {
-        var total = window.__outerviewFindMatches || 0;
-        if (total === 0) { return JSON.stringify({total:0,index:0}); }
-        var d = Number(delta) || 0;
-        var idx = window.__outerviewFindIndex || 1;
-        idx = ((idx - 1 + d) % total + total) % total + 1;
-        window.__outerviewFindIndex = idx;
-        paintCurrent();
-        return JSON.stringify({total:total,index:idx});
-      };
-      window.__outerviewClear = function() { clearMarks(); };
-    })();
-    """
-
-    nonisolated static func parsedFindCounts(from jsonString: String?) -> (total: Int, index: Int) {
-        guard let jsonString,
-              let data = jsonString.data(using: .utf8)
-        else {
-            return (0, 0)
-        }
-        let decoded: FindResponse
-        do {
-            decoded = try JSONDecoder().decode(FindResponse.self, from: data)
-        } catch {
-            return (0, 0)
-        }
-        return (max(0, decoded.total), max(0, decoded.index))
-    }
-
-    nonisolated static func parsedFindTotal(from jsonString: String?) -> Int {
-        parsedFindCounts(from: jsonString).total
-    }
-
-    nonisolated static func parsedFindIndex(from jsonString: String?) -> Int {
-        parsedFindCounts(from: jsonString).index
-    }
-
-    nonisolated static func escapedFindQuery(_ query: String) -> String {
-        query
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "'", with: "\\'")
-            .replacingOccurrences(of: "\n", with: "\\n")
-            .replacingOccurrences(of: "\r", with: "\\r")
-    }
-
-    func findText(_ query: String) async -> Int {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            await clearFind()
-            return 0
-        }
-        let escaped = Self.escapedFindQuery(trimmed)
-        do {
-            let result = try await webView.evaluateJavaScript("window.__outerviewFind('\(escaped)')")
-            guard let json = result as? String else { return 0 }
-            return Self.parsedFindTotal(from: json)
-        } catch {
-            Logger(subsystem: "com.volcrypt.OuterView", category: "WebPage")
-                .error("findText failed: \(error.localizedDescription, privacy: .public)")
-            return 0
-        }
-    }
-
-    func findStep(_ delta: Int) async -> Int {
-        do {
-            let result = try await webView.evaluateJavaScript("window.__outerviewStep(\(delta))")
-            if let json = result as? String {
-                return Self.parsedFindIndex(from: json)
+            if let agent {
+                request.setValue(agent, forHTTPHeaderField: "User-Agent")
             }
-            if let number = result as? Int {
-                return max(0, number)
+            guard service.start(request: request, suggestedName: fallback, reusing: rowID) != nil else {
+                self?.failClosedStandardDownload(suggestedName: fallback, reusing: rowID)
+                return
             }
-            if let number = result as? Double {
-                return max(0, Int(number))
-            }
-            return 0
-        } catch {
-            Logger(subsystem: "com.volcrypt.OuterView", category: "WebPage")
-                .error("findStep failed: \(error.localizedDescription, privacy: .public)")
-            return 0
         }
     }
 
-    func clearFind() async {
-        do {
-            _ = try await webView.evaluateJavaScript("window.__outerviewClear && window.__outerviewClear()")
-        } catch {
-            Logger(subsystem: "com.volcrypt.OuterView", category: "WebPage")
-                .error("clearFind failed: \(error.localizedDescription, privacy: .public)")
+    /// Fail-closed surface for unwired standard downloads: never foreground.
+    /// Records a failed row when the pipeline exists, else an error overlay.
+    private func failClosedStandardDownload(suggestedName: String, reusing rowID: UUID? = nil) {
+        assertionFailure("Standard download without service")
+        let clean = DownloadsManager.sanitizedFileName(suggestedName)
+        if let manager = downloadsManager {
+            // Reuse the pre-registered row so the early window never leaks rows.
+            if let rowID, manager.rows.contains(where: { $0.id == rowID }) {
+                manager.failDownload(id: rowID, reason: "Download service unavailable")
+            } else {
+                let id = manager.registerRow(name: clean, fileURL: nil)
+                manager.failDownload(id: id, reason: "Download service unavailable")
+            }
+        } else {
+            lastError = "Download failed: service unavailable"
+            lastErrorCode = nil
+            finishRefreshing()
+            refreshSnapshot()
+        }
+    }
+
+    /// Cookies matching host plus path plus secure, for the daemon request.
+    nonisolated static func matchingCookies(_ all: [HTTPCookie], for url: URL) -> [HTTPCookie] {
+        guard let host = url.host?.lowercased() else {
+            return []
+        }
+        let path = url.path.isEmpty ? "/" : url.path
+        let isSecure = url.scheme?.lowercased() == "https"
+        return all.filter { cookie in
+            let domain = cookie.domain.lowercased().trimmingCharacters(in: .init(charactersIn: "."))
+            guard host == domain || host.hasSuffix("." + domain) else {
+                return false
+            }
+            if cookie.isSecure, !isSecure {
+                return false
+            }
+            let cookiePath = cookie.path.isEmpty ? "/" : cookie.path
+            if path == cookiePath {
+                return true
+            }
+            // Boundary check so /private never matches /private-evil per RFC6265.
+            let prefix = cookiePath.hasSuffix("/") ? cookiePath : cookiePath + "/"
+            return path.hasPrefix(prefix)
         }
     }
 }

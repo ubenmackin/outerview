@@ -7,6 +7,8 @@ import SwiftUI
 
 @main
 struct OuterViewApp: App {
+    @UIApplicationDelegateAdaptor(DownloadBackgroundDelegate.self) var backgroundDelegate
+
     var body: some Scene {
         WindowGroup {
             SceneBridgeView()

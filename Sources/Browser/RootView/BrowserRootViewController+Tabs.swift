@@ -110,6 +110,8 @@ extension BrowserRootViewController {
             startPageContainer.isHidden = false
             return
         }
+        // Checkout wiring precedes load so standard tabs never read private defaults.
+        wirePage(page, for: id)
         if let record = tabs.first(where: { $0.id == id }),
            page.snapshot.url == nil, let url = record.url
         {
@@ -157,7 +159,9 @@ extension BrowserRootViewController {
         guard let id = selectedTabID else { return }
         let isLive = tabPool.pages.first(where: { $0.id == id })?.page != nil
         if isLive {
-            _ = tabPool.page(for: id)
+            if let page = tabPool.page(for: id) {
+                wirePage(page, for: id)
+            }
         } else {
             displaySelectedTab()
         }
@@ -273,9 +277,9 @@ extension BrowserRootViewController {
         animator.startAnimation()
     }
 
+    /// Pure read path: no wiring or recency change; checkout owns wiring.
     func activePage() -> WebPageController? {
-        guard let id = selectedTabID else { return nil }
-        return tabPool.page(for: id)
+        peekActivePage()
     }
 
     /// Read-only view of the active page that leaves the pool's recency alone,
