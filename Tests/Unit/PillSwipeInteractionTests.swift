@@ -27,11 +27,32 @@ final class PillSwipeInteractionTests: XCTestCase {
 
     func testShouldCommitHorizontalBoundaries() {
         let width: CGFloat = 300
-        XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: width * 0.39, width: width))
-        XCTAssertTrue(AddressBarView.shouldCommitHorizontal(translationX: width * 0.40, width: width))
-        XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: -width * 0.39, width: width))
-        XCTAssertTrue(AddressBarView.shouldCommitHorizontal(translationX: -width * 0.40, width: width))
-        XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: 0, width: width))
+        XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: width * 0.39, width: width, velocityX: 0, direction: .right))
+        XCTAssertTrue(AddressBarView.shouldCommitHorizontal(translationX: width * 0.40, width: width, velocityX: 0, direction: .right))
+        XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: -width * 0.39, width: width, velocityX: 0, direction: .left))
+        XCTAssertTrue(AddressBarView.shouldCommitHorizontal(translationX: -width * 0.40, width: width, velocityX: 0, direction: .left))
+        XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: 0, width: width, velocityX: 0, direction: .right))
+    }
+
+    func testShouldCommitHorizontalFling() {
+        let width: CGFloat = 300
+        XCTAssertTrue(AddressBarView.shouldCommitHorizontal(translationX: width * 0.10, width: width, velocityX: 800, direction: .right))
+        XCTAssertTrue(AddressBarView.shouldCommitHorizontal(translationX: -width * 0.10, width: width, velocityX: -800, direction: .left))
+        XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: width * 0.10, width: width, velocityX: 799, direction: .right))
+        XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: -width * 0.10, width: width, velocityX: -799, direction: .left))
+        XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: width * 0.10, width: width, velocityX: -900, direction: .right))
+        XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: -width * 0.10, width: width, velocityX: 900, direction: .left))
+        XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: 10, width: 0, velocityX: 800, direction: .right))
+        XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: 10, width: 0, velocityX: -800, direction: .left))
+    }
+
+    func testOverviewDragHelpers() {
+        XCTAssertEqual(AddressBarView.overviewDragScale(progress: 0), 1, accuracy: 0.001)
+        XCTAssertEqual(AddressBarView.overviewDragScale(progress: 1), 0.70, accuracy: 0.001)
+        XCTAssertEqual(AddressBarView.overviewDragScale(progress: 0.3), 0.91, accuracy: 0.001)
+        XCTAssertEqual(AddressBarView.overviewDragDrift(translation: -200), -30, accuracy: 0.001)
+        XCTAssertEqual(AddressBarView.overviewDragRadius(progress: 1), 24, accuracy: 0.001)
+        XCTAssertEqual(AddressBarView.overviewDragRadius(progress: 0), 0, accuracy: 0.001)
     }
 
     func testShouldCommitVerticalBoundaries() {
@@ -58,9 +79,9 @@ final class PillSwipeInteractionTests: XCTestCase {
     }
 
     func testCommitGuardsRejectDegenerateMetrics() {
-        XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: 0, width: 0))
-        XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: 100, width: 0))
-        XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: 100, width: -300))
+        XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: 0, width: 0, velocityX: 0, direction: .right))
+        XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: 100, width: 0, velocityX: 800, direction: .right))
+        XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: 100, width: -300, velocityX: 800, direction: .right))
         XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: 0, height: 0))
         XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: -100, height: 0))
         XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: -100, height: -500))
