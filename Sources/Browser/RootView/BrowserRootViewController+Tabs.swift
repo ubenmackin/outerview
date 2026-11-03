@@ -10,6 +10,27 @@ enum PillSwipeDirection: Sendable {
     case right
 }
 
+@MainActor
+final class HorizontalSwitchSession {
+    let originID: UUID
+    let originIndex: Int
+    let scopeIDs: [UUID]
+    var direction: PillSwipeDirection?
+    var targetID: UUID?
+    let outgoingSnapshot: UIView
+    var incomingView: UIView?
+    var didResolveTarget = false
+    /// Set once finish starts a commit animator; abandon then keeps selection.
+    var didCommit = false
+
+    init(originID: UUID, originIndex: Int, scopeIDs: [UUID], outgoingSnapshot: UIView) {
+        self.originID = originID
+        self.originIndex = originIndex
+        self.scopeIDs = scopeIDs
+        self.outgoingSnapshot = outgoingSnapshot
+    }
+}
+
 extension BrowserRootViewController {
     // MARK: - Tabs
 
@@ -187,26 +208,217 @@ extension BrowserRootViewController {
         displaySelectedTab()
     }
 
-    func handlePillSwipe(direction: PillSwipeDirection) {
-        guard !isEditingAddress, !isFindActive, !isOverviewVisible, let selected = selectedTabID else { return }
-        let scope = TabOverviewViewController.visibleTabs(overviewItems(), mode: overviewMode, query: "", groupId: overviewController.selectedGroupID)
-        guard let currentIndex = scope.firstIndex(where: { $0.id == selected }) else { return }
+    /// Safari mapping: left means next (+1), right means previous (-1).
+    nonisolated static func pillTargetIndex(currentIndex: Int, count: Int, direction: PillSwipeDirection) -> Int? {
         switch direction {
         case .left:
-            // Clamp at the first tab so a leading-edge swipe keeps selection.
-            guard currentIndex > 0 else { return }
-            slideToTab(id: scope[currentIndex - 1].id, direction: direction)
+            let next = currentIndex + 1
+            return next < count ? next : nil
         case .right:
-            if currentIndex + 1 < scope.count {
-                slideToTab(id: scope[currentIndex + 1].id, direction: direction)
-            } else {
-                createNewTabInCurrentScope()
-            }
+            let previous = currentIndex - 1
+            return previous >= 0 ? previous : nil
         }
     }
 
-    func createNewTabInCurrentScope() {
-        let outgoing = contentContainer.snapshotView(afterScreenUpdates: false)
+    func handleHorizontalPan(_ event: PillPanEvent) {
+        guard !isEditingAddress, !isFindActive, !isOverviewVisible else { return }
+        switch event {
+        case .began:
+            beginInteractiveSwitch()
+        case let .changed(translation: translation, velocity: _):
+            updateInteractiveSwitch(translation: translation)
+        case let .ended(translation: translation, velocity: velocity):
+            finishInteractiveSwitch(translation: translation, velocity: velocity)
+        }
+    }
+
+    private func beginInteractiveSwitch() {
+        guard !isEditingAddress, !isFindActive, !isOverviewVisible else { return }
+        if let existing = horizontalSwitchSession {
+            // Interrupted gesture: silence its animator and drop the views;
+            // restore the origin only when no commit had started.
+            horizontalSwitchAnimator?.stopAnimation(true)
+            horizontalSwitchAnimator = nil
+            existing.outgoingSnapshot.removeFromSuperview()
+            existing.incomingView?.transform = .identity
+            if !existing.didCommit, selectedTabID != existing.originID {
+                selectTab(id: existing.originID)
+            }
+            horizontalSwitchSession = nil
+        }
+        guard let selected = selectedTabID else { return }
+        let width = contentContainer.bounds.width
+        guard width > 0 else { return }
+        let scope = TabOverviewViewController.visibleTabs(overviewItems(), mode: overviewMode, query: "", groupId: overviewController.selectedGroupID)
+        guard let currentIndex = scope.firstIndex(where: { $0.id == selected }), let outgoing = contentContainer.snapshotView(afterScreenUpdates: false) else { return }
+        outgoing.frame = contentContainer.bounds
+        outgoing.transform = .identity
+        contentContainer.addSubview(outgoing)
+        let session = HorizontalSwitchSession(
+            originID: selected,
+            originIndex: currentIndex,
+            scopeIDs: scope.map(\.id),
+            outgoingSnapshot: outgoing
+        )
+        horizontalSwitchSession = session
+    }
+
+    private func updateInteractiveSwitch(translation: CGFloat) {
+        guard !isEditingAddress, !isFindActive, !isOverviewVisible, let session = horizontalSwitchSession else { return }
+        let width = contentContainer.bounds.width
+        guard width > 0 else { return }
+        let clamped = max(-width, min(width, translation))
+        if !session.didResolveTarget {
+            guard clamped != 0 else { return }
+            let direction: PillSwipeDirection = clamped < 0 ? .left : .right
+            session.direction = direction
+            if let targetIndex = Self.pillTargetIndex(currentIndex: session.originIndex, count: session.scopeIDs.count, direction: direction) {
+                let targetID = session.scopeIDs[targetIndex]
+                session.targetID = targetID
+                selectTab(id: targetID)
+                // displaySelectedTab clears the snapshot; re-add it on top.
+                session.outgoingSnapshot.frame = contentContainer.bounds
+                if session.outgoingSnapshot.superview !== contentContainer {
+                    contentContainer.addSubview(session.outgoingSnapshot)
+                } else {
+                    contentContainer.bringSubviewToFront(session.outgoingSnapshot)
+                }
+                session.incomingView = currentHorizontalIncomingView()
+                session.didResolveTarget = true
+            } else {
+                session.targetID = nil
+                session.incomingView = nil
+                if session.outgoingSnapshot.superview !== contentContainer {
+                    session.outgoingSnapshot.frame = contentContainer.bounds
+                    contentContainer.addSubview(session.outgoingSnapshot)
+                }
+                session.didResolveTarget = true
+            }
+        }
+        guard session.didResolveTarget, let direction = session.direction else { return }
+        // Target stays locked after first resolve; reversal only mirrors the
+        // drag against the locked side, never re-resolves a new target.
+        let sign: CGFloat = direction == .right ? 1 : -1
+        if let incoming = session.incomingView {
+            session.outgoingSnapshot.transform = CGAffineTransform(translationX: clamped, y: 0)
+            incoming.transform = CGAffineTransform(translationX: clamped - sign * width, y: 0)
+        } else {
+            // No incoming tab: elastic preview at reduced travel.
+            session.outgoingSnapshot.transform = CGAffineTransform(translationX: clamped * AddressBarView.elasticFactor, y: 0)
+        }
+    }
+
+    private func finishInteractiveSwitch(translation: CGFloat, velocity: CGFloat) {
+        guard !isEditingAddress, !isFindActive, !isOverviewVisible, let session = horizontalSwitchSession else { return }
+        let width = contentContainer.bounds.width
+        guard width > 0 else {
+            session.outgoingSnapshot.removeFromSuperview()
+            session.incomingView?.transform = .identity
+            horizontalSwitchSession = nil
+            return
+        }
+        let clamped = max(-width, min(width, translation))
+        guard let direction = session.direction else {
+            session.outgoingSnapshot.transform = .identity
+            session.incomingView?.transform = .identity
+            session.outgoingSnapshot.removeFromSuperview()
+            horizontalSwitchSession = nil
+            return
+        }
+        // Locked direction owns the settle side; a reversed finger still
+        // settles toward the locked target or back based on magnitude.
+        let sign: CGFloat = direction == .right ? 1 : -1
+        let shouldCommit = AddressBarView.shouldCommitHorizontal(translationX: clamped, width: width)
+        // Right-at-first always bounces with no selection change.
+        if direction == .right, session.originIndex == 0 {
+            cancelHorizontalSwitch(session: session, velocity: velocity)
+            return
+        }
+        if session.targetID != nil {
+            if shouldCommit {
+                commitHorizontalSwitch(session: session, width: width, sign: sign, velocity: velocity)
+            } else {
+                cancelHorizontalSwitch(session: session, velocity: velocity)
+            }
+        } else if direction == .left, shouldCommit {
+            commitHorizontalOverflow(session: session, width: width, sign: sign, velocity: velocity, clamped: clamped)
+        } else {
+            cancelHorizontalSwitch(session: session, velocity: velocity)
+        }
+    }
+
+    private func currentHorizontalIncomingView() -> UIView? {
+        if !startPageContainer.isHidden {
+            return startPageContainer
+        }
+        if let webView = peekActivePage()?.webView, webView.superview === contentContainer {
+            return webView
+        }
+        return nil
+    }
+
+    private func commitHorizontalSwitch(session: HorizontalSwitchSession, width: CGFloat, sign: CGFloat, velocity: CGFloat) {
+        guard let incoming = session.incomingView else {
+            session.outgoingSnapshot.removeFromSuperview()
+            if horizontalSwitchSession === session {
+                horizontalSwitchSession = nil
+            }
+            return
+        }
+        session.didCommit = true
+        let outgoing = session.outgoingSnapshot
+        let remaining = abs(sign * width - outgoing.transform.tx)
+        let duration = AddressBarView.settleDuration(remaining: remaining, velocity: velocity)
+        let animator = UIViewPropertyAnimator(duration: duration, curve: .easeOut) {
+            outgoing.transform = CGAffineTransform(translationX: sign * width, y: 0)
+            incoming.transform = .identity
+        }
+        horizontalSwitchAnimator = animator
+        animator.addCompletion { [weak self, weak animator] _ in
+            outgoing.removeFromSuperview()
+            incoming.transform = .identity
+            guard let self else { return }
+            if self.horizontalSwitchSession === session {
+                self.horizontalSwitchSession = nil
+            }
+            if self.horizontalSwitchAnimator === animator {
+                self.horizontalSwitchAnimator = nil
+            }
+        }
+        animator.startAnimation()
+    }
+
+    private func cancelHorizontalSwitch(session: HorizontalSwitchSession, velocity: CGFloat) {
+        let outgoing = session.outgoingSnapshot
+        let incoming = session.incomingView
+        let originID = session.originID
+        let remaining = abs(outgoing.transform.tx)
+        let duration = AddressBarView.settleDuration(remaining: remaining, velocity: velocity)
+        let animator = UIViewPropertyAnimator(duration: duration, curve: .easeOut) {
+            outgoing.transform = .identity
+            incoming?.transform = .identity
+        }
+        horizontalSwitchAnimator = animator
+        animator.addCompletion { [weak self, weak animator] _ in
+            outgoing.removeFromSuperview()
+            incoming?.transform = .identity
+            guard let self else { return }
+            if self.horizontalSwitchSession === session {
+                self.horizontalSwitchSession = nil
+            }
+            if self.horizontalSwitchAnimator === animator {
+                self.horizontalSwitchAnimator = nil
+            }
+            // Elastic previews never left the origin; skip persistence churn.
+            if self.selectedTabID != originID {
+                self.selectTab(id: originID)
+            }
+        }
+        animator.startAnimation()
+    }
+
+    /// Single overflow creator: same-scope Start Page tab for left-past-last.
+    private func makeOverflowTabInCurrentScope() -> TabRecord {
         // Private scope never inherits a group; standard scope stays grouped.
         let groupId = overviewMode.isPrivate ? nil : overviewController.selectedGroupID
         let record = TabRecord(isPrivate: overviewMode.isPrivate, groupId: groupId)
@@ -217,62 +429,58 @@ extension BrowserRootViewController {
         } catch {
             logPersistenceError(error, operation: "saveSession")
         }
+        return record
+    }
+
+    private func commitHorizontalOverflow(session: HorizontalSwitchSession, width: CGFloat, sign: CGFloat, velocity: CGFloat, clamped: CGFloat) {
+        session.didCommit = true
+        let record = makeOverflowTabInCurrentScope()
         selectedTabID = record.id
+        let outgoing = session.outgoingSnapshot
+        outgoing.removeFromSuperview()
         displaySelectedTab()
-        runPillSwipeSlide(outgoingSnapshot: outgoing, direction: .right)
-    }
-
-    private func slideToTab(id: UUID, direction: PillSwipeDirection) {
-        let outgoing = contentContainer.snapshotView(afterScreenUpdates: false)
-        guard tabs.contains(where: { $0.id == id }) else {
-            outgoing?.removeFromSuperview()
-            return
-        }
-        selectedTabID = id
-        if let index = tabs.firstIndex(where: { $0.id == id }) {
-            tabs[index].lastActiveAt = Date()
-        }
-        do {
-            try tabStore?.saveSession(tabs: tabs, selected: id)
-        } catch {
-            logPersistenceError(error, operation: "saveSession")
-        }
-        displaySelectedTab()
-        runPillSwipeSlide(outgoingSnapshot: outgoing, direction: direction)
-    }
-
-    private func runPillSwipeSlide(outgoingSnapshot: UIView?, direction: PillSwipeDirection) {
-        guard let outgoing = outgoingSnapshot else { return }
-        let width = contentContainer.bounds.width
-        guard width > 0 else {
-            outgoing.removeFromSuperview()
-            return
-        }
-        let incoming: UIView?
-        if !startPageContainer.isHidden {
-            incoming = startPageContainer
-        } else if let webView = peekActivePage()?.webView, webView.superview === contentContainer {
-            incoming = webView
-        } else {
-            outgoing.removeFromSuperview()
-            return
-        }
-        guard let incoming else {
-            outgoing.removeFromSuperview()
-            return
-        }
-        // Positive shift follows a right swipe; negative follows a left swipe.
-        let shift: CGFloat = direction == .right ? width : -width
         outgoing.frame = contentContainer.bounds
+        outgoing.transform = CGAffineTransform(translationX: clamped * AddressBarView.elasticFactor, y: 0)
         contentContainer.addSubview(outgoing)
-        incoming.transform = CGAffineTransform(translationX: -shift, y: 0)
-        let animator = UIViewPropertyAnimator(duration: 0.25, curve: .easeInOut) {
-            outgoing.transform = CGAffineTransform(translationX: shift, y: 0)
+        guard let incoming = currentHorizontalIncomingView() else {
+            let remaining = abs(sign * width - clamped * AddressBarView.elasticFactor)
+            let duration = AddressBarView.settleDuration(remaining: remaining, velocity: velocity)
+            let animator = UIViewPropertyAnimator(duration: duration, curve: .easeOut) {
+                outgoing.transform = CGAffineTransform(translationX: sign * width, y: 0)
+            }
+            horizontalSwitchAnimator = animator
+            animator.addCompletion { [weak self, weak animator] _ in
+                outgoing.removeFromSuperview()
+                guard let self else { return }
+                if self.horizontalSwitchSession === session {
+                    self.horizontalSwitchSession = nil
+                }
+                if self.horizontalSwitchAnimator === animator {
+                    self.horizontalSwitchAnimator = nil
+                }
+            }
+            animator.startAnimation()
+            return
+        }
+        incoming.transform = CGAffineTransform(translationX: clamped - sign * width, y: 0)
+        session.incomingView = incoming
+        let remaining = abs(sign * width - clamped * AddressBarView.elasticFactor)
+        let duration = AddressBarView.settleDuration(remaining: remaining, velocity: velocity)
+        let animator = UIViewPropertyAnimator(duration: duration, curve: .easeOut) {
+            outgoing.transform = CGAffineTransform(translationX: sign * width, y: 0)
             incoming.transform = .identity
         }
-        animator.addCompletion { _ in
+        horizontalSwitchAnimator = animator
+        animator.addCompletion { [weak self, weak animator] _ in
             outgoing.removeFromSuperview()
             incoming.transform = .identity
+            guard let self else { return }
+            if self.horizontalSwitchSession === session {
+                self.horizontalSwitchSession = nil
+            }
+            if self.horizontalSwitchAnimator === animator {
+                self.horizontalSwitchAnimator = nil
+            }
         }
         animator.startAnimation()
     }

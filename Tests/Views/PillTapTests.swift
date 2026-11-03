@@ -5,10 +5,20 @@
 
 import CoreGraphics
 @testable import OuterView
+import UIKit
 import XCTest
 
 @MainActor
 final class PillTapTests: XCTestCase {
+    private func makeVerticalRoot() throws -> BrowserRootViewController {
+        let database = try OuterViewDatabase(inMemory: true)
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let root = BrowserRootViewController(database: database, defaults: defaults)
+        TestWindow.attach(root)
+        root.view.layoutIfNeeded()
+        return root
+    }
+
     func testRoutePillTapWhileEditingIsIgnored() {
         XCTAssertNil(BrowserRootViewController.routePillTap(pill: .expanded, isEditing: true, rail: .visible))
         XCTAssertNil(BrowserRootViewController.routePillTap(pill: .minified, isEditing: true, rail: .visible))
@@ -67,5 +77,62 @@ final class PillTapTests: XCTestCase {
         _ = controller.handle(.browsingResumed)
         XCTAssertEqual(controller.state.pill, .expanded)
         XCTAssertEqual(controller.state.rail, .visible)
+    }
+
+    func testVerticalPanIgnoredWhileEditing() throws {
+        let root = try makeVerticalRoot()
+        root.isEditingAddress = true
+        root.handleVerticalPan(.began)
+        XCTAssertFalse(root.isOverviewVisible)
+        XCTAssertTrue(root.overviewView.isHidden)
+        root.handleVerticalPan(.changed(translation: -300, velocity: -500))
+        XCTAssertEqual(root.contentContainer.transform, .identity)
+        XCTAssertTrue(root.overviewView.isHidden)
+    }
+
+    func testVerticalPanIgnoredWhileFindActive() throws {
+        let root = try makeVerticalRoot()
+        root.isFindActive = true
+        root.handleVerticalPan(.began)
+        XCTAssertFalse(root.isOverviewVisible)
+        XCTAssertTrue(root.overviewView.isHidden)
+        root.handleVerticalPan(.changed(translation: -300, velocity: -500))
+        XCTAssertEqual(root.contentContainer.transform, .identity)
+        XCTAssertTrue(root.overviewView.isHidden)
+    }
+
+    func testVerticalPanIgnoredWhileOverviewVisible() throws {
+        let root = try makeVerticalRoot()
+        root.isOverviewVisible = true
+        root.handleVerticalPan(.began)
+        XCTAssertTrue(root.overviewView.isHidden)
+        XCTAssertEqual(root.contentContainer.transform, .identity)
+        root.handleVerticalPan(.changed(translation: -300, velocity: -500))
+        XCTAssertEqual(root.contentContainer.transform, .identity)
+    }
+
+    func testDownwardTranslationNeverCommitsOverview() throws {
+        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: 100, height: 678))
+        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: 0, height: 678))
+        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: -100, height: 678))
+        XCTAssertTrue(AddressBarView.shouldCommitVertical(translationY: -300, height: 678))
+        let root = try makeVerticalRoot()
+        root.handleVerticalPan(.began)
+        XCTAssertFalse(root.overviewView.isHidden)
+        root.handleVerticalPan(.changed(translation: 80, velocity: 300))
+        XCTAssertEqual(root.contentContainer.transform, .identity)
+        XCTAssertEqual(root.overviewView.alpha, 0)
+        root.handleVerticalPan(.ended(translation: 80, velocity: 300))
+        XCTAssertFalse(root.isOverviewVisible)
+    }
+
+    func testPillKeepsSinglePanRecognizerTapRequiresFail() throws {
+        let root = try makeVerticalRoot()
+        let recognizers = root.pillView.gestureRecognizers ?? []
+        let pans = recognizers.compactMap { $0 as? UIPanGestureRecognizer }
+        let taps = recognizers.compactMap { $0 as? UITapGestureRecognizer }
+        XCTAssertEqual(pans.count, 1)
+        XCTAssertEqual(taps.count, 1)
+        XCTAssertTrue(pans.first?.cancelsTouchesInView ?? false)
     }
 }
