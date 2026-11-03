@@ -121,7 +121,10 @@ final class BrowserRootViewController: UIViewController {
 
     /// Regular width uses the top toolbar with the centered pill and no rail.
     var chromePlacement: ChromePlacement {
-        Self.placement(for: traitCollection.horizontalSizeClass)
+        if CommandLine.arguments.contains("-OuterViewInnerDisplay") {
+            return .regular
+        }
+        return Self.placement(for: traitCollection.horizontalSizeClass)
     }
 
     nonisolated static func placement(for sizeClass: UIUserInterfaceSizeClass) -> ChromePlacement {
@@ -428,6 +431,7 @@ final class BrowserRootViewController: UIViewController {
     var snapshotListenerIDs: [UUID: UUID] = [:]
     var forcedStartPageTabs = Set<UUID>()
     var startPageView: StartPageView?
+    var screenshotTabPreviews: [UUID: UIImage] = [:]
     /// Single construction site for element context-menu actions; every page
     /// receives it when its snapshot listener is wired.
     private(set) var elementContextActions: ElementContextActions?

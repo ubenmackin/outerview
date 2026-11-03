@@ -38,16 +38,17 @@ final class FaviconService {
     /// Fetches favicon asynchronously, returning cached or newly fetched image.
     /// Falls back to monogram on network failure.
     func favicon(for url: URL, size: CGFloat = 88) async -> UIImage {
-        // Screenshot runs stay offline; monograms keep captures deterministic.
-        if BrowserRootViewController.isScreenshotRun {
-            return generateMonogram(for: HostFormatter.host(of: url), size: size)
-        }
         let nsURL = url as NSURL
         if let cached = memoryCache.object(forKey: nsURL) {
             return resizedForDisplay(cached, size: size)
         }
 
         let host = HostFormatter.host(of: url)
+        if let brand = brandFavicon(for: host, size: size) {
+            memoryCache.setObject(brand, forKey: nsURL)
+            return brand
+        }
+
         if let diskImage = await loadFromDisk(forHost: host) {
             memoryCache.setObject(diskImage, forKey: nsURL)
             return resizedForDisplay(diskImage, size: size)
@@ -66,7 +67,7 @@ final class FaviconService {
         return monogram
     }
 
-    /// Synchronous retrieval: memory cache or instant monogram only.
+    /// Synchronous retrieval: memory cache, brand favicon, or instant monogram.
     /// Disk I/O stays in the async path so scrolling never blocks the main thread.
     func cachedFaviconOrMonogram(for url: URL, size: CGFloat = 88) -> UIImage {
         let nsURL = url as NSURL
@@ -74,7 +75,197 @@ final class FaviconService {
             return resizedForDisplay(cached, size: size)
         }
         let host = HostFormatter.host(of: url)
+        if let brand = brandFavicon(for: host, size: size) {
+            memoryCache.setObject(brand, forKey: nsURL)
+            return brand
+        }
         return generateMonogram(for: host, size: size)
+    }
+
+    /// Shared binding lifecycle for reusable favicon views: synchronous
+    /// cache-or-monogram, then an async upgrade that lands only while the
+    /// task is live and `currentIdentity()` still matches the bound identity.
+    func bind(
+        url: URL,
+        into view: UIImageView,
+        identity: UUID,
+        currentIdentity: @escaping @MainActor () -> UUID?,
+        size: CGFloat
+    ) -> Task<Void, Never> {
+        view.image = cachedFaviconOrMonogram(for: url, size: size)
+        return Task { [weak view] in
+            let image = await favicon(for: url, size: size)
+            guard let view, !Task.isCancelled, currentIdentity() == identity else { return }
+            view.image = image
+        }
+    }
+
+    // MARK: - Brand Favicons
+
+    /// High-resolution brand icons for prominent domains, ensuring crisp favicons
+    /// during screenshot runs and offline sessions.
+    func brandFavicon(for host: String, size: CGFloat = 88) -> UIImage? {
+        let cleanHost = host.lowercased().replacingOccurrences(of: "www.", with: "")
+
+        if isBrandHost(cleanHost, matching: "apple.com") {
+            return drawSymbolFavicon(backgroundColor: .black, systemName: "apple.logo", size: size)
+        }
+        if isBrandHost(cleanHost, matching: "wikipedia.org") {
+            let font = UIFont(name: "Georgia-Bold", size: size * 0.55) ?? UIFont.systemFont(ofSize: size * 0.55, weight: .bold)
+            return drawTextFavicon(
+                backgroundColor: .white,
+                text: "W",
+                font: font,
+                textColor: UIColor(red: 0.12, green: 0.12, blue: 0.13, alpha: 1.0),
+                borderColor: .separator,
+                size: size
+            )
+        }
+        if isBrandHost(cleanHost, matching: "github.com") {
+            let font = UIFont.systemFont(ofSize: size * 0.38, weight: .heavy)
+            return drawTextFavicon(
+                backgroundColor: UIColor(red: 0.14, green: 0.16, blue: 0.18, alpha: 1.0),
+                text: "GH",
+                font: font,
+                textColor: .white,
+                size: size
+            )
+        }
+        if isBrandHost(cleanHost, matching: "swift.org") {
+            return drawSymbolFavicon(
+                backgroundColor: UIColor(red: 0.96, green: 0.35, blue: 0.22, alpha: 1.0),
+                systemName: "swift",
+                symbolWeight: .medium,
+                size: size
+            )
+        }
+        if isBrandHost(cleanHost, matching: "news.ycombinator.com") {
+            let font = UIFont.systemFont(ofSize: size * 0.55, weight: .heavy)
+            return drawTextFavicon(
+                backgroundColor: UIColor(red: 1.0, green: 0.40, blue: 0.0, alpha: 1.0),
+                text: "Y",
+                font: font,
+                textColor: .white,
+                size: size
+            )
+        }
+        if isBrandHost(cleanHost, matching: "duckduckgo.com") {
+            let font = UIFont.systemFont(ofSize: size * 0.36, weight: .heavy)
+            return drawTextFavicon(
+                backgroundColor: UIColor(red: 0.88, green: 0.35, blue: 0.20, alpha: 1.0),
+                text: "DDG",
+                font: font,
+                textColor: .white,
+                size: size
+            )
+        }
+        if isBrandHost(cleanHost, matching: "mozilla.org") {
+            let font = UIFont.systemFont(ofSize: size * 0.34, weight: .black)
+            return drawTextFavicon(
+                backgroundColor: UIColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1.0),
+                text: "MDN",
+                font: font,
+                textColor: UIColor(red: 0.33, green: 0.65, blue: 1.0, alpha: 1.0),
+                size: size
+            )
+        }
+        if isBrandHost(cleanHost, matching: "arstechnica.com") {
+            let font = UIFont.systemFont(ofSize: size * 0.40, weight: .bold)
+            return drawTextFavicon(
+                backgroundColor: UIColor(red: 0.08, green: 0.08, blue: 0.08, alpha: 1.0),
+                text: "ars",
+                font: font,
+                textColor: UIColor(red: 1.0, green: 0.28, blue: 0.20, alpha: 1.0),
+                size: size
+            )
+        }
+        if isBrandHost(cleanHost, matching: "webkit.org") {
+            return drawSymbolFavicon(
+                backgroundColor: UIColor(red: 0.0, green: 0.48, blue: 1.0, alpha: 1.0),
+                systemName: "safari",
+                size: size
+            )
+        }
+        if isBrandHost(cleanHost, matching: "rust-lang.org") {
+            let font = UIFont.systemFont(ofSize: size * 0.55, weight: .heavy)
+            return drawTextFavicon(
+                backgroundColor: UIColor(red: 0.20, green: 0.15, blue: 0.12, alpha: 1.0),
+                text: "R",
+                font: font,
+                textColor: UIColor(red: 0.85, green: 0.55, blue: 0.35, alpha: 1.0),
+                size: size
+            )
+        }
+
+        return nil
+    }
+
+    /// Exact-host or label-boundary suffix match only; substring matching
+    /// would render counterfeit brand icons for lookalike domains.
+    private func isBrandHost(_ cleanHost: String, matching domain: String) -> Bool {
+        cleanHost == domain || cleanHost.hasSuffix("." + domain)
+    }
+
+    private func drawSymbolFavicon(
+        backgroundColor: UIColor,
+        systemName: String,
+        symbolWeight: UIImage.SymbolWeight = .semibold,
+        size: CGFloat
+    ) -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
+        let rect = CGRect(origin: .zero, size: CGSize(width: size, height: size))
+        let cornerRadius = size * 0.22
+        return renderer.image { _ in
+            let path = UIBezierPath(roundedRect: rect, cornerRadius: cornerRadius)
+            backgroundColor.setFill()
+            path.fill()
+            let config = UIImage.SymbolConfiguration(pointSize: size * 0.52, weight: symbolWeight)
+            if let symbol = UIImage(systemName: systemName, withConfiguration: config)?.withTintColor(.white, renderingMode: .alwaysOriginal) {
+                let symbolRect = CGRect(
+                    x: (size - symbol.size.width) / 2,
+                    y: (size - symbol.size.height) / 2,
+                    width: symbol.size.width,
+                    height: symbol.size.height
+                )
+                symbol.draw(in: symbolRect)
+            }
+        }
+    }
+
+    private func drawTextFavicon(
+        backgroundColor: UIColor,
+        text: String,
+        font: UIFont,
+        textColor: UIColor,
+        borderColor: UIColor? = nil,
+        size: CGFloat
+    ) -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
+        let rect = CGRect(origin: .zero, size: CGSize(width: size, height: size))
+        let cornerRadius = size * 0.22
+        return renderer.image { _ in
+            let path = UIBezierPath(roundedRect: rect, cornerRadius: cornerRadius)
+            backgroundColor.setFill()
+            path.fill()
+            if let borderColor {
+                borderColor.setStroke()
+                path.lineWidth = 1.0
+                path.stroke()
+            }
+            let attr: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: textColor
+            ]
+            let str = NSAttributedString(string: text, attributes: attr)
+            let strSize = str.size()
+            let strRect = CGRect(
+                x: (size - strSize.width) / 2,
+                y: (size - strSize.height) / 2,
+                width: strSize.width,
+                height: strSize.height
+            )
+            str.draw(in: strRect)
+        }
     }
 
     // MARK: - Monogram Generator

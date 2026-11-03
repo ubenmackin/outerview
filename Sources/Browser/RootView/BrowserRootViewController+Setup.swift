@@ -678,6 +678,10 @@ extension BrowserRootViewController {
         overviewController.delegate = self
         // Peek without touching recency so grid previews never disturb eviction order.
         overviewController.previewProvider = { [weak self] id, completion in
+            if let preview = self?.screenshotTabPreviews[id] {
+                completion(preview)
+                return
+            }
             guard let page = self?.tabPool.pages.first(where: { $0.id == id })?.page else {
                 completion(nil)
                 return
