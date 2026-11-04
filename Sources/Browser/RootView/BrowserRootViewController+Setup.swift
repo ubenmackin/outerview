@@ -152,6 +152,10 @@ extension BrowserRootViewController {
         tabStripView.onCloseTab = { [weak self] id in
             self?.closeTab(id: id, replacementIfEmpty: nil)
         }
+        tabStripView.onReorderTabs = { [weak self] orderedIDs in
+            guard let self else { return }
+            self.reorderTabs(orderedIDs: orderedIDs, isPrivate: self.overviewMode.isPrivate)
+        }
         tabStripView.onNewTab = { [weak self] in
             guard let self else { return }
             self.createNewTab(isPrivate: self.overviewMode.isPrivate)

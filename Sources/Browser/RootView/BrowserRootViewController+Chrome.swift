@@ -182,6 +182,9 @@ extension BrowserRootViewController {
                     interfaceMode: self.interfaceMode
                 )
             }
+            proxy.onScrollSettled = { [weak self] in
+                self?.reconcileTopInsetAfterSettle()
+            }
             scrollProxies[id] = proxy
         }
         proxy.attach(to: page.webView.scrollView)
@@ -211,10 +214,11 @@ extension BrowserRootViewController {
         if let webView = peekActivePage()?.webView {
             let oldTop = webView.obscuredContentInsets.top
             let insets = UIEdgeInsets(top: newTop, left: 0, bottom: bottom, right: 0)
-            if webView.obscuredContentInsets != insets {
+            if webView.obscuredContentInsets != insets || webView.scrollView.contentInset != insets {
                 let proxy = selectedTabID.flatMap { scrollProxies[$0] }
                 proxy?.suppressDeltas = true
                 webView.obscuredContentInsets = insets
+                webView.scrollView.contentInset = insets
                 if oldTop != newTop {
                     let current = webView.scrollView.contentOffset
                     let compensated = Self.compensatedOffset(
@@ -226,12 +230,33 @@ extension BrowserRootViewController {
                     let minOffsetY = -newTop
                     let maxOffsetY = scrollView.contentSize.height - scrollView.bounds.height + bottom
                     let clampedY = min(max(compensated.y, minOffsetY), max(maxOffsetY, minOffsetY))
-                    webView.scrollView.contentOffset = CGPoint(x: compensated.x, y: clampedY)
+                    let target = CGPoint(x: compensated.x, y: clampedY)
+                    scrollView.setContentOffset(target, animated: false)
                 }
                 proxy?.suppressDeltas = false
             }
         }
         startPageView?.setBottomChromeInset(max(0, bottom - systemBottom))
+    }
+
+    func reconcileTopInsetAfterSettle() {
+        guard interfaceMode == .duoInnerOrPad,
+              chromeController.state.pill != .minified,
+              !isOverviewVisible,
+              let webView = peekActivePage()?.webView else { return }
+        let expectedTop = Self.topContentInset(
+            for: chromePlacement,
+            state: chromeController.state,
+            stripVisible: !tabStripView.isHidden,
+            interfaceMode: interfaceMode
+        )
+        // Settled near the collapsed remnant (e.g. -48) while expanded expects
+        // -expectedTop (e.g. -128): re-assert insets then park below the header.
+        if webView.scrollView.contentOffset.y > -expectedTop, webView.scrollView.contentOffset.y <= -TopBarView.remnantHeight + 1 {
+            let currentX = webView.scrollView.contentOffset.x
+            applyContentInsets()
+            webView.scrollView.setContentOffset(CGPoint(x: currentX, y: -expectedTop), animated: true)
+        }
     }
 
     func updateTopBarPinning(for _: ChromePlacement) {

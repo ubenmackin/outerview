@@ -256,4 +256,52 @@ final class TabStripTests: XCTestCase {
         XCTAssertFalse(root.tabStripView.isHidden)
         XCTAssertEqual(root.tabStripView.displayedTabs.map(\.id), [standardFirst.id, standardSecond.id])
     }
+
+    func testTabStripReorderMovesItemAndEmitsCallback() {
+        let strip = TabStripView()
+        TestWindow.attach(strip)
+        let item1 = makeItem(title: "Tab 1")
+        let item2 = makeItem(title: "Tab 2")
+        let item3 = makeItem(title: "Tab 3")
+        strip.render(tabs: [item1, item2, item3], selectedID: item1.id)
+
+        XCTAssertTrue(strip.collectionView(strip.collectionView, canMoveItemAt: IndexPath(item: 0, section: 0)))
+
+        var reorderedIDs: [UUID] = []
+        strip.onReorderTabs = { reorderedIDs = $0 }
+
+        // Move item 0 to item 2
+        strip.collectionView(
+            strip.collectionView,
+            moveItemAt: IndexPath(item: 0, section: 0),
+            to: IndexPath(item: 2, section: 0)
+        )
+
+        XCTAssertEqual(strip.displayedTabs.map(\.id), [item2.id, item3.id, item1.id])
+        XCTAssertEqual(reorderedIDs, [item2.id, item3.id, item1.id])
+    }
+
+    func testTabStripCannotMoveSingleTab() {
+        let strip = TabStripView()
+        TestWindow.attach(strip)
+        let item1 = makeItem(title: "Only Tab")
+        strip.render(tabs: [item1], selectedID: item1.id)
+
+        XCTAssertFalse(strip.collectionView(strip.collectionView, canMoveItemAt: IndexPath(item: 0, section: 0)))
+    }
+
+    func testRootReorderPreservesModeAndPersistsStrip() throws {
+        let root = try makeRoot()
+        let tab1 = TabRecord(isPrivate: false)
+        let privateTab = TabRecord(isPrivate: true)
+        let tab2 = TabRecord(isPrivate: false)
+        root.tabs = [tab1, privateTab, tab2]
+        root.selectedTabID = tab1.id
+
+        // Reorder standard tabs: tab2 before tab1
+        root.reorderTabs(orderedIDs: [tab2.id, tab1.id], isPrivate: false)
+
+        // Standard tabs reordered, private tab preserved in strip
+        XCTAssertEqual(root.tabs.map(\.id), [tab2.id, tab1.id, privateTab.id])
+    }
 }

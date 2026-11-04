@@ -219,6 +219,27 @@ final class OverviewInlineTests: XCTestCase {
         overview.performInlineDone()
         XCTAssertEqual(delegate.finishCount, 1)
     }
+
+    func testSelectedCardFrameReturnsConvertedFrameAndNilWhenMissing() {
+        let item1 = makeItem(title: "First")
+        let item2 = makeItem(title: "Second")
+        let overview = makeOverview(tabs: [item1, item2])
+        overview.view.bounds = CGRect(x: 0, y: 0, width: 400, height: 600)
+        overview.view.layoutIfNeeded()
+
+        let frame = overview.selectedCardFrame(in: overview.view)
+        XCTAssertNotNil(frame)
+        if let frame {
+            XCTAssertGreaterThan(frame.width, 0)
+            XCTAssertGreaterThan(frame.height, 0)
+        }
+
+        overview.setItems([item1, item2], selectedID: nil)
+        XCTAssertNil(overview.selectedCardFrame(in: overview.view))
+
+        overview.setItems([item1, item2], selectedID: UUID())
+        XCTAssertNil(overview.selectedCardFrame(in: overview.view))
+    }
 }
 
 @MainActor

@@ -110,6 +110,7 @@ final class BookmarkEditorModel {
     }
 }
 
+@MainActor
 struct BookmarkEditorView: View {
     @Bindable var model: BookmarkEditorModel
     let bookmarkStore: BookmarkStore

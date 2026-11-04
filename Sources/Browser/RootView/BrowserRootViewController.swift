@@ -278,6 +278,7 @@ final class BrowserRootViewController: UIViewController {
     func applyChromePlacement(for placement: ChromePlacement) {
         let isRegular = placement == .regular
         let isNonDuo = (interfaceMode == .nonDuoPhone) && !isRegular
+        pillView.isSwipeEnabled = interfaceMode != .duoInnerOrPad
 
         topBarView.isNonDuoPhone = isNonDuo
         if isRegular {
@@ -519,6 +520,7 @@ final class BrowserRootViewController: UIViewController {
     var horizontalSwitchSession: HorizontalSwitchSession?
     var horizontalSwitchAnimator: UIViewPropertyAnimator?
     var overviewDragAnimator: UIViewPropertyAnimator?
+    var overviewDragAnchorY: CGFloat = 0
     var lastStatusBarHidden: Bool?
     private var structuralTask: Task<Void, Never>?
     private var horizontalSizeClassRegistration: UITraitChangeRegistration?

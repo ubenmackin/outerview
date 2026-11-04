@@ -17,6 +17,7 @@ final class TabStripView: UIView {
     var onSelectTab: ((UUID) -> Void)?
     var onCloseTab: ((UUID) -> Void)?
     var onNewTab: (() -> Void)?
+    var onReorderTabs: (([UUID]) -> Void)?
 
     private(set) var displayedTabs: [TabOverviewItem] = []
     private(set) var displayedSelectedID: UUID?
@@ -120,6 +121,7 @@ final class TabStripView: UIView {
         collectionView.delegate = self
         collectionView.register(TabStripCell.self, forCellWithReuseIdentifier: TabStripCell.reuseIdentifier)
         trackView.addSubview(collectionView)
+        setupReorderGesture()
 
         // Retained hidden for programmatic callers; TopBarView owns the visible `+` action on regular.
         newTabButton.setImage(UIImage(systemName: "plus"), for: .normal)
@@ -149,11 +151,53 @@ final class TabStripView: UIView {
             self.updateTrackBorder()
         }
     }
+
+    private func setupReorderGesture() {
+        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
+        longPress.minimumPressDuration = 0.25
+        collectionView.addGestureRecognizer(longPress)
+    }
+
+    @objc private func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
+        let point = gesture.location(in: collectionView)
+        switch gesture.state {
+        case .began:
+            guard let indexPath = collectionView.indexPathForItem(at: point),
+                  displayedTabs.count > 1,
+                  collectionView.beginInteractiveMovementForItem(at: indexPath) else { return }
+        case .changed:
+            let clampedPoint = CGPoint(x: point.x, y: collectionView.bounds.midY)
+            collectionView.updateInteractiveMovementTargetPosition(clampedPoint)
+        case .ended:
+            collectionView.endInteractiveMovement()
+        case .cancelled, .failed:
+            collectionView.cancelInteractiveMovement()
+        default:
+            break
+        }
+    }
 }
 
 extension TabStripView: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
     func collectionView(_: UICollectionView, numberOfItemsInSection _: Int) -> Int {
         displayedTabs.count
+    }
+
+    func collectionView(_: UICollectionView, canMoveItemAt _: IndexPath) -> Bool {
+        displayedTabs.count > 1
+    }
+
+    func collectionView(
+        _: UICollectionView,
+        moveItemAt sourceIndexPath: IndexPath,
+        to destinationIndexPath: IndexPath
+    ) {
+        guard sourceIndexPath.item < displayedTabs.count,
+              destinationIndexPath.item < displayedTabs.count,
+              sourceIndexPath.item != destinationIndexPath.item else { return }
+        let moved = displayedTabs.remove(at: sourceIndexPath.item)
+        displayedTabs.insert(moved, at: destinationIndexPath.item)
+        onReorderTabs?(displayedTabs.map(\.id))
     }
 
     func collectionView(

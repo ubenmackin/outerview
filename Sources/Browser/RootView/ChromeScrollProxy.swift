@@ -25,11 +25,21 @@ final class ChromeScrollProxy: NSObject, UIScrollViewDelegate {
         isDragging || isDecelerating
     }
 
+    /// Resting top boundary: the less-negative of the scroll view's real
+    /// inset and the chrome's computed inset, so a rubber-band settle toward
+    /// either one is never treated as downward reading scroll.
+    nonisolated static func topBound(adjustedTop: CGFloat, chromeTop: CGFloat) -> CGFloat {
+        -min(adjustedTop, chromeTop)
+    }
+
     /// Called once per user-driven `scrollViewDidScroll` with the net change.
     var onScrollDelta: ((CGFloat) -> Void)?
 
     /// Called when the user's finger starts dragging the page.
     var onDragBegan: (() -> Void)?
+
+    /// Called when scrolling finishes settling (dragging ended without deceleration or deceleration finished).
+    var onScrollSettled: (() -> Void)?
 
     /// Returns the active top chrome obstruction inset (e.g. 84 or 128 pt on
     /// regular width) so top-of-content boundary checks match resting scroll.
@@ -73,7 +83,10 @@ final class ChromeScrollProxy: NSObject, UIScrollViewDelegate {
         forwardedDelegate?.scrollViewDidScroll?(scrollView)
         guard !suppressDeltas else { return }
         if Self.isUserDriven(isDragging: scrollView.isDragging, isDecelerating: scrollView.isDecelerating) {
-            let topBound = -(topInsetProvider?() ?? 0)
+            let topBound = Self.topBound(
+                adjustedTop: scrollView.adjustedContentInset.top,
+                chromeTop: topInsetProvider?() ?? 0
+            )
             if currentY <= topBound {
                 // At the top of content (or during rubber-band overscroll), ensure chrome
                 // expands and never treat the bounce-back toward resting top as downward scrolling.
@@ -86,5 +99,17 @@ final class ChromeScrollProxy: NSObject, UIScrollViewDelegate {
                 onScrollDelta?(change)
             }
         }
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        forwardedDelegate?.scrollViewDidEndDragging?(scrollView, willDecelerate: decelerate)
+        if !decelerate {
+            onScrollSettled?()
+        }
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        forwardedDelegate?.scrollViewDidEndDecelerating?(scrollView)
+        onScrollSettled?()
     }
 }

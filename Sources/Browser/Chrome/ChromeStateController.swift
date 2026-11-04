@@ -120,12 +120,13 @@ struct ChromeStateController: Sendable {
         return commands
     }
 
-    private mutating func handleEditEnded(submitted: Bool) -> ChromeCommands {
+    private mutating func handleEditEnded(submitted _: Bool) -> ChromeCommands {
         var commands = ChromeCommands()
-        let target: PillState = submitted ? .minified : .expanded
-        if state.pill != target {
-            state.pill = target
-            commands.pill = target
+        // Submitting or cancelling both restore the full pill; only a real
+        // down-scroll may minify it (Safari parity: large bar until scroll).
+        if state.pill != .expanded {
+            state.pill = .expanded
+            commands.pill = .expanded
         }
         if state.rail != .visible {
             state.rail = .visible

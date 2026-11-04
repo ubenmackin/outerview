@@ -289,4 +289,77 @@ final class InterfaceModeTests: XCTestCase {
             0
         )
     }
+
+    func testPillSwipeEnabledOnlyInModes1And3() throws {
+        // Pin the Duo-outer vs standard-phone split so swipe scope never blurs.
+        XCTAssertEqual(
+            BrowserRootViewController.interfaceMode(
+                horizontalSizeClass: .compact,
+                safeAreaInsets: UIEdgeInsets(top: 0, left: 0, bottom: 34, right: 84),
+                bounds: CGRect(x: 0, y: 0, width: 466, height: 678),
+                deviceName: "Any Device"
+            ),
+            .duoOuter
+        )
+        XCTAssertEqual(
+            BrowserRootViewController.interfaceMode(
+                horizontalSizeClass: .compact,
+                safeAreaInsets: UIEdgeInsets(top: 59, left: 0, bottom: 34, right: 0),
+                bounds: CGRect(x: 0, y: 0, width: 402, height: 874),
+                deviceName: "iPhone 17 Pro"
+            ),
+            .nonDuoPhone
+        )
+
+        // Mode 2 (regular): swipe disabled.
+        let databaseRegular = try OuterViewDatabase(inMemory: true)
+        let defaultsRegular = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let rootRegular = BrowserRootViewController(database: databaseRegular, defaults: defaultsRegular)
+        TestWindow.attach(rootRegular, frame: CGRect(x: 0, y: 0, width: 951, height: 669))
+        rootRegular.traitOverrides.horizontalSizeClass = .regular
+        rootRegular.view.layoutIfNeeded()
+        rootRegular.applyChromePlacement(for: .regular)
+        XCTAssertFalse(rootRegular.pillView.isSwipeEnabled)
+
+        // Mode 1 (compact Duo outer, 466pt bounds): swipe enabled.
+        let databaseOuter = try OuterViewDatabase(inMemory: true)
+        let defaultsOuter = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let rootOuter = BrowserRootViewController(database: databaseOuter, defaults: defaultsOuter)
+        TestWindow.attach(rootOuter, frame: CGRect(x: 0, y: 0, width: 466, height: 678))
+        rootOuter.traitOverrides.horizontalSizeClass = .compact
+        rootOuter.view.layoutIfNeeded()
+        rootOuter.applyChromePlacement(for: .compact)
+        XCTAssertEqual(rootOuter.interfaceMode, .duoOuter)
+        XCTAssertTrue(rootOuter.pillView.isSwipeEnabled)
+
+        // Mode 3 (compact non-Duo phone, 402x874): swipe enabled.
+        let databasePhone = try OuterViewDatabase(inMemory: true)
+        let defaultsPhone = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let rootPhone = BrowserRootViewController(database: databasePhone, defaults: defaultsPhone)
+        TestWindow.attach(rootPhone, frame: CGRect(x: 0, y: 0, width: 402, height: 874))
+        rootPhone.traitOverrides.horizontalSizeClass = .compact
+        rootPhone.view.layoutIfNeeded()
+        rootPhone.applyChromePlacement(for: .compact)
+        XCTAssertTrue(rootPhone.pillView.isSwipeEnabled)
+    }
+
+    func testSubmittedEditKeepsExpandedPillInCompactModes() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let root = BrowserRootViewController(database: database, defaults: defaults)
+        let parent = UIViewController()
+        TestWindow.attach(parent)
+        parent.addChild(root)
+        parent.view.addSubview(root.view)
+        root.didMove(toParent: parent)
+        root.applyChromePlacement(for: .compact)
+
+        let began = root.chromeController.handle(.editBegan)
+        root.applyCommands(began, animated: false)
+
+        let ended = root.chromeController.handle(.editEnded(submitted: true))
+        root.applyCommands(ended, animated: false)
+        XCTAssertEqual(root.chromeController.state.pill, .expanded)
+        XCTAssertEqual(root.pillHeightConstraint.constant, AddressBarView.expandedHeight)
+    }
 }
