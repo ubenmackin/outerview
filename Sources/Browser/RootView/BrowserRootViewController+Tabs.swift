@@ -221,7 +221,7 @@ extension BrowserRootViewController {
     }
 
     func handleHorizontalPan(_ event: PillPanEvent) {
-        guard !isEditingAddress, !isFindActive, !isOverviewVisible else { return }
+        guard interfaceMode != .duoInnerOrPad, !isEditingAddress, !isFindActive, !isOverviewVisible else { return }
         switch event {
         case .began:
             beginInteractiveSwitch()

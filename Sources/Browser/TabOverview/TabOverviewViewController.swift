@@ -449,6 +449,20 @@ final class TabOverviewViewController: UIViewController {
         updateEmptyState()
     }
 
+    /// Frame of the selected tab card converted to the target coordinate space,
+    /// used by interactive swipe-to-overview commit animations.
+    func selectedCardFrame(in targetCoordinateSpace: UICoordinateSpace) -> CGRect? {
+        guard isViewLoaded, let selectedID else { return nil }
+        view.layoutIfNeeded()
+        collectionView.layoutIfNeeded()
+        guard let index = visibleItems.firstIndex(where: { $0.id == selectedID }) else { return nil }
+        let indexPath = IndexPath(item: index, section: 0)
+        guard let attributes = collectionView.layoutAttributesForItem(at: indexPath) else { return nil }
+        let frameInTarget = collectionView.convert(attributes.frame, to: targetCoordinateSpace)
+        guard frameInTarget.width > 0, frameInTarget.height > 0 else { return nil }
+        return frameInTarget
+    }
+
     func setGroups(_ groups: [TabGroup], selectedGroupID: UUID?) {
         allGroups = groups
         if let selectedGroupID, groups.contains(where: { $0.id == selectedGroupID }) {

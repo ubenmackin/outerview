@@ -44,7 +44,6 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
     nonisolated static let elasticFactor: CGFloat = 0.35
     /// Drag-to-overview card shrink per unit progress and corner radius.
     nonisolated static let overviewCardScaleShrink: CGFloat = 0.30
-    nonisolated static let overviewCardDriftFactor: CGFloat = 0.15
     nonisolated static let overviewCardRadius: CGFloat = 24
 
     /// Commits at 40% width, else on a same-direction 800 pt/s fling.
@@ -67,8 +66,16 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
         1 - overviewCardScaleShrink * progress
     }
 
-    nonisolated static func overviewDragDrift(translation: CGFloat) -> CGFloat {
-        translation * overviewCardDriftFactor
+    /// Vertical translation that keeps the content point at `anchorY` glued to
+    /// the finger while the page scales about its center `centerY`.
+    /// anchor' = centerY + scale·(anchorY − centerY) + ty  ==  anchorY + translation
+    nonisolated static func overviewDragOffset(
+        translation: CGFloat,
+        scale: CGFloat,
+        anchorY: CGFloat,
+        centerY: CGFloat
+    ) -> CGFloat {
+        translation + (1 - scale) * (anchorY - centerY)
     }
 
     nonisolated static func overviewDragRadius(progress: CGFloat) -> CGFloat {
@@ -153,6 +160,15 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
     var onDownloadsTap: (() -> Void)?
     var onHorizontalPan: ((PillPanEvent) -> Void)?
     var onVerticalPan: ((PillPanEvent) -> Void)?
+
+    /// Mode 2 (`duoInnerOrPad`) disables every pill swipe; taps still route.
+    var isSwipeEnabled = true {
+        didSet {
+            pillPanRecognizer?.isEnabled = isSwipeEnabled
+        }
+    }
+
+    private var pillPanRecognizer: UIPanGestureRecognizer?
 
     private var currentPill: PillState = .expanded
     private var currentURL: URL?
@@ -383,6 +399,8 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePillPan(_:)))
         pan.cancelsTouchesInView = true
         pan.delegate = self
+        pan.isEnabled = isSwipeEnabled
+        pillPanRecognizer = pan
         let tap = UITapGestureRecognizer(target: self, action: #selector(handlePillTap))
         tap.require(toFail: pan)
         addGestureRecognizer(pan)

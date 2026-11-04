@@ -172,9 +172,15 @@ final class ChromeStateControllerTests: XCTestCase {
             pill: .expanded
         ),
         MatrixCase(
-            label: "submitting the edit minifies the pill",
+            label: "submitting the edit keeps the pill expanded until scroll",
             inputs: [.editBegan, .editEnded(submitted: true)],
             rail: .visible,
+            pill: .expanded
+        ),
+        MatrixCase(
+            label: "submitting the edit then down-scrolling minifies the pill",
+            inputs: [.editBegan, .editEnded(submitted: true), down(24)],
+            rail: .hidden,
             pill: .minified
         ),
         // Rail grabbing (pill unchanged)
@@ -238,7 +244,7 @@ final class ChromeStateControllerTests: XCTestCase {
             label: "repeat submitted editEnded leaves the state",
             inputs: [.editBegan, .editEnded(submitted: true), .editEnded(submitted: true)],
             rail: .visible,
-            pill: .minified
+            pill: .expanded
         ),
         MatrixCase(
             label: "repeat cancelled editEnded leaves the state",
@@ -370,7 +376,7 @@ final class ChromeStateControllerTests: XCTestCase {
 
         XCTAssertEqual(
             finalCommands(after: [.editBegan, .editEnded(submitted: true)]),
-            ChromeCommands(rail: .visible, pill: .minified)
+            ChromeCommands(rail: .visible, pill: .expanded)
         )
         XCTAssertEqual(
             finalCommands(after: [.editBegan, .editEnded(submitted: true), .editEnded(submitted: true)]),

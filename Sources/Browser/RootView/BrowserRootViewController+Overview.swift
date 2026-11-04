@@ -260,7 +260,7 @@ extension BrowserRootViewController {
     // MARK: - Vertical overview drag
 
     func handleVerticalPan(_ event: PillPanEvent) {
-        guard !isEditingAddress, !isFindActive, !isOverviewVisible else { return }
+        guard interfaceMode != .duoInnerOrPad, !isEditingAddress, !isFindActive, !isOverviewVisible else { return }
         switch event {
         case .began:
             beginOverviewDrag()
@@ -303,6 +303,7 @@ extension BrowserRootViewController {
         contentContainer.transform = .identity
         contentContainer.layer.cornerRadius = 0
         contentContainer.clipsToBounds = true
+        overviewDragAnchorY = pillView.superview?.convert(pillView.center, to: view).y ?? view.bounds.midY
         overviewView.alpha = 0
         overviewView.isHidden = false
         view.insertSubview(overviewView, belowSubview: contentContainer)
@@ -314,11 +315,16 @@ extension BrowserRootViewController {
         guard height > 0, translation < 0 else { return }
         let progress = min(1, -translation / height)
         let scale = AddressBarView.overviewDragScale(progress: progress)
-        let drift = AddressBarView.overviewDragDrift(translation: translation)
-        // Scale first, then translate, so the page shrinks in place
-        // with a slight upward drift instead of sliding off-screen.
+        let offset = AddressBarView.overviewDragOffset(
+            translation: translation,
+            scale: scale,
+            anchorY: overviewDragAnchorY,
+            centerY: contentContainer.center.y
+        )
+        // Scale first, then translate, so the point under the finger stays
+        // glued to the finger motion (1:1 tracking) as the page shrinks.
         contentContainer.transform = CGAffineTransform(scaleX: scale, y: scale)
-            .concatenating(CGAffineTransform(translationX: 0, y: drift))
+            .concatenating(CGAffineTransform(translationX: 0, y: offset))
         contentContainer.layer.cornerRadius = AddressBarView.overviewDragRadius(progress: progress)
         overviewView.alpha = progress
     }
@@ -338,15 +344,35 @@ extension BrowserRootViewController {
             let progress = min(1, -translation / height)
             let remaining = (1 - progress) * height * 0.20
             let duration = AddressBarView.settleDuration(remaining: remaining, velocity: velocity)
-            let cardScale = AddressBarView.overviewDragScale(progress: 1)
-            let drift = AddressBarView.overviewDragDrift(translation: -height)
-            let target = CGAffineTransform(scaleX: cardScale, y: cardScale)
-                .concatenating(CGAffineTransform(translationX: 0, y: drift))
+            let target: CGAffineTransform
+            let targetRadius: CGFloat
+            if let cardFrame = overviewController.selectedCardFrame(in: view),
+               cardFrame.width > 0,
+               contentContainer.bounds.width > 0
+            {
+                let cardScale = cardFrame.width / contentContainer.bounds.width
+                let tx = cardFrame.midX - contentContainer.center.x
+                let ty = cardFrame.midY - contentContainer.center.y
+                target = CGAffineTransform(scaleX: cardScale, y: cardScale)
+                    .concatenating(CGAffineTransform(translationX: tx, y: ty))
+                targetRadius = TabCardCell.cornerRadius
+            } else {
+                let cardScale = AddressBarView.overviewDragScale(progress: 1)
+                let currentOffset = AddressBarView.overviewDragOffset(
+                    translation: translation,
+                    scale: cardScale,
+                    anchorY: overviewDragAnchorY,
+                    centerY: contentContainer.center.y
+                )
+                target = CGAffineTransform(scaleX: cardScale, y: cardScale)
+                    .concatenating(CGAffineTransform(translationX: 0, y: currentOffset))
+                targetRadius = AddressBarView.overviewDragRadius(progress: 1)
+            }
             let container = contentContainer
             let overview = overviewView
             let animator = UIViewPropertyAnimator(duration: duration, curve: .easeOut) {
                 container.transform = target
-                container.layer.cornerRadius = AddressBarView.overviewDragRadius(progress: 1)
+                container.layer.cornerRadius = targetRadius
                 overview.alpha = 1
             }
             overviewDragAnimator = animator
@@ -509,7 +535,10 @@ extension BrowserRootViewController: TabOverviewViewControllerDelegate {
     }
 
     func tabOverview(_ overview: TabOverviewViewController, didReorderTabs orderedIDs: [UUID]) {
-        let isPrivate = overview.mode.isPrivate
+        reorderTabs(orderedIDs: orderedIDs, isPrivate: overview.mode.isPrivate)
+    }
+
+    func reorderTabs(orderedIDs: [UUID], isPrivate: Bool) {
         var byID: [UUID: TabRecord] = [:]
         var privacyByID: [UUID: Bool] = [:]
         for record in tabs {

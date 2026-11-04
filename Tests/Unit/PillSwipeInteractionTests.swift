@@ -50,7 +50,20 @@ final class PillSwipeInteractionTests: XCTestCase {
         XCTAssertEqual(AddressBarView.overviewDragScale(progress: 0), 1, accuracy: 0.001)
         XCTAssertEqual(AddressBarView.overviewDragScale(progress: 1), 0.70, accuracy: 0.001)
         XCTAssertEqual(AddressBarView.overviewDragScale(progress: 0.3), 0.91, accuracy: 0.001)
-        XCTAssertEqual(AddressBarView.overviewDragDrift(translation: -200), -30, accuracy: 0.001)
+        let anchorY: CGFloat = 600
+        let centerY: CGFloat = 400
+        let scale: CGFloat = 0.85
+        let translation: CGFloat = -100
+        let offset = AddressBarView.overviewDragOffset(
+            translation: translation,
+            scale: scale,
+            anchorY: anchorY,
+            centerY: centerY
+        )
+        // Verify offset ensures 1:1 finger tracking:
+        // centerY + scale * (anchorY - centerY) + offset == anchorY + translation
+        let resultingAnchor = centerY + scale * (anchorY - centerY) + offset
+        XCTAssertEqual(resultingAnchor, anchorY + translation, accuracy: 0.001)
         XCTAssertEqual(AddressBarView.overviewDragRadius(progress: 1), 24, accuracy: 0.001)
         XCTAssertEqual(AddressBarView.overviewDragRadius(progress: 0), 0, accuracy: 0.001)
     }

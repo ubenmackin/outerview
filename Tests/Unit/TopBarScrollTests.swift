@@ -225,6 +225,24 @@ final class TopBarScrollTests: XCTestCase {
         XCTAssertTrue(root.editorView.isHidden)
     }
 
+    func testRegularSubmittedEditKeepsToolbarAndStripExpanded() throws {
+        let fixture = try makeRegularRoot()
+        let root = fixture.root
+        XCTAssertEqual(root.chromePlacement, .regular)
+
+        let began = root.chromeController.handle(.editBegan)
+        root.applyCommands(began, animated: false)
+
+        let ended = root.chromeController.handle(.editEnded(submitted: true))
+        root.applyCommands(ended, animated: false)
+        XCTAssertFalse(root.topBarView.isHidden)
+        XCTAssertFalse(root.topBarView.isCollapsed)
+        XCTAssertFalse(root.tabStripView.isHidden)
+        XCTAssertFalse(root.pillView.isHidden)
+        XCTAssertTrue(root.editorView.isHidden)
+        XCTAssertFalse(root.prefersStatusBarHidden)
+    }
+
     func testCompactScrollStillUsesRailSprings() throws {
         let database = try OuterViewDatabase(inMemory: true)
         let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
