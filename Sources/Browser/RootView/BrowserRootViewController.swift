@@ -1,7 +1,4 @@
-//
-//  BrowserRootViewController.swift
-//  OuterView
-//
+// RootView — Central browser coordinator owning chrome placement and tab content.
 
 import os
 import Photos
@@ -95,7 +92,7 @@ final class BrowserRootViewController: UIViewController {
         interfaceMode: BrowserInterfaceMode = .duoInnerOrPad
     ) -> CGFloat {
         if interfaceMode == .nonDuoPhone {
-            return state.pill == .minified ? 0 : TopBarView.mode3BarHeight
+            return 0
         }
         guard placement == .regular else { return 0 }
         if state.pill == .editing || state.pill != .minified {
@@ -244,6 +241,35 @@ final class BrowserRootViewController: UIViewController {
         parent?.setNeedsStatusBarAppearanceUpdate()
     }
 
+    /// Mode 3 shows a transparent top bar only for settings/downloads/editor sheets.
+    var shouldShowNonDuoTopBar: Bool {
+        (isSettingsVisible || isDownloadsVisible || isBookmarkEditorVisible)
+            && !isOverviewVisible && !isLibraryVisible
+    }
+
+    /// Any sheet or overview covering the Mode 3 browsing chrome.
+    var isNonDuoChromeOverlay: Bool {
+        isOverviewVisible || isLibraryVisible || isSettingsVisible || isDownloadsVisible || isBookmarkEditorVisible
+    }
+
+    /// Single visibility owner for Mode 3 bottom pill versus transparent bar versus hidden.
+    func applyNonDuoChromeVisibility() {
+        guard interfaceMode == .nonDuoPhone, chromePlacement != .regular else { return }
+        let showsTopBar = shouldShowNonDuoTopBar
+        let isOverlay = isNonDuoChromeOverlay
+        topBarView.isHidden = !showsTopBar
+        topBarView.showsBackgroundBar = !showsTopBar
+        bottomLeadingStack.isHidden = isOverlay || bottomLeadingStack.arrangedSubviews.isEmpty
+        bottomTrailingStack.isHidden = isOverlay || bottomTrailingStack.arrangedSubviews.isEmpty
+        if isOverlay {
+            pillView.isHidden = true
+        } else if isFindActive, chromeController.state.pill != .editing {
+            pillView.isHidden = true
+        } else {
+            pillView.isHidden = chromeController.state.pill == .editing
+        }
+    }
+
     /// Moves the shared pill between the bottom anchors and the toolbar slot.
     func applyChromePlacement() {
         applyChromePlacement(for: chromePlacement)
@@ -254,10 +280,19 @@ final class BrowserRootViewController: UIViewController {
         let isNonDuo = (interfaceMode == .nonDuoPhone) && !isRegular
 
         topBarView.isNonDuoPhone = isNonDuo
-        topBarView.isHidden = !isRegular && !isNonDuo
+        if isRegular {
+            topBarView.showsBackgroundBar = true
+        } else if isNonDuo {
+            topBarView.showsBackgroundBar = !shouldShowNonDuoTopBar
+        } else {
+            topBarView.showsBackgroundBar = true
+        }
+        topBarView.isHidden = !isRegular
         railView.isHidden = isRegular || isNonDuo
 
         if isRegular {
+            bottomLeadingStack.isHidden = true
+            bottomTrailingStack.isHidden = true
             updateToolbarVisibility(for: chromeController.state)
             if pillView.superview !== topBarView.pillSlotView {
                 NSLayoutConstraint.deactivate([
@@ -267,6 +302,8 @@ final class BrowserRootViewController: UIViewController {
                     pillCenterXConstraint,
                     pillWidthConstraint
                 ])
+                pillBottomLeadingConstraint?.isActive = false
+                pillBottomTrailingConstraint?.isActive = false
                 pillView.removeFromSuperview()
                 pillView.translatesAutoresizingMaskIntoConstraints = false
                 topBarView.pillSlotView.addSubview(pillView)
@@ -281,6 +318,8 @@ final class BrowserRootViewController: UIViewController {
                 pillBottomConstraint.isActive = false
                 pillLeadingConstraint.isActive = false
                 pillTrailingConstraint.isActive = false
+                pillBottomLeadingConstraint?.isActive = false
+                pillBottomTrailingConstraint?.isActive = false
                 pillCenterXConstraint.isActive = false
                 pillWidthConstraint.isActive = false
                 pillSlotCenterYConstraint.isActive = true
@@ -290,10 +329,6 @@ final class BrowserRootViewController: UIViewController {
             topBarAnimator?.stopAnimation(false)
             topBarAnimator?.finishAnimation(at: .current)
             topBarAnimator = nil
-            if isNonDuo {
-                topBarView.setCollapsed(chromeController.state.pill == .minified)
-                updateRailItems()
-            }
             if pillView.superview !== view {
                 NSLayoutConstraint.deactivate([
                     pillSlotLeadingConstraint,
@@ -319,10 +354,24 @@ final class BrowserRootViewController: UIViewController {
             let isMinified = chromeController.state.pill == .minified
             pillBottomConstraint.isActive = true
             pillHeightConstraint.isActive = true
-            pillLeadingConstraint.isActive = !isMinified
-            pillTrailingConstraint.isActive = !isMinified
-            pillCenterXConstraint.isActive = isMinified
-            pillWidthConstraint.isActive = isMinified
+            if isNonDuo {
+                pillLeadingConstraint.isActive = false
+                pillTrailingConstraint.isActive = false
+                pillBottomLeadingConstraint?.isActive = !isMinified
+                pillBottomTrailingConstraint?.isActive = !isMinified
+                pillCenterXConstraint.isActive = isMinified
+                pillWidthConstraint.isActive = isMinified
+                applyNonDuoChromeVisibility()
+            } else {
+                bottomLeadingStack.isHidden = true
+                bottomTrailingStack.isHidden = true
+                pillBottomLeadingConstraint?.isActive = false
+                pillBottomTrailingConstraint?.isActive = false
+                pillLeadingConstraint.isActive = !isMinified
+                pillTrailingConstraint.isActive = !isMinified
+                pillCenterXConstraint.isActive = isMinified
+                pillWidthConstraint.isActive = isMinified
+            }
             if isMinified {
                 pillWidthConstraint.constant = AddressBarView.widthForBounds(pillReferenceWidth)
             }
@@ -356,6 +405,8 @@ final class BrowserRootViewController: UIViewController {
     var errorCopyText = ""
     let railView = SideRailView()
     let pillView = AddressBarView()
+    let bottomLeadingStack = UIStackView()
+    let bottomTrailingStack = UIStackView()
     let topBarView = TopBarView()
     let tabStripView = TabStripView()
     let findView = FindInPageView()
@@ -442,6 +493,8 @@ final class BrowserRootViewController: UIViewController {
     var pillBottomConstraint: NSLayoutConstraint!
     var pillLeadingConstraint: NSLayoutConstraint!
     var pillTrailingConstraint: NSLayoutConstraint!
+    var pillBottomLeadingConstraint: NSLayoutConstraint!
+    var pillBottomTrailingConstraint: NSLayoutConstraint!
     var pillWidthConstraint: NSLayoutConstraint!
     var pillCenterXConstraint: NSLayoutConstraint!
     var pillSlotLeadingConstraint: NSLayoutConstraint!
@@ -723,7 +776,7 @@ extension BrowserRootViewController {
         }
         applyChromePlacement(for: placement)
         editorView.chromePlacement = placement
-        overviewController.showsInlineCommands = (placement == .regular)
+        overviewController.showsInlineCommands = (placement == .regular || interfaceMode == .nonDuoPhone)
         bookmarksLibraryView.isNonDuoPhone = (interfaceMode == .nonDuoPhone)
         for overlay in [libraryOverlay, settingsOverlay, downloadsOverlay, bookmarkEditorOverlay]
             where overlay.isHidden

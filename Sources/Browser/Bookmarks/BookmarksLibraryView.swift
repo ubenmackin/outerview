@@ -1,7 +1,4 @@
-//
-//  BookmarksLibraryView.swift
-//  OuterView
-//
+// Bookmarks — Full-screen library overlay hosting tab lists with a native header.
 
 import os
 import UIKit
@@ -47,7 +44,9 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
 
     var isNonDuoPhone: Bool = false {
         didSet {
-            compactHeaderTopConstraint?.constant = isNonDuoPhone ? 48 : 4
+            if oldValue != isNonDuoPhone {
+                applyPlacement()
+            }
         }
     }
 
@@ -63,16 +62,15 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     private let deleteCircleButton = AccessibleButton(type: .system)
     private let closeOrDoneCircleButton = AccessibleButton(type: .system)
 
-    private var compactHeaderTopConstraint: NSLayoutConstraint?
     private var compactHeaderConstraints: [NSLayoutConstraint] = []
     private var regularHeaderConstraints: [NSLayoutConstraint] = []
 
     var isDoneVisible: Bool {
-        chromePlacement == .regular && !regularHeaderRow.isHidden && !closeOrDoneCircleButton.isHidden
+        !regularHeaderRow.isHidden && !closeOrDoneCircleButton.isHidden
     }
 
     var isOptionsMenuVisible: Bool {
-        chromePlacement == .regular && !regularHeaderRow.isHidden && !optionsMenuButton.isHidden
+        !regularHeaderRow.isHidden && !optionsMenuButton.isHidden
     }
 
     var currentOptionsMenu: UIMenu? {
@@ -80,11 +78,11 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     }
 
     var isInlineAddVisible: Bool {
-        chromePlacement == .regular && !regularHeaderRow.isHidden && !addFolderCircleButton.isHidden
+        !regularHeaderRow.isHidden && !addFolderCircleButton.isHidden
     }
 
     var isInlineDeleteVisible: Bool {
-        chromePlacement == .regular && !regularHeaderRow.isHidden && !deleteCircleButton.isHidden
+        !regularHeaderRow.isHidden && !deleteCircleButton.isHidden
     }
 
     var isInlineDeleteEnabled: Bool {
@@ -92,7 +90,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     }
 
     var isFolderBackVisible: Bool {
-        chromePlacement == .regular && !regularHeaderRow.isHidden && !folderBackButton.isHidden
+        !regularHeaderRow.isHidden && !folderBackButton.isHidden
     }
 
     var displayedSectionTitle: String? {
@@ -316,7 +314,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     }
 
     func applyPlacement() {
-        let isRegular = chromePlacement == .regular
+        let isRegular = chromePlacement == .regular || isNonDuoPhone
         backgroundColor = isRegular ? .systemGroupedBackground : .systemBackground
         NSLayoutConstraint.deactivate(isRegular ? compactHeaderConstraints : regularHeaderConstraints)
         regularHeaderRow.isHidden = !isRegular
@@ -326,7 +324,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     }
 
     func updateInlineCommands() {
-        guard chromePlacement == .regular else {
+        guard chromePlacement == .regular || isNonDuoPhone else {
             optionsMenuButton.isHidden = true
             addFolderCircleButton.isHidden = true
             deleteCircleButton.isHidden = true
@@ -609,9 +607,8 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
 
         let compactTop = headerContainer.topAnchor.constraint(
             equalTo: safeAreaLayoutGuide.topAnchor,
-            constant: isNonDuoPhone ? 48 : 4
+            constant: 4
         )
-        compactHeaderTopConstraint = compactTop
         compactHeaderConstraints = [
             compactTop,
             headerContainer.heightAnchor.constraint(equalToConstant: 48),
@@ -691,7 +688,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     }
 
     private func applyChildHeaderVisibility() {
-        let hideInnerHeaders = chromePlacement == .regular
+        let hideInnerHeaders = chromePlacement == .regular || isNonDuoPhone
         bookmarksBrowserView?.setHeaderBarHidden(hideInnerHeaders)
         historyListView?.setHeaderBarHidden(hideInnerHeaders)
         readingListView?.setHeaderBarHidden(hideInnerHeaders)
