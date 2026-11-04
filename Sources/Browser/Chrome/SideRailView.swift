@@ -1,7 +1,4 @@
-//
-//  SideRailView.swift
-//  OuterView
-//
+// Chrome — Adaptive command rail with circular glass buttons and stack layout.
 
 import UIKit
 
@@ -12,7 +9,9 @@ struct RailAction {
     let isProminent: Bool
     let isEnabled: Bool
     let menu: UIMenu?
-    let handler: () -> Void
+    let menuProvider: (@MainActor @Sendable () -> UIMenu?)?
+    let showsMenuAsPrimaryAction: Bool
+    let handler: @MainActor @Sendable () -> Void
 
     init(
         systemImageName: String,
@@ -20,38 +19,58 @@ struct RailAction {
         isProminent: Bool = false,
         isEnabled: Bool = true,
         menu: UIMenu? = nil,
-        handler: @escaping () -> Void = {}
+        menuProvider: (@MainActor @Sendable () -> UIMenu?)? = nil,
+        showsMenuAsPrimaryAction: Bool = true,
+        handler: @MainActor @Sendable @escaping () -> Void = {}
     ) {
         self.systemImageName = systemImageName
         self.accessibilityLabel = accessibilityLabel
         self.isProminent = isProminent
         self.isEnabled = isEnabled
         self.menu = menu
+        self.menuProvider = menuProvider
+        self.showsMenuAsPrimaryAction = showsMenuAsPrimaryAction
         self.handler = handler
     }
 
-    static func back(isEnabled: Bool = true, handler: @escaping () -> Void) -> RailAction {
+    static func back(
+        isEnabled: Bool = true,
+        menuProvider: (@MainActor @Sendable () -> UIMenu?)? = nil,
+        handler: @MainActor @Sendable @escaping () -> Void
+    ) -> RailAction {
         RailAction(
             systemImageName: "chevron.left",
             accessibilityLabel: "Back",
             isEnabled: isEnabled,
+            menuProvider: menuProvider,
+            showsMenuAsPrimaryAction: false,
             handler: handler
         )
     }
 
-    static func bookmarks(handler: @escaping () -> Void) -> RailAction {
+    static func bookmarks(handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
         RailAction(systemImageName: "book", accessibilityLabel: "Bookmarks", handler: handler)
     }
 
-    static func newTab(handler: @escaping () -> Void) -> RailAction {
+    static func newTab(handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
         RailAction(systemImageName: "plus", accessibilityLabel: "New Tab", handler: handler)
     }
 
-    static func tabs(handler: @escaping () -> Void) -> RailAction {
-        RailAction(systemImageName: "square.on.square", accessibilityLabel: "Tabs", handler: handler)
+    static func tabs(
+        menuProvider: (@MainActor @Sendable () -> UIMenu?)? = nil,
+        showsMenuAsPrimaryAction: Bool = false,
+        handler: @MainActor @Sendable @escaping () -> Void
+    ) -> RailAction {
+        RailAction(
+            systemImageName: "square.on.square",
+            accessibilityLabel: "Tabs",
+            menuProvider: menuProvider,
+            showsMenuAsPrimaryAction: showsMenuAsPrimaryAction,
+            handler: handler
+        )
     }
 
-    static func search(handler: @escaping () -> Void) -> RailAction {
+    static func search(handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
         RailAction(systemImageName: "magnifyingglass", accessibilityLabel: "Search", handler: handler)
     }
 
@@ -63,7 +82,7 @@ struct RailAction {
         )
     }
 
-    static func done(handler: @escaping () -> Void) -> RailAction {
+    static func done(handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
         RailAction(
             systemImageName: "checkmark",
             accessibilityLabel: "Done",
@@ -72,7 +91,7 @@ struct RailAction {
         )
     }
 
-    static func cancel(handler: @escaping () -> Void) -> RailAction {
+    static func cancel(handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
         RailAction(
             systemImageName: "xmark",
             accessibilityLabel: "Cancel",
@@ -81,7 +100,7 @@ struct RailAction {
         )
     }
 
-    static func addFolder(handler: @escaping () -> Void) -> RailAction {
+    static func addFolder(handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
         RailAction(
             systemImageName: "folder.badge.plus",
             accessibilityLabel: "New Folder",
@@ -89,7 +108,7 @@ struct RailAction {
         )
     }
 
-    static func edit(isEditing: Bool = false, handler: @escaping () -> Void) -> RailAction {
+    static func edit(isEditing: Bool = false, handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
         RailAction(
             systemImageName: isEditing ? "checkmark" : "pencil",
             accessibilityLabel: isEditing ? "Done Editing" : "Edit Bookmarks",
@@ -97,7 +116,7 @@ struct RailAction {
         )
     }
 
-    static func files(handler: @escaping () -> Void) -> RailAction {
+    static func files(handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
         RailAction(
             systemImageName: "folder",
             accessibilityLabel: "Files",
@@ -105,7 +124,7 @@ struct RailAction {
         )
     }
 
-    static func clear(label: String = "Clear History", isEnabled: Bool = true, handler: @escaping () -> Void) -> RailAction {
+    static func clear(label: String = "Clear History", isEnabled: Bool = true, handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
         RailAction(
             systemImageName: "trash",
             accessibilityLabel: label,
@@ -122,7 +141,7 @@ struct RailAction {
         )
     }
 
-    static func deleteSelected(isEnabled: Bool = true, handler: @escaping () -> Void) -> RailAction {
+    static func deleteSelected(isEnabled: Bool = true, handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
         RailAction(
             systemImageName: "trash",
             accessibilityLabel: "Delete Selected",
@@ -153,9 +172,23 @@ final class RailButton: UIButton {
                 .withRenderingMode(.alwaysTemplate),
             for: .normal
         )
-        if let menu = action.menu {
+        if let menuProvider = action.menuProvider {
+            self.menu = UIMenu(children: [
+                UIDeferredMenuElement { completion in
+                    let resolved = menuProvider()
+                    completion(resolved?.children ?? [])
+                }
+            ])
+            self.showsMenuAsPrimaryAction = action.showsMenuAsPrimaryAction
+            if !action.showsMenuAsPrimaryAction {
+                addAction(UIAction { [weak self] _ in self?.action?.handler() }, for: .touchUpInside)
+            }
+        } else if let menu = action.menu {
             self.menu = menu
-            self.showsMenuAsPrimaryAction = true
+            self.showsMenuAsPrimaryAction = action.showsMenuAsPrimaryAction
+            if !action.showsMenuAsPrimaryAction {
+                addAction(UIAction { [weak self] _ in self?.action?.handler() }, for: .touchUpInside)
+            }
         } else {
             addAction(UIAction { [weak self] _ in self?.action?.handler() }, for: .touchUpInside)
         }

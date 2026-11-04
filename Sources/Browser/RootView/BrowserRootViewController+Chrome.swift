@@ -1,7 +1,4 @@
-//
-//  BrowserRootViewController+Chrome.swift
-//  OuterView
-//
+// RootView — Chrome state application plus Mode 3 bottom-pill composition.
 
 import UIKit
 
@@ -290,7 +287,7 @@ extension BrowserRootViewController {
         toContent: NSLayoutConstraint
     ) -> NSLayoutConstraint {
         if interfaceMode == .nonDuoPhone {
-            return toBar
+            return topBarView.isHidden ? toContent : toBar
         }
         if chromePlacement != .regular {
             return toContent
@@ -373,14 +370,27 @@ extension BrowserRootViewController {
             self.pillHeightConstraint.constant = AddressBarView.heightForState(state.pill)
             self.updatePillBottomOffset()
             let isMinified = state.pill == .minified
-            self.pillLeadingConstraint.isActive = !isMinified
-            self.pillTrailingConstraint.isActive = !isMinified
+            if self.interfaceMode == .nonDuoPhone {
+                self.pillLeadingConstraint.isActive = false
+                self.pillTrailingConstraint.isActive = false
+                self.pillBottomLeadingConstraint?.isActive = !isMinified
+                self.pillBottomTrailingConstraint?.isActive = !isMinified
+            } else {
+                self.pillBottomLeadingConstraint?.isActive = false
+                self.pillBottomTrailingConstraint?.isActive = false
+                self.pillLeadingConstraint.isActive = !isMinified
+                self.pillTrailingConstraint.isActive = !isMinified
+            }
             self.pillCenterXConstraint.isActive = isMinified
             self.pillWidthConstraint.isActive = isMinified
             if isMinified {
                 self.pillWidthConstraint.constant = AddressBarView.widthForBounds(self.pillReferenceWidth)
             }
-            self.pillView.isHidden = state.pill == .editing
+            if self.interfaceMode == .nonDuoPhone {
+                self.applyNonDuoChromeVisibility()
+            } else {
+                self.pillView.isHidden = state.pill == .editing
+            }
             self.editorView.isHidden = state.pill != .editing
             self.view.layoutIfNeeded()
         }
@@ -416,18 +426,15 @@ extension BrowserRootViewController {
             if !railView.isHidden {
                 railView.isHidden = true
             }
-            if topBarView.isHidden {
-                topBarView.isHidden = false
+            let showsTopBar = shouldShowNonDuoTopBar
+            if topBarView.isHidden != !showsTopBar {
+                topBarView.isHidden = !showsTopBar
             }
-            if !topBarView.isNonDuoPhone {
-                topBarView.isNonDuoPhone = true
-            }
+            topBarView.showsBackgroundBar = !showsTopBar
             updateTopBarPinning(for: .compact)
             updateHeaderBackgrounds()
             updateStartPageTop()
             refreshStatusBarAppearanceIfNeeded()
-            let state = chromeController.state
-            topBarView.setCollapsed(state.pill == .minified)
             return
         }
 
@@ -508,14 +515,34 @@ extension BrowserRootViewController {
 
     func makeBrowsingChromeItems() -> (prefix: [RailAction], suffix: [RailAction]) {
         let canGoBack = peekActivePage()?.snapshot.canGoBack ?? false
+        let backAction = RailAction.back(
+            isEnabled: canGoBack,
+            menuProvider: { [weak self] in self?.makeBackMenu() },
+            handler: { [weak self] in self?.activePage()?.goBack() }
+        )
+        let tabAction = RailAction.tabs(
+            menuProvider: { [weak self] in self?.makeTabGroupMenu() },
+            handler: { [weak self] in self?.toggleOverview() }
+        )
+
+        if interfaceMode == .nonDuoPhone {
+            return (
+                prefix: [backAction],
+                suffix: [
+                    .bookmarks { [weak self] in self?.openBookmarksLibrary() },
+                    tabAction
+                ]
+            )
+        }
+
         return (
             prefix: [
-                .back(isEnabled: canGoBack) { [weak self] in self?.activePage()?.goBack() },
+                backAction,
                 .bookmarks { [weak self] in self?.openBookmarksLibrary() }
             ],
             suffix: [
                 .newTab { [weak self] in self?.createNewTab() },
-                .tabs { [weak self] in self?.toggleOverview() }
+                tabAction
             ]
         )
     }
@@ -523,7 +550,21 @@ extension BrowserRootViewController {
     func setChromeItems(prefix: [RailAction], suffix: [RailAction]) {
         railView.setItems(prefix: prefix, suffix: suffix)
         if interfaceMode == .nonDuoPhone {
-            topBarView.setItems(prefix: prefix, suffix: suffix)
+            let isOverlay = isNonDuoChromeOverlay
+            if isOverlay {
+                bottomLeadingStack.rebuild(with: [])
+                bottomTrailingStack.rebuild(with: [])
+                if shouldShowNonDuoTopBar {
+                    topBarView.setItems(prefix: prefix, suffix: suffix)
+                } else {
+                    topBarView.setItems(prefix: [], suffix: [])
+                }
+            } else {
+                topBarView.setItems(prefix: [], suffix: [])
+                bottomLeadingStack.rebuild(with: prefix)
+                bottomTrailingStack.rebuild(with: suffix)
+            }
+            applyNonDuoChromeVisibility()
             return
         }
         let isRegularApplied = chromePlacement == .regular || !topBarView.isHidden

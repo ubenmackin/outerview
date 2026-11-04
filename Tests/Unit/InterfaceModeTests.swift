@@ -153,18 +153,79 @@ final class InterfaceModeTests: XCTestCase {
         XCTAssertTrue(root.pillView.superview === root.view)
         // 2. Side rail is hidden
         XCTAssertTrue(root.railView.isHidden)
-        // 3. TopBarView is visible with nonDuoPhone configuration
-        XCTAssertFalse(root.topBarView.isHidden)
-        XCTAssertTrue(root.topBarView.isNonDuoPhone)
+        // 3. TopBarView is hidden on the main browser screen
+        XCTAssertTrue(root.topBarView.isHidden)
         // 4. Tab strip is hidden (no tab strip on phone portrait)
         XCTAssertTrue(root.tabStripView.isHidden)
 
-        // Verify topBarView contains the action buttons
+        // Verify bottom stacks contain the action buttons
         root.updateRailItems()
-        let leadingLabels = root.topBarView.leadingStack.arrangedSubviews.compactMap(\.accessibilityLabel)
-        let trailingLabels = root.topBarView.trailingStack.arrangedSubviews.compactMap(\.accessibilityLabel)
-        XCTAssertEqual(leadingLabels, ["Back", "Bookmarks"])
-        XCTAssertEqual(trailingLabels, ["New Tab", "Tabs"])
+        let leadingLabels = root.bottomLeadingStack.arrangedSubviews.compactMap(\.accessibilityLabel)
+        let trailingLabels = root.bottomTrailingStack.arrangedSubviews.compactMap(\.accessibilityLabel)
+        XCTAssertEqual(leadingLabels, ["Back"])
+        XCTAssertEqual(trailingLabels, ["Bookmarks", "Tabs"])
+
+        // Verify Back and Tabs buttons have long-press menus configured (showsMenuAsPrimaryAction = false)
+        guard let backButton = root.bottomLeadingStack.arrangedSubviews.first as? UIButton,
+              let tabsButton = root.bottomTrailingStack.arrangedSubviews.last as? UIButton
+        else {
+            XCTFail("Expected UIButton in bottom stacks")
+            return
+        }
+        XCTAssertNotNil(backButton.menu)
+        XCTAssertFalse(backButton.showsMenuAsPrimaryAction)
+        XCTAssertNotNil(tabsButton.menu)
+        XCTAssertFalse(tabsButton.showsMenuAsPrimaryAction)
+    }
+
+    func testStartPageDoneButtonInMode3() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let root = BrowserRootViewController(database: database)
+        let phoneFrame = CGRect(x: 0, y: 0, width: 402, height: 874)
+        TestWindow.attach(root, frame: phoneFrame)
+        root.traitOverrides.horizontalSizeClass = .compact
+        root.view.layoutIfNeeded()
+
+        root.applyChromePlacement(for: .compact)
+        root.setChromeItems(
+            prefix: [],
+            suffix: [.done {}]
+        )
+
+        XCTAssertTrue(root.bottomLeadingStack.arrangedSubviews.isEmpty)
+        let trailingLabels = root.bottomTrailingStack.arrangedSubviews.compactMap(\.accessibilityLabel)
+        XCTAssertEqual(trailingLabels, ["Done"])
+    }
+
+    func testTabGroupMenuStructure() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let root = BrowserRootViewController(database: database)
+        let menu = root.makeTabGroupMenu()
+
+        // Verify menu elements exist
+        XCTAssertFalse(menu.children.isEmpty)
+        // Check inline menus exist for Private/Tabs count and tab operations
+        let inlineMenus = menu.children.compactMap { $0 as? UIMenu }
+        XCTAssertGreaterThanOrEqual(inlineMenus.count, 2)
+
+        // Verify Private and count options
+        let modesMenu = inlineMenus.first(where: { candidateMenu in
+            candidateMenu.children.contains { ($0 as? UIAction)?.title == "Private" }
+        })
+        XCTAssertNotNil(modesMenu)
+
+        // Verify Close this tab, New Private Tab, New Tab options
+        let opsMenu = inlineMenus.first(where: { candidateMenu in
+            candidateMenu.children.contains { ($0 as? UIAction)?.title == "Close This Tab" }
+        })
+        XCTAssertNotNil(opsMenu)
+        let closeAction = opsMenu?.children.compactMap { $0 as? UIAction }.first(where: { $0.title == "Close This Tab" })
+        XCTAssertEqual(closeAction?.attributes, .destructive)
+
+        let hasNewPrivateTab = opsMenu?.children.contains { ($0 as? UIAction)?.title == "New Private Tab" } ?? false
+        let hasNewTab = opsMenu?.children.contains { ($0 as? UIAction)?.title == "New Tab" } ?? false
+        XCTAssertTrue(hasNewPrivateTab)
+        XCTAssertTrue(hasNewTab)
     }
 
     func testTabStripSynchronizedWithPillSizeOnRegular() throws {
@@ -208,7 +269,7 @@ final class InterfaceModeTests: XCTestCase {
     func testNonDuoPhoneTopInsetMatchesContentReservation() {
         let expanded = ChromeState(rail: .visible, pill: .expanded)
         let collapsed = ChromeState(rail: .hidden, pill: .minified)
-        // Expanded Mode 3 reserves the 44 pt bar; collapsed steps away fully.
+        // In Mode 3, there is no top toolbar on the main screen, so topContentInset is 0.
         XCTAssertEqual(
             BrowserRootViewController.topContentInset(
                 for: .compact,
@@ -216,7 +277,7 @@ final class InterfaceModeTests: XCTestCase {
                 stripVisible: false,
                 interfaceMode: .nonDuoPhone
             ),
-            TopBarView.mode3BarHeight
+            0
         )
         XCTAssertEqual(
             BrowserRootViewController.topContentInset(

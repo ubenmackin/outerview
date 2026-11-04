@@ -1,7 +1,4 @@
-//
-//  TopBarView.swift
-//  OuterView
-//
+// Chrome — Regular and Mode 3 top toolbar with collapse and background control.
 
 import UIKit
 
@@ -131,12 +128,23 @@ final class TopBarView: UIView {
         !blurView.isHidden
     }
 
+    var showsBackgroundBar: Bool = true {
+        didSet {
+            applyHeaderBackground()
+        }
+    }
+
     var currentHeightConstant: CGFloat {
         barHeightConstraint.constant
     }
 
     func applyHeaderBackground() {
-        RegularHeaderBackground.apply(to: self, blurView: blurView)
+        if showsBackgroundBar {
+            RegularHeaderBackground.apply(to: self, blurView: blurView)
+        } else {
+            backgroundColor = .clear
+            blurView.isHidden = true
+        }
     }
 
     override init(frame: CGRect) {

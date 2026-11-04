@@ -1,7 +1,4 @@
-//
-//  BrowserRootViewController+Setup.swift
-//  OuterView
-//
+// RootView — View hierarchy construction plus pill and overlay setup.
 
 import os
 import SwiftUI
@@ -69,6 +66,8 @@ extension BrowserRootViewController {
     func bringChromeToFront() {
         view.bringSubviewToFront(errorContainer)
         if pillView.superview == view {
+            view.bringSubviewToFront(bottomLeadingStack)
+            view.bringSubviewToFront(bottomTrailingStack)
             view.bringSubviewToFront(pillView)
         }
         view.bringSubviewToFront(findView)
@@ -214,11 +213,33 @@ extension BrowserRootViewController {
             lessThanOrEqualTo: topBarView.pillSlotView.trailingAnchor
         )
         pillSlotMaxTrailingConstraint.priority = .defaultHigh
+
+        for stack in [bottomLeadingStack, bottomTrailingStack] {
+            stack.axis = .horizontal
+            stack.alignment = .center
+            stack.spacing = 8
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            stack.isHidden = true
+            view.addSubview(stack)
+        }
+        pillBottomLeadingConstraint = pillView.leadingAnchor.constraint(
+            equalTo: bottomLeadingStack.trailingAnchor, constant: 8
+        )
+        pillBottomTrailingConstraint = pillView.trailingAnchor.constraint(
+            equalTo: bottomTrailingStack.leadingAnchor, constant: -8
+        )
+
         NSLayoutConstraint.activate([
             pillBottomConstraint,
             pillHeightConstraint,
             pillLeadingConstraint,
-            pillTrailingConstraint
+            pillTrailingConstraint,
+            bottomLeadingStack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            bottomLeadingStack.centerYAnchor.constraint(equalTo: pillView.centerYAnchor),
+            bottomLeadingStack.heightAnchor.constraint(equalToConstant: 44),
+            bottomTrailingStack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            bottomTrailingStack.centerYAnchor.constraint(equalTo: pillView.centerYAnchor),
+            bottomTrailingStack.heightAnchor.constraint(equalToConstant: 44)
         ])
         pillView.onPillTap = { [weak self] in self?.handlePillTap() }
         pillView.onHorizontalPan = { [weak self] event in self?.handleHorizontalPan(event) }

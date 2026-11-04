@@ -1,7 +1,4 @@
-//
-//  WebPageController.swift
-//  OuterView
-//
+// WebPage — WKWebView wrapper with navigation policy and snapshots.
 
 import os
 import UIKit
@@ -166,6 +163,14 @@ final class WebPageController: NSObject {
 
     func goBack() {
         webView.goBack()
+    }
+
+    var backList: [WKBackForwardListItem] {
+        webView.backForwardList.backList
+    }
+
+    func navigate(to item: WKBackForwardListItem) {
+        webView.go(to: item)
     }
 
     func goForward() {
