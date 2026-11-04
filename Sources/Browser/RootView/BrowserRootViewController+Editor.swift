@@ -1,8 +1,4 @@
-//
-//  BrowserRootViewController+Editor.swift
-//  OuterView
-//
-
+// RootView — Address editing lifecycle plus suggestion pipeline and Mode 3 inline Done.
 import UIKit
 
 extension BrowserRootViewController {
@@ -38,6 +34,9 @@ extension BrowserRootViewController {
 
     func beginEditing() {
         let placement = chromePlacement
+        let mode = interfaceMode
+        editorView.isNonDuoPhone = (mode == .nonDuoPhone)
+        editorView.isEditing = true
         editorView.applyPlacement(for: placement)
         let engine = currentSearchEngine()
         configureEditor(text: editorInitialText(), engine: engine)
@@ -45,12 +44,15 @@ extension BrowserRootViewController {
             showStartPageForActiveTab()
         }
         isEditingAddress = true
+        editorView.isNonDuoPhone = (interfaceMode == .nonDuoPhone)
+        editorView.isEditing = true
         applyEditBegan()
         editorView.reloadContent()
         cancelPendingSuggestions()
         bringChromeToFront()
         updateRailItems()
         applyRailViews(animated: true)
+        view.layoutIfNeeded()
         activateEditor()
     }
 
@@ -59,8 +61,10 @@ extension BrowserRootViewController {
         deactivateEditor()
         applyEditEnded(submitted: submitted)
         isEditingAddress = false
+        editorView.isEditing = false
         updateRailItems()
         applyRailViews(animated: true)
+        view.layoutIfNeeded()
     }
 
     func submitAddressText(_ text: String) {

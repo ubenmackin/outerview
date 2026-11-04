@@ -152,21 +152,25 @@ struct RailAction {
 }
 
 /// Circular 44 pt Liquid Glass button backing one `RailAction`.
+/// Bottom-bar instances use 22 pt symbols with no per-button glass.
 @MainActor
 final class RailButton: UIButton {
     private let glassView: UIVisualEffectView
     private var action: RailAction?
+    private(set) var isBottomBar = false
 
-    init(action: RailAction) {
+    init(action: RailAction, isBottomBar: Bool = false) {
         glassView = UIVisualEffectView(effect: GlassEffect.make())
         self.action = action
+        self.isBottomBar = isBottomBar
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         accessibilityLabel = action.accessibilityLabel
         isEnabled = action.isEnabled
         alpha = action.isEnabled ? 1.0 : 0.35
-        applyStyle(isProminent: action.isProminent)
-        let config = UIImage.SymbolConfiguration(pointSize: 18, weight: .medium)
+        applyStyle(isProminent: action.isProminent, isBottomBar: isBottomBar)
+        let pointSize = isBottomBar ? SideRailView.bottomBarSymbolPointSize : SideRailView.railSymbolPointSize
+        let config = UIImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
         setImage(
             UIImage(systemName: action.systemImageName, withConfiguration: config)?
                 .withRenderingMode(.alwaysTemplate),
@@ -211,15 +215,22 @@ final class RailButton: UIButton {
         }
     }
 
-    private func applyStyle(isProminent: Bool) {
+    private func applyStyle(isProminent: Bool, isBottomBar: Bool = false) {
         if isProminent {
             tintColor = .white
             backgroundColor = .systemBlue
             glassView.alpha = 0
+            glassView.isHidden = isBottomBar
+        } else if isBottomBar {
+            tintColor = .label
+            backgroundColor = .clear
+            glassView.alpha = 0
+            glassView.isHidden = true
         } else {
             tintColor = .label
             backgroundColor = .clear
             glassView.alpha = 1
+            glassView.isHidden = false
         }
     }
 
@@ -257,6 +268,10 @@ final class RailButton: UIButton {
 @MainActor
 extension UIStackView {
     func rebuild(with items: [RailAction]) {
+        if isMode3BottomBar {
+            rebuildBottomBar(with: items)
+            return
+        }
         for arranged in arrangedSubviews {
             removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
@@ -264,6 +279,70 @@ extension UIStackView {
         for item in items {
             addArrangedSubview(RailButton(action: item))
         }
+    }
+
+    /// Toolbar-grade capsule for Mode 3 bottom stacks: one shared glass
+    /// capsule per side holding 44 pt targets with 22 pt symbols at 4 pt spacing.
+    func rebuildBottomBar(with items: [RailAction]) {
+        for arranged in arrangedSubviews {
+            removeArrangedSubview(arranged)
+            arranged.removeFromSuperview()
+        }
+        axis = .horizontal
+        alignment = .center
+        spacing = SideRailView.bottomBarSpacing
+        ensureBottomBarCapsule()
+        for item in items {
+            addArrangedSubview(RailButton(action: item, isBottomBar: true))
+        }
+        layoutIfNeeded()
+    }
+
+    /// Bottom bars are the only stacks pinned to the 50 pt capsule height.
+    private var isMode3BottomBar: Bool {
+        constraints.contains {
+            $0.firstAttribute == .height
+                && abs($0.constant - SideRailView.bottomBarHeight) < 0.5
+        }
+    }
+
+    /// Shared capsule glass behind the buttons. Reused across rebuilds
+    /// so stale backgrounds never stack above the buttons.
+    private func ensureBottomBarCapsule() {
+        backgroundColor = .clear
+        isOpaque = false
+        layer.cornerRadius = SideRailView.bottomBarCornerRadius
+        clipsToBounds = true
+        let existing = subviews.first {
+            $0 is UIVisualEffectView && !arrangedSubviews.contains($0)
+        } as? UIVisualEffectView
+        let capsule: UIVisualEffectView
+        if let existing {
+            capsule = existing
+            if capsule.effect == nil {
+                capsule.effect = GlassEffect.make()
+            }
+        } else {
+            capsule = UIVisualEffectView(effect: GlassEffect.make())
+            capsule.isUserInteractionEnabled = false
+            capsule.translatesAutoresizingMaskIntoConstraints = false
+            capsule.layer.cornerRadius = SideRailView.bottomBarCornerRadius
+            capsule.clipsToBounds = true
+            if #available(iOS 26.0, *) {
+                capsule.cornerConfiguration = .capsule()
+            }
+            insertSubview(capsule, at: 0)
+            NSLayoutConstraint.activate([
+                capsule.leadingAnchor.constraint(equalTo: leadingAnchor),
+                capsule.trailingAnchor.constraint(equalTo: trailingAnchor),
+                capsule.topAnchor.constraint(equalTo: topAnchor),
+                capsule.bottomAnchor.constraint(equalTo: bottomAnchor)
+            ])
+        }
+        capsule.isHidden = false
+        capsule.alpha = 1
+        capsule.layer.cornerRadius = SideRailView.bottomBarCornerRadius
+        capsule.clipsToBounds = true
     }
 }
 
@@ -281,6 +360,11 @@ final class SideRailView: UIView {
     nonisolated static let topPadding: CGFloat = 12
     nonisolated static let bottomPadding: CGFloat = 4
     nonisolated static let reservedOcclusionHeight: CGFloat = 174
+    nonisolated static let bottomBarHeight: CGFloat = 50
+    nonisolated static let bottomBarCornerRadius: CGFloat = 25
+    nonisolated static let bottomBarSymbolPointSize: CGFloat = 22
+    nonisolated static let bottomBarSpacing: CGFloat = 4
+    nonisolated static let railSymbolPointSize: CGFloat = 18
 
     /// Width of the system column the rail lives in: the live right inset
     /// when the system reports one, otherwise the measured Duo column.

@@ -243,6 +243,100 @@ final class EditorPlacementTests: XCTestCase {
         XCTAssertTrue(root.editorView.isHidden)
     }
 
+    func testCompactNonDuoEditingShowsInlineDoneAboveKeyboard() {
+        let editor = makeEditor(placement: .compact)
+        editor.isNonDuoPhone = true
+        editor.isEditing = true
+        editor.layoutIfNeeded()
+
+        XCTAssertTrue(editor.isDoneVisible)
+        XCTAssertEqual(AddressEditorView.fieldHeight, 44)
+        XCTAssertEqual(AddressEditorView.doneDiameter, 44)
+        guard let done = findDoneButton(in: editor) else {
+            XCTFail("Expected inline Done button")
+            return
+        }
+        XCTAssertEqual(done.accessibilityLabel, "Done")
+        XCTAssertEqual(done.backgroundColor, .systemBlue)
+        XCTAssertEqual(done.tintColor, .white)
+        XCTAssertEqual(done.bounds.width, AddressEditorView.doneDiameter, accuracy: 0.5)
+        XCTAssertEqual(done.bounds.height, AddressEditorView.doneDiameter, accuracy: 0.5)
+        let frameInEditor = done.convert(done.bounds, to: editor)
+        let keyboardTop = editor.keyboardLayoutGuide.layoutFrame.minY
+        XCTAssertLessThanOrEqual(frameInEditor.maxY, keyboardTop)
+    }
+
+    func testCompactInlineDoneHiddenOutsideMode3Editing() {
+        let idle = makeEditor(placement: .compact)
+        idle.isNonDuoPhone = true
+        idle.isEditing = false
+        idle.layoutIfNeeded()
+        XCTAssertFalse(idle.isDoneVisible)
+
+        let duoEditing = makeEditor(placement: .compact)
+        duoEditing.isNonDuoPhone = false
+        duoEditing.isEditing = true
+        duoEditing.layoutIfNeeded()
+        XCTAssertFalse(duoEditing.isDoneVisible)
+
+        let regularEditing = makeEditor(placement: .regular)
+        regularEditing.isNonDuoPhone = true
+        regularEditing.isEditing = true
+        regularEditing.layoutIfNeeded()
+        XCTAssertFalse(regularEditing.isDoneVisible)
+        XCTAssertTrue(regularEditing.isOutsideDismissEnabled)
+    }
+
+    func testMode3EditingHidesBottomStacksAndDismissRestoresBrowsing() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let root = BrowserRootViewController(database: database)
+        let phoneFrame = CGRect(x: 0, y: 0, width: 402, height: 874)
+        TestWindow.attach(root, frame: phoneFrame)
+        root.traitOverrides.horizontalSizeClass = .compact
+        root.view.layoutIfNeeded()
+        root.applyChromePlacement(for: .compact)
+        root.updateRailItems()
+        root.view.layoutIfNeeded()
+
+        XCTAssertEqual(root.interfaceMode, .nonDuoPhone)
+        XCTAssertFalse(root.bottomLeadingStack.isHidden)
+        XCTAssertFalse(root.bottomTrailingStack.isHidden)
+
+        root.beginEditing()
+        root.view.layoutIfNeeded()
+
+        XCTAssertTrue(root.isEditingAddress)
+        XCTAssertTrue(root.editorView.isDoneVisible)
+        XCTAssertTrue(root.bottomLeadingStack.isHidden)
+        XCTAssertTrue(root.bottomTrailingStack.isHidden)
+        XCTAssertTrue(root.bottomLeadingStack.arrangedSubviews.isEmpty)
+        XCTAssertTrue(root.bottomTrailingStack.arrangedSubviews.isEmpty)
+
+        root.editorView.performDone()
+        root.view.layoutIfNeeded()
+
+        XCTAssertFalse(root.isEditingAddress)
+        XCTAssertFalse(root.editorView.isDoneVisible)
+        XCTAssertFalse(root.bottomLeadingStack.isHidden)
+        XCTAssertFalse(root.bottomTrailingStack.isHidden)
+        let leading = root.bottomLeadingStack.arrangedSubviews.compactMap(\.accessibilityLabel)
+        let trailing = root.bottomTrailingStack.arrangedSubviews.compactMap(\.accessibilityLabel)
+        XCTAssertEqual(leading, ["Back"])
+        XCTAssertEqual(trailing, ["Bookmarks", "Tabs"])
+    }
+
+    private func findDoneButton(in view: UIView) -> UIButton? {
+        if let button = view as? UIButton, button.accessibilityLabel == "Done" {
+            return button
+        }
+        for subview in view.subviews {
+            if let found = findDoneButton(in: subview) {
+                return found
+            }
+        }
+        return nil
+    }
+
     private func hasMicAffordance(in view: UIView) -> Bool {
         if let button = view as? UIButton, let label = button.accessibilityLabel?.lowercased(),
            label.contains("mic") || label.contains("dictation") || label.contains("microphone")

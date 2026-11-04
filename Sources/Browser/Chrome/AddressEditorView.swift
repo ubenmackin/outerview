@@ -1,68 +1,10 @@
-//
-//  AddressEditorView.swift
-//  OuterView
-//
-
+// Chrome — Address editing surface with compact inline Done and regular popover.
 import os
 import UIKit
 
-/// Testable row content for one `Suggestion`, independent of table cells.
-struct SuggestionRowViewModel: Hashable, Sendable {
-    let systemImageName: String
-    let primary: String
-    let secondary: String
-
-    static func make(for suggestion: Suggestion, engine: SearchEngine) -> SuggestionRowViewModel {
-        switch suggestion.kind {
-        case let .site(title, url, isFavorite):
-            let (primary, host) = displayHostAndTitle(title: title, url: url)
-            return SuggestionRowViewModel(
-                systemImageName: isFavorite ? "star.fill" : "globe",
-                primary: primary,
-                secondary: host
-            )
-        case let .openTab(title, url, _):
-            let (primary, host) = displayHostAndTitle(title: title, url: url)
-            return SuggestionRowViewModel(
-                systemImageName: "square.on.square",
-                primary: primary,
-                secondary: "Switch to Tab • \(host)"
-            )
-        case let .googleSuggest(query):
-            return SuggestionRowViewModel(
-                systemImageName: "magnifyingglass",
-                primary: query,
-                secondary: "\(engine.displayName) Suggestions"
-            )
-        case let .search(query):
-            return SuggestionRowViewModel(
-                systemImageName: "magnifyingglass",
-                primary: query,
-                secondary: "Search \(engine.displayName)"
-            )
-        case let .onPageFind(term):
-            return SuggestionRowViewModel(
-                systemImageName: "text.magnifyingglass",
-                primary: "Find \"\(term)\"",
-                secondary: "On This Page"
-            )
-        }
-    }
-
-    private static func displayHostAndTitle(title: String, url: URL) -> (primary: String, host: String) {
-        let rawHost = HostFormatter.host(of: url)
-        let host = rawHost.isEmpty ? url.absoluteString : rawHost
-        let primary = HostFormatter.displayTitle(url: url, title: title)
-        return (primary, host)
-    }
-}
-
-/// Address editor surface:
-/// - Compact: text field focuses over the underlying unified Start Page inside a
-///   full-width capsule docked above `keyboardLayoutGuide`; exit is handled by the side rail Done button.
-/// - Regular: floating translucent blurred popover card emerging from the top address bar
-///   over the untouched live webpage and top bar, showing Favorites when idle and live
-///   suggestions while typing; tapping outside the card closes it.
+/// Editing surface docked above the keyboard on compact
+/// and floating as a blurred popover on regular.
+/// Mode 3 shows one inline Done check trailing the capsule.
 @MainActor
 final class AddressEditorView: UIView, ChromePlacementDriven {
     nonisolated static let fieldHeight: CGFloat = 44
@@ -77,7 +19,7 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         SheetDim.alpha
     }
 
-    nonisolated static let doneDiameter: CGFloat = 36
+    nonisolated static let doneDiameter: CGFloat = 44
 
     var chromePlacement: ChromePlacement = .compact {
         didSet {
@@ -93,6 +35,22 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     var onTextChanged: ((String) -> Void)?
     var onDone: (() -> Void)?
 
+    var isNonDuoPhone: Bool = false {
+        didSet {
+            if oldValue != isNonDuoPhone {
+                updateVisibleContent()
+            }
+        }
+    }
+
+    var isEditing: Bool = false {
+        didSet {
+            if oldValue != isEditing {
+                updateVisibleContent()
+            }
+        }
+    }
+
     private(set) var suggestions: [Suggestion] = []
     private(set) var favorites: [Bookmark] = []
     private var activePageURL: URL?
@@ -107,6 +65,7 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     private let capsuleView = UIView()
     private let capsuleBackground = UIVisualEffectView(effect: GlassEffect.make())
     private let textField = UITextField()
+    private let inlineDoneButton = UIButton(type: .system)
     private let inputErrorLabel = UILabel()
 
     // MARK: - Regular Floating Popover Hierarchy
@@ -333,10 +292,10 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         suggestionsMaxHeightConstraint?.constant ?? Self.suggestionsMaxHeight
     }
 
-    /// Neither placement renders an inline blue checkmark button; compact uses
-    /// the side rail Done button and regular dismisses via outside tap or Escape.
+    /// Compact nonDuoPhone editing shows one inline Done check
+    /// trailing the capsule; all other states hide it.
     var isDoneVisible: Bool {
-        false
+        !inlineDoneButton.isHidden
     }
 
     func performDone() {
@@ -443,6 +402,22 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         capsuleView.addGestureRecognizer(capsuleTap)
         fieldRowStack.addArrangedSubview(capsuleView)
 
+        inlineDoneButton.translatesAutoresizingMaskIntoConstraints = false
+        inlineDoneButton.backgroundColor = .systemBlue
+        inlineDoneButton.tintColor = .white
+        inlineDoneButton.layer.cornerRadius = Self.doneDiameter / 2
+        inlineDoneButton.clipsToBounds = true
+        inlineDoneButton.accessibilityLabel = "Done"
+        let doneConfig = UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
+        inlineDoneButton.setImage(UIImage(systemName: "checkmark", withConfiguration: doneConfig), for: .normal)
+        inlineDoneButton.isHidden = true
+        inlineDoneButton.addAction(UIAction { [weak self] _ in self?.handleDone() }, for: .touchUpInside)
+        NSLayoutConstraint.activate([
+            inlineDoneButton.widthAnchor.constraint(equalToConstant: Self.doneDiameter),
+            inlineDoneButton.heightAnchor.constraint(equalToConstant: Self.doneDiameter)
+        ])
+        fieldRowStack.addArrangedSubview(inlineDoneButton)
+
         inputErrorLabel.translatesAutoresizingMaskIntoConstraints = false
         inputErrorLabel.font = .preferredFont(forTextStyle: .footnote)
         inputErrorLabel.adjustsFontForContentSizeCategory = true
@@ -450,108 +425,6 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         inputErrorLabel.numberOfLines = 2
         inputErrorLabel.isHidden = true
         bottomBarContainer.addSubview(inputErrorLabel)
-    }
-
-    private func setupRegularHierarchy() {
-        dismissBackdropControl.translatesAutoresizingMaskIntoConstraints = false
-        dismissBackdropControl.backgroundColor = .clear
-        dismissBackdropControl.isAccessibilityElement = false
-        dismissBackdropControl.isHidden = true
-        dismissBackdropControl.addAction(UIAction { [weak self] _ in
-            self?.handleDone()
-        }, for: .touchUpInside)
-        addSubview(dismissBackdropControl)
-
-        regularCardShadowView.translatesAutoresizingMaskIntoConstraints = false
-        regularCardShadowView.backgroundColor = .clear
-        regularCardShadowView.layer.shadowColor = UIColor.black.cgColor
-        regularCardShadowView.layer.shadowOpacity = 0.28
-        regularCardShadowView.layer.shadowRadius = 28
-        regularCardShadowView.layer.shadowOffset = CGSize(width: 0, height: 12)
-        regularCardShadowView.isHidden = true
-        addSubview(regularCardShadowView)
-
-        regularCardView.translatesAutoresizingMaskIntoConstraints = false
-        regularCardView.backgroundColor = .clear
-        regularCardView.clipsToBounds = true
-        regularCardView.layer.cornerRadius = Self.panelRadius
-        regularCardView.layer.cornerCurve = .continuous
-        regularCardView.layer.borderWidth = 0.5
-        regularCardView.layer.borderColor = UIColor.white.withAlphaComponent(0.16).cgColor
-        regularCardShadowView.addSubview(regularCardView)
-
-        regularBlurView.translatesAutoresizingMaskIntoConstraints = false
-        regularBlurView.isUserInteractionEnabled = false
-        regularCardView.addSubview(regularBlurView)
-
-        regularHeaderRow.translatesAutoresizingMaskIntoConstraints = false
-        regularHeaderRow.backgroundColor = .clear
-        let headerTap = UITapGestureRecognizer(target: self, action: #selector(handleCapsuleTap))
-        regularHeaderRow.addGestureRecognizer(headerTap)
-        regularCardView.addSubview(regularHeaderRow)
-
-        leadingIconBadge.translatesAutoresizingMaskIntoConstraints = false
-        leadingIconBadge.backgroundColor = .tertiarySystemFill
-        leadingIconBadge.layer.cornerRadius = 14
-        leadingIconBadge.clipsToBounds = true
-        leadingIconBadge.isUserInteractionEnabled = false
-        regularHeaderRow.addSubview(leadingIconBadge)
-
-        leadingIconImageView.translatesAutoresizingMaskIntoConstraints = false
-        leadingIconImageView.contentMode = .scaleAspectFit
-        leadingIconImageView.tintColor = .secondaryLabel
-        leadingIconImageView.layer.cornerRadius = 10
-        leadingIconImageView.clipsToBounds = true
-        leadingIconBadge.addSubview(leadingIconImageView)
-
-        regularErrorLabel.translatesAutoresizingMaskIntoConstraints = false
-        regularErrorLabel.font = .preferredFont(forTextStyle: .footnote)
-        regularErrorLabel.adjustsFontForContentSizeCategory = true
-        regularErrorLabel.textColor = .systemRed
-        regularErrorLabel.numberOfLines = 2
-        regularErrorLabel.isHidden = true
-        regularCardView.addSubview(regularErrorLabel)
-
-        regularHeaderDivider.translatesAutoresizingMaskIntoConstraints = false
-        regularHeaderDivider.backgroundColor = UIColor.separator.withAlphaComponent(0.45)
-        regularHeaderDivider.isHidden = true
-        regularCardView.addSubview(regularHeaderDivider)
-
-        regularBodyContainer.translatesAutoresizingMaskIntoConstraints = false
-        regularBodyContainer.backgroundColor = .clear
-        regularCardView.addSubview(regularBodyContainer)
-
-        regularFavoritesContainer.translatesAutoresizingMaskIntoConstraints = false
-        regularFavoritesContainer.backgroundColor = .clear
-        regularBodyContainer.addSubview(regularFavoritesContainer)
-
-        favoritesHeaderLabel.translatesAutoresizingMaskIntoConstraints = false
-        favoritesHeaderLabel.text = "Favorites"
-        favoritesHeaderLabel.font = .preferredFont(forTextStyle: .headline)
-        favoritesHeaderLabel.adjustsFontForContentSizeCategory = true
-        favoritesHeaderLabel.textColor = .label
-        regularFavoritesContainer.addSubview(favoritesHeaderLabel)
-
-        favoritesCollectionView.translatesAutoresizingMaskIntoConstraints = false
-        favoritesCollectionView.backgroundColor = .clear
-        favoritesCollectionView.alwaysBounceVertical = true
-        favoritesCollectionView.keyboardDismissMode = .onDrag
-        favoritesCollectionView.dataSource = self
-        favoritesCollectionView.delegate = self
-        favoritesCollectionView.register(
-            FavoriteTileCell.self,
-            forCellWithReuseIdentifier: FavoriteTileCell.reuseIdentifier
-        )
-        regularFavoritesContainer.addSubview(favoritesCollectionView)
-
-        favoritesEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
-        favoritesEmptyLabel.text = "Favorites you add appear here"
-        favoritesEmptyLabel.font = .preferredFont(forTextStyle: .subheadline)
-        favoritesEmptyLabel.adjustsFontForContentSizeCategory = true
-        favoritesEmptyLabel.textColor = .secondaryLabel
-        favoritesEmptyLabel.textAlignment = .center
-        favoritesEmptyLabel.isHidden = true
-        regularFavoritesContainer.addSubview(favoritesEmptyLabel)
     }
 
     private func setupSharedInputs() {
@@ -885,6 +758,9 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     }
 
     private func updateVisibleContent() {
+        let shouldShowInlineDone = chromePlacement == .compact && isNonDuoPhone && isEditing
+        inlineDoneButton.isHidden = !shouldShowInlineDone
+
         let currentText = textField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let hasText = !currentText.isEmpty
         let shouldShowSuggestions = (isTypingMode && hasText) || (!hasText && !suggestions.isEmpty)
@@ -918,6 +794,112 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     @objc private func handleDone() {
         textField.resignFirstResponder()
         onDone?()
+    }
+}
+
+// MARK: - Regular Hierarchy
+
+extension AddressEditorView {
+    private func setupRegularHierarchy() {
+        dismissBackdropControl.translatesAutoresizingMaskIntoConstraints = false
+        dismissBackdropControl.backgroundColor = .clear
+        dismissBackdropControl.isAccessibilityElement = false
+        dismissBackdropControl.isHidden = true
+        dismissBackdropControl.addAction(UIAction { [weak self] _ in
+            self?.handleDone()
+        }, for: .touchUpInside)
+        addSubview(dismissBackdropControl)
+
+        regularCardShadowView.translatesAutoresizingMaskIntoConstraints = false
+        regularCardShadowView.backgroundColor = .clear
+        regularCardShadowView.layer.shadowColor = UIColor.black.cgColor
+        regularCardShadowView.layer.shadowOpacity = 0.28
+        regularCardShadowView.layer.shadowRadius = 28
+        regularCardShadowView.layer.shadowOffset = CGSize(width: 0, height: 12)
+        regularCardShadowView.isHidden = true
+        addSubview(regularCardShadowView)
+
+        regularCardView.translatesAutoresizingMaskIntoConstraints = false
+        regularCardView.backgroundColor = .clear
+        regularCardView.clipsToBounds = true
+        regularCardView.layer.cornerRadius = Self.panelRadius
+        regularCardView.layer.cornerCurve = .continuous
+        regularCardView.layer.borderWidth = 0.5
+        regularCardView.layer.borderColor = UIColor.white.withAlphaComponent(0.16).cgColor
+        regularCardShadowView.addSubview(regularCardView)
+
+        regularBlurView.translatesAutoresizingMaskIntoConstraints = false
+        regularBlurView.isUserInteractionEnabled = false
+        regularCardView.addSubview(regularBlurView)
+
+        regularHeaderRow.translatesAutoresizingMaskIntoConstraints = false
+        regularHeaderRow.backgroundColor = .clear
+        let headerTap = UITapGestureRecognizer(target: self, action: #selector(handleCapsuleTap))
+        regularHeaderRow.addGestureRecognizer(headerTap)
+        regularCardView.addSubview(regularHeaderRow)
+
+        leadingIconBadge.translatesAutoresizingMaskIntoConstraints = false
+        leadingIconBadge.backgroundColor = .tertiarySystemFill
+        leadingIconBadge.layer.cornerRadius = 14
+        leadingIconBadge.clipsToBounds = true
+        leadingIconBadge.isUserInteractionEnabled = false
+        regularHeaderRow.addSubview(leadingIconBadge)
+
+        leadingIconImageView.translatesAutoresizingMaskIntoConstraints = false
+        leadingIconImageView.contentMode = .scaleAspectFit
+        leadingIconImageView.tintColor = .secondaryLabel
+        leadingIconImageView.layer.cornerRadius = 10
+        leadingIconImageView.clipsToBounds = true
+        leadingIconBadge.addSubview(leadingIconImageView)
+
+        regularErrorLabel.translatesAutoresizingMaskIntoConstraints = false
+        regularErrorLabel.font = .preferredFont(forTextStyle: .footnote)
+        regularErrorLabel.adjustsFontForContentSizeCategory = true
+        regularErrorLabel.textColor = .systemRed
+        regularErrorLabel.numberOfLines = 2
+        regularErrorLabel.isHidden = true
+        regularCardView.addSubview(regularErrorLabel)
+
+        regularHeaderDivider.translatesAutoresizingMaskIntoConstraints = false
+        regularHeaderDivider.backgroundColor = UIColor.separator.withAlphaComponent(0.45)
+        regularHeaderDivider.isHidden = true
+        regularCardView.addSubview(regularHeaderDivider)
+
+        regularBodyContainer.translatesAutoresizingMaskIntoConstraints = false
+        regularBodyContainer.backgroundColor = .clear
+        regularCardView.addSubview(regularBodyContainer)
+
+        regularFavoritesContainer.translatesAutoresizingMaskIntoConstraints = false
+        regularFavoritesContainer.backgroundColor = .clear
+        regularBodyContainer.addSubview(regularFavoritesContainer)
+
+        favoritesHeaderLabel.translatesAutoresizingMaskIntoConstraints = false
+        favoritesHeaderLabel.text = "Favorites"
+        favoritesHeaderLabel.font = .preferredFont(forTextStyle: .headline)
+        favoritesHeaderLabel.adjustsFontForContentSizeCategory = true
+        favoritesHeaderLabel.textColor = .label
+        regularFavoritesContainer.addSubview(favoritesHeaderLabel)
+
+        favoritesCollectionView.translatesAutoresizingMaskIntoConstraints = false
+        favoritesCollectionView.backgroundColor = .clear
+        favoritesCollectionView.alwaysBounceVertical = true
+        favoritesCollectionView.keyboardDismissMode = .onDrag
+        favoritesCollectionView.dataSource = self
+        favoritesCollectionView.delegate = self
+        favoritesCollectionView.register(
+            FavoriteTileCell.self,
+            forCellWithReuseIdentifier: FavoriteTileCell.reuseIdentifier
+        )
+        regularFavoritesContainer.addSubview(favoritesCollectionView)
+
+        favoritesEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        favoritesEmptyLabel.text = "Favorites you add appear here"
+        favoritesEmptyLabel.font = .preferredFont(forTextStyle: .subheadline)
+        favoritesEmptyLabel.adjustsFontForContentSizeCategory = true
+        favoritesEmptyLabel.textColor = .secondaryLabel
+        favoritesEmptyLabel.textAlignment = .center
+        favoritesEmptyLabel.isHidden = true
+        regularFavoritesContainer.addSubview(favoritesEmptyLabel)
     }
 }
 

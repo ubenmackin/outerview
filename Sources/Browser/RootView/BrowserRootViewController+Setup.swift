@@ -218,12 +218,16 @@ extension BrowserRootViewController {
         )
         pillSlotMaxTrailingConstraint.priority = .defaultHigh
 
+        // Mode 3 capsules: 50 pt glass holding 44 pt targets at 4 pt
+        // spacing; outer insets stay 16 pt with 8 pt pill gaps.
         for stack in [bottomLeadingStack, bottomTrailingStack] {
             stack.axis = .horizontal
             stack.alignment = .center
-            stack.spacing = 8
+            stack.spacing = SideRailView.bottomBarSpacing
             stack.translatesAutoresizingMaskIntoConstraints = false
             stack.isHidden = true
+            stack.layer.cornerRadius = SideRailView.bottomBarCornerRadius
+            stack.clipsToBounds = true
             view.addSubview(stack)
         }
         pillBottomLeadingConstraint = pillView.leadingAnchor.constraint(
@@ -240,10 +244,10 @@ extension BrowserRootViewController {
             pillTrailingConstraint,
             bottomLeadingStack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             bottomLeadingStack.centerYAnchor.constraint(equalTo: pillView.centerYAnchor),
-            bottomLeadingStack.heightAnchor.constraint(equalToConstant: 44),
+            bottomLeadingStack.heightAnchor.constraint(equalToConstant: SideRailView.bottomBarHeight),
             bottomTrailingStack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
             bottomTrailingStack.centerYAnchor.constraint(equalTo: pillView.centerYAnchor),
-            bottomTrailingStack.heightAnchor.constraint(equalToConstant: 44)
+            bottomTrailingStack.heightAnchor.constraint(equalToConstant: SideRailView.bottomBarHeight)
         ])
         pillView.onPillTap = { [weak self] in self?.handlePillTap() }
         pillView.onHorizontalPan = { [weak self] event in self?.handleHorizontalPan(event) }

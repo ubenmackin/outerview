@@ -269,22 +269,37 @@ final class InterfaceModeTests: XCTestCase {
     func testNonDuoPhoneTopInsetMatchesContentReservation() {
         let expanded = ChromeState(rail: .visible, pill: .expanded)
         let collapsed = ChromeState(rail: .hidden, pill: .minified)
-        // In Mode 3, there is no top toolbar on the main screen, so topContentInset is 0.
+        // Mode 3 parks below the status cluster: inset equals safeAreaTop.
+        for top in [47, 59, 62] {
+            XCTAssertEqual(
+                BrowserRootViewController.topContentInset(
+                    for: .compact,
+                    state: expanded,
+                    stripVisible: false,
+                    interfaceMode: .nonDuoPhone,
+                    safeAreaTop: CGFloat(top)
+                ),
+                CGFloat(top)
+            )
+            XCTAssertEqual(
+                BrowserRootViewController.topContentInset(
+                    for: .compact,
+                    state: collapsed,
+                    stripVisible: false,
+                    interfaceMode: .nonDuoPhone,
+                    safeAreaTop: CGFloat(top)
+                ),
+                CGFloat(top)
+            )
+        }
+        // Duo modes ignore the cluster inset and keep prior reservations.
         XCTAssertEqual(
             BrowserRootViewController.topContentInset(
                 for: .compact,
                 state: expanded,
                 stripVisible: false,
-                interfaceMode: .nonDuoPhone
-            ),
-            0
-        )
-        XCTAssertEqual(
-            BrowserRootViewController.topContentInset(
-                for: .compact,
-                state: collapsed,
-                stripVisible: false,
-                interfaceMode: .nonDuoPhone
+                interfaceMode: .duoOuter,
+                safeAreaTop: 59
             ),
             0
         )

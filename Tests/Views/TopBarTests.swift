@@ -1,18 +1,11 @@
-//
-//  TopBarTests.swift
-//  OuterViewTests
-//
+// Chrome — Top toolbar layout plus Mode 3 bottom capsule verification.
 
 @testable import OuterView
 import UIKit
 import XCTest
 
-/// Shared Contract HEADER-BAR: regular bar leading zero plus trailing zero to
-/// the view edges; leading cluster inset 28; trailing cluster inset 164;
-/// cluster spacing 12; regular header background always clear with blur shown
-/// in every state; expanded pill centered with width min of 380 and slot
-/// width; minified capsule centered with domain-hugging width capped at 220;
-/// slot leading plus trailing inactive on regular in both states.
+/// Regular bar spans edge to edge with blur; pill centers per state.
+/// Mode 3 bottom stacks form 50 pt glass capsules at toolbar grade.
 @MainActor
 final class TopBarTests: XCTestCase {
     private func railLabels(in root: BrowserRootViewController) -> [String] {
@@ -287,5 +280,77 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(root.pillSlotWidthConstraint.constant, preferredWidth, accuracy: 0.5)
         let minifiedCenterInBar = root.topBarView.pillSlotView.convert(root.pillView.center, to: root.topBarView)
         XCTAssertEqual(minifiedCenterInBar.x, root.topBarView.bounds.midX, accuracy: 1.0)
+    }
+
+    func testMode3BottomBarCapsuleMetrics() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let root = BrowserRootViewController(database: database)
+        let phoneFrame = CGRect(x: 0, y: 0, width: 402, height: 874)
+        TestWindow.attach(root, frame: phoneFrame)
+        root.view.frame = phoneFrame
+        root.traitOverrides.horizontalSizeClass = .compact
+        root.view.layoutIfNeeded()
+        root.applyChromePlacement(for: .compact)
+        root.updateRailItems()
+        root.view.layoutIfNeeded()
+        XCTAssertTrue(root.railView.isHidden)
+        XCTAssertEqual(SideRailView.bottomBarHeight, 50)
+        XCTAssertEqual(SideRailView.bottomBarCornerRadius, 25)
+        XCTAssertEqual(SideRailView.bottomBarSpacing, 4)
+        XCTAssertEqual(SideRailView.bottomBarSymbolPointSize, 22)
+        for stack in [root.bottomLeadingStack, root.bottomTrailingStack] {
+            let height = stack.constraints.first { $0.firstAttribute == .height }
+            XCTAssertEqual(height?.constant, 50)
+            XCTAssertEqual(stack.layer.cornerRadius, 25)
+            XCTAssertEqual(stack.spacing, 4)
+            let capsule = stack.subviews.first {
+                $0 is UIVisualEffectView && !stack.arrangedSubviews.contains($0)
+            } as? UIVisualEffectView
+            XCTAssertNotNil(capsule)
+            XCTAssertNotNil(capsule?.effect)
+        }
+        let leading = root.bottomLeadingStack.arrangedSubviews.compactMap(\.accessibilityLabel)
+        let trailing = root.bottomTrailingStack.arrangedSubviews.compactMap(\.accessibilityLabel)
+        XCTAssertEqual(leading, ["Back"])
+        XCTAssertEqual(trailing, ["Bookmarks", "Tabs"])
+    }
+
+    func testMode3BottomBarToolbarGradeButtons() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let root = BrowserRootViewController(database: database)
+        let phoneFrame = CGRect(x: 0, y: 0, width: 402, height: 874)
+        TestWindow.attach(root, frame: phoneFrame)
+        root.view.frame = phoneFrame
+        root.traitOverrides.horizontalSizeClass = .compact
+        root.view.layoutIfNeeded()
+        root.applyChromePlacement(for: .compact)
+        root.updateRailItems()
+        root.view.layoutIfNeeded()
+        for stack in [root.bottomLeadingStack, root.bottomTrailingStack] {
+            for case let button as RailButton in stack.arrangedSubviews {
+                XCTAssertTrue(button.isBottomBar)
+                let glasses = button.subviews.compactMap { $0 as? UIVisualEffectView }
+                XCTAssertTrue(glasses.allSatisfy { $0.isHidden || $0.alpha < 0.5 })
+                XCTAssertTrue(button.constraints.contains {
+                    $0.firstAttribute == .width && abs($0.constant - 44) < 0.5
+                })
+            }
+        }
+        root.setChromeItems(prefix: [], suffix: [.done {}])
+        root.view.layoutIfNeeded()
+        guard let done = root.bottomTrailingStack.arrangedSubviews.first as? RailButton else {
+            XCTFail("Expected Done button")
+            return
+        }
+        XCTAssertEqual(done.accessibilityLabel, "Done")
+        XCTAssertEqual(done.backgroundColor, .systemBlue)
+    }
+
+    func testMode1Mode2ChromeUnchanged() {
+        XCTAssertEqual(SideRailView.buttonDiameter, 44)
+        XCTAssertEqual(SideRailView.spacing, 8)
+        XCTAssertEqual(SideRailView.railSymbolPointSize, 18)
+        XCTAssertEqual(TopBarView.barHeight, 84)
+        XCTAssertEqual(TopBarView.remnantHeight, 48)
     }
 }
