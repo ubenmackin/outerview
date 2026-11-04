@@ -79,12 +79,14 @@ final class TopBarScrollTests: XCTestCase {
         XCTAssertFalse(root.prefersStatusBarHidden)
 
         scroll(root, delta: 8)
+        // With synchronized tab bar & address bar contract, while the full large address bar
+        // is showing, the toolbar remains expanded and tab bar stays visible.
         XCTAssertFalse(root.topBarView.isHidden)
-        XCTAssertEqual(root.topBarView.currentHeightConstant, TopBarView.remnantHeight)
-        XCTAssertTrue(root.prefersStatusBarHidden)
-        XCTAssertTrue(root.topBarView.leadingStack.isHidden)
-        XCTAssertTrue(root.topBarView.trailingStack.isHidden)
-        XCTAssertTrue(root.tabStripView.isHidden)
+        XCTAssertEqual(root.topBarView.currentHeightConstant, TopBarView.barHeight)
+        XCTAssertFalse(root.prefersStatusBarHidden)
+        XCTAssertFalse(root.topBarView.leadingStack.isHidden)
+        XCTAssertFalse(root.topBarView.trailingStack.isHidden)
+        XCTAssertFalse(root.tabStripView.isHidden)
         XCTAssertFalse(root.pillView.isHidden)
         XCTAssertEqual(root.pillHeightConstraint.constant, AddressBarView.expandedHeight)
         XCTAssertFalse(root.pillSlotLeadingConstraint.isActive)
@@ -95,8 +97,11 @@ final class TopBarScrollTests: XCTestCase {
         XCTAssertNil(root.railView.lastAppliedRail)
         XCTAssertEqual(root.railView.applyCount, 0)
 
+        // At 24 pt total delta, the address pill minifies -> toolbar collapses and tab strip hides.
         scroll(root, delta: 16)
         XCTAssertFalse(root.topBarView.isHidden)
+        XCTAssertEqual(root.topBarView.currentHeightConstant, TopBarView.remnantHeight)
+        XCTAssertTrue(root.prefersStatusBarHidden)
         XCTAssertTrue(root.topBarView.leadingStack.isHidden)
         XCTAssertTrue(root.topBarView.trailingStack.isHidden)
         XCTAssertTrue(root.tabStripView.isHidden)
@@ -156,9 +161,9 @@ final class TopBarScrollTests: XCTestCase {
 
         root.handleScrollDelta(10)
         XCTAssertFalse(root.topBarView.isHidden)
-        XCTAssertTrue(root.topBarView.leadingStack.isHidden)
-        XCTAssertTrue(root.topBarView.trailingStack.isHidden)
-        XCTAssertTrue(root.tabStripView.isHidden)
+        XCTAssertFalse(root.topBarView.leadingStack.isHidden)
+        XCTAssertFalse(root.topBarView.trailingStack.isHidden)
+        XCTAssertFalse(root.tabStripView.isHidden)
         XCTAssertEqual(root.railView.applyCount, 0)
 
         root.handleScrollDelta(20)

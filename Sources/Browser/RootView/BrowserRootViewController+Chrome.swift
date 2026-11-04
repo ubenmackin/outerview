@@ -109,7 +109,7 @@ extension BrowserRootViewController {
             isSheetOverlayVisible: isSheetOverlayVisible
         )
         let willHideStatusBar = Self.shouldHideStatusBar(
-            for: chromePlacement,
+            for: interfaceMode,
             state: state,
             isOverviewVisible: isOverviewVisible,
             isSheetOverlayVisible: isSheetOverlayVisible
@@ -181,7 +181,8 @@ extension BrowserRootViewController {
                 return Self.topContentInset(
                     for: self.chromePlacement,
                     state: self.chromeController.state,
-                    stripVisible: !self.tabStripView.isHidden
+                    stripVisible: !self.tabStripView.isHidden,
+                    interfaceMode: self.interfaceMode
                 )
             }
             scrollProxies[id] = proxy
@@ -198,7 +199,12 @@ extension BrowserRootViewController {
         let placement = chromePlacement
         let state = chromeController.state
         let stripVisible = !tabStripView.isHidden
-        let newTop = Self.topContentInset(for: placement, state: state, stripVisible: stripVisible)
+        let newTop = Self.topContentInset(
+            for: placement,
+            state: state,
+            stripVisible: stripVisible,
+            interfaceMode: interfaceMode
+        )
         let newAdditionalTop = Self.additionalSafeAreaTopInset(for: placement, state: state)
         if additionalSafeAreaInsets.top != newAdditionalTop {
             additionalSafeAreaInsets.top = newAdditionalTop
@@ -231,22 +237,32 @@ extension BrowserRootViewController {
         startPageView?.setBottomChromeInset(max(0, bottom - systemBottom))
     }
 
-    func updateTopBarPinning(for placement: ChromePlacement) {
+    func updateTopBarPinning(for _: ChromePlacement) {
         guard isViewLoaded else { return }
-        if placement == .regular {
-            topBarTopToSafeAreaConstraint?.isActive = false
-            topBarTopToViewConstraint?.isActive = true
-            if let toView = topBarTopToViewConstraint {
+        if interfaceMode == .duoInnerOrPad {
+            if topBarTopToSafeAreaConstraint?.isActive == true {
+                topBarTopToSafeAreaConstraint?.isActive = false
+            }
+            if topBarTopToViewConstraint?.isActive != true {
+                topBarTopToViewConstraint?.isActive = true
+            }
+            if let toView = topBarTopToViewConstraint, topBarTopConstraint !== toView {
                 topBarTopConstraint = toView
             }
         } else {
-            topBarTopToViewConstraint?.isActive = false
-            topBarTopToSafeAreaConstraint?.isActive = true
-            if let toSafe = topBarTopToSafeAreaConstraint {
+            if topBarTopToViewConstraint?.isActive == true {
+                topBarTopToViewConstraint?.isActive = false
+            }
+            if topBarTopToSafeAreaConstraint?.isActive != true {
+                topBarTopToSafeAreaConstraint?.isActive = true
+            }
+            if let toSafe = topBarTopToSafeAreaConstraint, topBarTopConstraint !== toSafe {
                 topBarTopConstraint = toSafe
             }
         }
-        topBarTrailingConstraint.constant = 0
+        if topBarTrailingConstraint.constant != 0 {
+            topBarTrailingConstraint.constant = 0
+        }
     }
 
     func updateHeaderBackgrounds() {
@@ -255,8 +271,7 @@ extension BrowserRootViewController {
         tabStripView.applyHeaderBackground()
     }
 
-    func updateStartPageTop() {
-        guard isViewLoaded else { return }
+    private func ensureStartPageConstraints() {
         if startPageTopToStripConstraint == nil {
             let toStrip = startPageContainer.topAnchor.constraint(equalTo: tabStripView.bottomAnchor)
             toStrip.isActive = false
@@ -267,24 +282,39 @@ extension BrowserRootViewController {
             toBar.isActive = false
             startPageTopToBarConstraint = toBar
         }
+    }
+
+    private func targetStartPageTopConstraint(
+        toBar: NSLayoutConstraint,
+        toStrip: NSLayoutConstraint,
+        toContent: NSLayoutConstraint
+    ) -> NSLayoutConstraint {
+        if interfaceMode == .nonDuoPhone {
+            return toBar
+        }
+        if chromePlacement != .regular {
+            return toContent
+        }
+        return tabStripView.isHidden ? toBar : toStrip
+    }
+
+    private func setConstraintActive(_ constraint: NSLayoutConstraint, _ active: Bool) {
+        if constraint.isActive != active {
+            constraint.isActive = active
+        }
+    }
+
+    func updateStartPageTop() {
+        guard isViewLoaded else { return }
+        ensureStartPageConstraints()
         guard let toContent = startPageTopToContentConstraint,
               let toStrip = startPageTopToStripConstraint,
               let toBar = startPageTopToBarConstraint
         else { return }
-        if chromePlacement != .regular {
-            toStrip.isActive = false
-            toBar.isActive = false
-            toContent.isActive = true
-            return
-        }
-        if !tabStripView.isHidden {
-            toContent.isActive = false
-            toBar.isActive = false
-            toStrip.isActive = true
-        } else {
-            toContent.isActive = false
-            toStrip.isActive = false
-            toBar.isActive = true
+
+        let target = targetStartPageTopConstraint(toBar: toBar, toStrip: toStrip, toContent: toContent)
+        for constraint in [toBar, toStrip, toContent] {
+            setConstraintActive(constraint, constraint === target)
         }
     }
 
@@ -380,8 +410,33 @@ extension BrowserRootViewController {
         topBarAnimator?.stopAnimation(false)
         topBarAnimator?.finishAnimation(at: .current)
         topBarAnimator = nil
-        topBarView.isHidden = true
-        railView.isHidden = false
+
+        let mode = interfaceMode
+        if mode == .nonDuoPhone {
+            if !railView.isHidden {
+                railView.isHidden = true
+            }
+            if topBarView.isHidden {
+                topBarView.isHidden = false
+            }
+            if !topBarView.isNonDuoPhone {
+                topBarView.isNonDuoPhone = true
+            }
+            updateTopBarPinning(for: .compact)
+            updateHeaderBackgrounds()
+            updateStartPageTop()
+            refreshStatusBarAppearanceIfNeeded()
+            let state = chromeController.state
+            topBarView.setCollapsed(state.pill == .minified)
+            return
+        }
+
+        if !topBarView.isHidden {
+            topBarView.isHidden = true
+        }
+        if railView.isHidden {
+            railView.isHidden = false
+        }
         updateTopBarPinning(for: .compact)
         updateHeaderBackgrounds()
         updateStartPageTop()
@@ -467,6 +522,10 @@ extension BrowserRootViewController {
 
     func setChromeItems(prefix: [RailAction], suffix: [RailAction]) {
         railView.setItems(prefix: prefix, suffix: suffix)
+        if interfaceMode == .nonDuoPhone {
+            topBarView.setItems(prefix: prefix, suffix: suffix)
+            return
+        }
         let isRegularApplied = chromePlacement == .regular || !topBarView.isHidden
         if isRegularApplied, !isOverviewVisible {
             if suppressesRegularToolbarButtons {

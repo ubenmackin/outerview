@@ -412,9 +412,9 @@ final class RegularHeaderTests: XCTestCase {
         // Resting top is -expandedTop (-128)
         webView.scrollView.contentOffset = CGPoint(x: 0, y: -expandedTop)
 
-        // Scroll down to collapse chrome
-        scroll(root, delta: 10)
-        XCTAssertEqual(root.chromeController.state.rail, .hidden)
+        // Scroll down to collapse chrome (delta >= 24 minifies pill, which collapses regular header)
+        scroll(root, delta: 25)
+        XCTAssertEqual(root.chromeController.state.pill, .minified)
         let collapsedTop = TopBarView.remnantHeight
         XCTAssertEqual(webView.obscuredContentInsets.top, collapsedTop)
         XCTAssertEqual(webView.scrollView.contentOffset.y, -collapsedTop, accuracy: 0.001)

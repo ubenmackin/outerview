@@ -45,6 +45,12 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         }
     }
 
+    var isNonDuoPhone: Bool = false {
+        didSet {
+            compactHeaderTopConstraint?.constant = isNonDuoPhone ? 48 : 4
+        }
+    }
+
     // MARK: - Regular Safari Sheet Header Controls
 
     private let regularHeaderRow = UIView()
@@ -57,6 +63,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     private let deleteCircleButton = AccessibleButton(type: .system)
     private let closeOrDoneCircleButton = AccessibleButton(type: .system)
 
+    private var compactHeaderTopConstraint: NSLayoutConstraint?
     private var compactHeaderConstraints: [NSLayoutConstraint] = []
     private var regularHeaderConstraints: [NSLayoutConstraint] = []
 
@@ -600,8 +607,13 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         )
         compactTabTrailing.priority = UILayoutPriority(999)
 
+        let compactTop = headerContainer.topAnchor.constraint(
+            equalTo: safeAreaLayoutGuide.topAnchor,
+            constant: isNonDuoPhone ? 48 : 4
+        )
+        compactHeaderTopConstraint = compactTop
         compactHeaderConstraints = [
-            headerContainer.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 4),
+            compactTop,
             headerContainer.heightAnchor.constraint(equalToConstant: 48),
             compactTabLeading,
             compactTabTrailing,

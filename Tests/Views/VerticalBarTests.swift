@@ -74,30 +74,23 @@ final class VerticalBarTests: XCTestCase {
         XCTAssertNotNil(fixture.root.activePage())
     }
 
-    func testStatusBarHiddenOnlyWhenRegularCollapsed() {
+    func testStatusBarHiddenOnlyWhenModes1And2Collapsed() {
         let expanded = ChromeState(rail: .visible, pill: .expanded)
         let collapsed = ChromeState(rail: .hidden, pill: .minified)
         let editing = ChromeState(rail: .hidden, pill: .editing)
 
-        XCTAssertFalse(
+        // Mode 1 hides while minified; the superseded placement rule kept it visible.
+        XCTAssertTrue(
             BrowserRootViewController.shouldHideStatusBar(
-                for: .compact,
+                for: .duoOuter,
                 state: collapsed,
-                isOverviewVisible: false,
-                isSheetOverlayVisible: false
-            )
-        )
-        XCTAssertFalse(
-            BrowserRootViewController.shouldHideStatusBar(
-                for: .regular,
-                state: expanded,
                 isOverviewVisible: false,
                 isSheetOverlayVisible: false
             )
         )
         XCTAssertTrue(
             BrowserRootViewController.shouldHideStatusBar(
-                for: .regular,
+                for: .duoInnerOrPad,
                 state: collapsed,
                 isOverviewVisible: false,
                 isSheetOverlayVisible: false
@@ -105,7 +98,23 @@ final class VerticalBarTests: XCTestCase {
         )
         XCTAssertFalse(
             BrowserRootViewController.shouldHideStatusBar(
-                for: .regular,
+                for: .nonDuoPhone,
+                state: collapsed,
+                isOverviewVisible: false,
+                isSheetOverlayVisible: false
+            )
+        )
+        XCTAssertFalse(
+            BrowserRootViewController.shouldHideStatusBar(
+                for: .duoOuter,
+                state: expanded,
+                isOverviewVisible: false,
+                isSheetOverlayVisible: false
+            )
+        )
+        XCTAssertFalse(
+            BrowserRootViewController.shouldHideStatusBar(
+                for: .duoInnerOrPad,
                 state: editing,
                 isOverviewVisible: false,
                 isSheetOverlayVisible: false
@@ -113,7 +122,7 @@ final class VerticalBarTests: XCTestCase {
         )
         XCTAssertFalse(
             BrowserRootViewController.shouldHideStatusBar(
-                for: .regular,
+                for: .duoOuter,
                 state: collapsed,
                 isOverviewVisible: true,
                 isSheetOverlayVisible: false
@@ -121,7 +130,7 @@ final class VerticalBarTests: XCTestCase {
         )
         XCTAssertFalse(
             BrowserRootViewController.shouldHideStatusBar(
-                for: .regular,
+                for: .duoInnerOrPad,
                 state: collapsed,
                 isOverviewVisible: false,
                 isSheetOverlayVisible: true

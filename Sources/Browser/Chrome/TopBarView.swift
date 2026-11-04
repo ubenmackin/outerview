@@ -12,6 +12,15 @@ enum ChromePlacement: Sendable, Equatable {
     case regular
 }
 
+/// Interface modes: duoOuter (outer rail + bottom pill),
+/// duoInnerOrPad (inner/iPad top bar + tab strip),
+/// nonDuoPhone (bottom pill + top toolbar buttons).
+enum BrowserInterfaceMode: Sendable, Equatable {
+    case duoOuter
+    case duoInnerOrPad
+    case nonDuoPhone
+}
+
 /// Placement-driven chrome surface: stores a `ChromePlacement` and re-applies
 /// layout when it changes. The `applyPlacement(for:)` forwarder lives here so
 /// conforming views never triplicate it.
@@ -71,7 +80,9 @@ enum RegularHeaderBackground {
 final class TopBarView: UIView {
     nonisolated static let barHeight: CGFloat = 84
     nonisolated static let remnantHeight: CGFloat = 48
+    nonisolated static let mode3BarHeight: CGFloat = 44
     nonisolated static let horizontalInset: CGFloat = 28
+    nonisolated static let nonDuoHorizontalInset: CGFloat = 16
     nonisolated static let trailingStatusInset: CGFloat = 164
     nonisolated static let clusterSpacing: CGFloat = 12
     nonisolated static let expandedPillMaxWidth: CGFloat = 380
@@ -88,6 +99,23 @@ final class TopBarView: UIView {
     let pillSlotView = UIView()
     var onSlotWidthChanged: (() -> Void)?
     private let blurView = UIVisualEffectView(effect: RegularHeaderBackground.makeBlurEffect())
+
+    var isNonDuoPhone: Bool = false {
+        didSet {
+            if oldValue != isNonDuoPhone {
+                barHeightConstraint.constant = isCollapsed
+                    ? (isNonDuoPhone ? 0 : Self.remnantHeight)
+                    : (isNonDuoPhone ? Self.mode3BarHeight : Self.barHeight)
+                let verticalOffset = isNonDuoPhone ? 0 : (isCollapsed ? 0 : Self.expandedControlVerticalOffset)
+                leadingCenterYConstraint.constant = verticalOffset
+                trailingCenterYConstraint.constant = verticalOffset
+                slotCenterYConstraint.constant = verticalOffset
+                updateHorizontalInsets()
+                setNeedsUpdateConstraints()
+                setNeedsLayout()
+            }
+        }
+    }
 
     private(set) var isCollapsed = false
     private var lastNotifiedSlotWidth: CGFloat = -1
@@ -144,13 +172,30 @@ final class TopBarView: UIView {
     }
 
     func setCollapsed(_ collapsed: Bool) {
+        let targetHeight: CGFloat = isNonDuoPhone
+            ? (collapsed ? 0 : Self.mode3BarHeight)
+            : (collapsed ? Self.remnantHeight : Self.barHeight)
+        let verticalOffset: CGFloat = isNonDuoPhone ? 0 : (collapsed ? 0 : Self.expandedControlVerticalOffset)
+        let targetSlotHeight: CGFloat = collapsed ? AddressBarView.minifiedHeight : AddressBarView.expandedHeight
+        let targetAlpha: CGFloat = (isNonDuoPhone && collapsed) ? 0 : 1
+
+        guard isCollapsed != collapsed
+            || barHeightConstraint.constant != targetHeight
+            || leadingCenterYConstraint.constant != verticalOffset
+            || slotHeightConstraint.constant != targetSlotHeight
+            || leadingStack.alpha != targetAlpha
+        else { return }
+
         isCollapsed = collapsed
-        barHeightConstraint.constant = collapsed ? Self.remnantHeight : Self.barHeight
-        let verticalOffset = collapsed ? 0 : Self.expandedControlVerticalOffset
+        barHeightConstraint.constant = targetHeight
+        if isNonDuoPhone {
+            leadingStack.alpha = targetAlpha
+            trailingStack.alpha = targetAlpha
+        }
         leadingCenterYConstraint.constant = verticalOffset
         trailingCenterYConstraint.constant = verticalOffset
         slotCenterYConstraint.constant = verticalOffset
-        slotHeightConstraint.constant = collapsed ? AddressBarView.minifiedHeight : AddressBarView.expandedHeight
+        slotHeightConstraint.constant = targetSlotHeight
         updateHorizontalInsets()
         setNeedsUpdateConstraints()
     }
@@ -163,6 +208,15 @@ final class TopBarView: UIView {
     }
 
     private func updateHorizontalInsets() {
+        if isNonDuoPhone {
+            if leadingInsetConstraint.constant != Self.nonDuoHorizontalInset {
+                leadingInsetConstraint.constant = Self.nonDuoHorizontalInset
+            }
+            if trailingInsetConstraint.constant != -Self.nonDuoHorizontalInset {
+                trailingInsetConstraint.constant = -Self.nonDuoHorizontalInset
+            }
+            return
+        }
         var leading = Self.horizontalInset
         var trailing = isCollapsed ? Self.horizontalInset : Self.trailingStatusInset
         if !isCollapsed, bounds.width >= Self.dynamicInsetMinimumBoundsWidth {

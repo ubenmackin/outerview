@@ -170,13 +170,12 @@ final class RailButton: UIButton {
     override func layoutSubviews() {
         super.layoutSubviews()
         let radius = bounds.width / 2
-        layer.cornerRadius = radius
-        glassView.layer.cornerRadius = radius
-        glassView.clipsToBounds = true
-        if #available(iOS 26.0, *) {
-            glassView.cornerConfiguration = .capsule()
+        if layer.cornerRadius != radius {
+            layer.cornerRadius = radius
         }
-        sendSubviewToBack(glassView)
+        if glassView.layer.cornerRadius != radius {
+            glassView.layer.cornerRadius = radius
+        }
     }
 
     private func applyStyle(isProminent: Bool) {
@@ -194,6 +193,14 @@ final class RailButton: UIButton {
     private func setupGlass() {
         glassView.isUserInteractionEnabled = false
         glassView.translatesAutoresizingMaskIntoConstraints = false
+        glassView.layer.zPosition = -1
+        let radius = SideRailView.buttonDiameter / 2
+        layer.cornerRadius = radius
+        glassView.layer.cornerRadius = radius
+        glassView.clipsToBounds = true
+        if #available(iOS 26.0, *) {
+            glassView.cornerConfiguration = .capsule()
+        }
         insertSubview(glassView, at: 0)
         let widthConstraint = widthAnchor.constraint(equalToConstant: SideRailView.buttonDiameter)
         let heightConstraint = heightAnchor.constraint(equalToConstant: SideRailView.buttonDiameter)
