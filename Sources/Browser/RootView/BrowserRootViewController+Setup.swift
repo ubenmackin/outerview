@@ -472,6 +472,7 @@ extension BrowserRootViewController {
     func openBookmarksLibrary(tab: LibraryTab? = nil) {
         let resolved = tab ?? LibraryTabBar.storedTab(defaults: selectionDefaults)
         let placement = chromePlacement
+        bookmarksLibraryView.isNonDuoPhone = (interfaceMode == .nonDuoPhone)
         bookmarksLibraryView.applyPlacement(for: placement)
         libraryOverlay.applyPlacement(for: placement)
         libraryOverlay.isHidden = true

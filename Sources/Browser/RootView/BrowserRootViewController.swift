@@ -91,10 +91,14 @@ final class BrowserRootViewController: UIViewController {
     nonisolated static func topContentInset(
         for placement: ChromePlacement,
         state: ChromeState,
-        stripVisible: Bool
+        stripVisible: Bool,
+        interfaceMode: BrowserInterfaceMode = .duoInnerOrPad
     ) -> CGFloat {
+        if interfaceMode == .nonDuoPhone {
+            return state.pill == .minified ? 0 : TopBarView.mode3BarHeight
+        }
         guard placement == .regular else { return 0 }
-        if state.pill == .editing || state.rail == .visible {
+        if state.pill == .editing || state.pill != .minified {
             return TopBarView.barHeight + (stripVisible ? TabStripView.stripHeight : 0)
         }
         return TopBarView.remnantHeight
@@ -119,12 +123,64 @@ final class BrowserRootViewController: UIViewController {
         view.bounds.width
     }
 
+    nonisolated static func isDuoOuterDisplay(
+        safeAreaInsets: UIEdgeInsets = .zero,
+        bounds: CGRect = .zero,
+        deviceName: String? = nil
+    ) -> Bool {
+        if safeAreaInsets.right >= 44 {
+            return true
+        }
+        if abs(bounds.width - 466) < 1 || abs(bounds.height - 466) < 1 {
+            return true
+        }
+        let envDeviceName = deviceName ?? ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"]
+        if let name = envDeviceName, name.localizedCaseInsensitiveContains("Duo") {
+            return true
+        }
+        return false
+    }
+
+    nonisolated static func interfaceMode(
+        horizontalSizeClass: UIUserInterfaceSizeClass,
+        safeAreaInsets: UIEdgeInsets = .zero,
+        bounds: CGRect = .zero,
+        deviceName: String? = nil
+    ) -> BrowserInterfaceMode {
+        if CommandLine.arguments.contains("-OuterViewInnerDisplay") || horizontalSizeClass == .regular {
+            return .duoInnerOrPad
+        }
+        if CommandLine.arguments.contains("-OuterViewNonDuoPhone") {
+            return .nonDuoPhone
+        }
+        if CommandLine.arguments.contains("-OuterViewDuoOuter") {
+            return .duoOuter
+        }
+        if isDuoOuterDisplay(safeAreaInsets: safeAreaInsets, bounds: bounds, deviceName: deviceName) {
+            return .duoOuter
+        }
+        return .nonDuoPhone
+    }
+
+    var interfaceMode: BrowserInterfaceMode {
+        let windowBounds = view.window?.bounds
+        let effectiveBounds: CGRect = if let wb = windowBounds, wb.width > 0 {
+            wb
+        } else {
+            view.bounds
+        }
+        let windowInsets = view.window?.safeAreaInsets ?? .zero
+        let effectiveSafeArea = windowInsets.right > 0 ? windowInsets : view.safeAreaInsets
+        return Self.interfaceMode(
+            horizontalSizeClass: traitCollection.horizontalSizeClass,
+            safeAreaInsets: effectiveSafeArea,
+            bounds: effectiveBounds
+        )
+    }
+
     /// Regular width uses the top toolbar with the centered pill and no rail.
     var chromePlacement: ChromePlacement {
-        if CommandLine.arguments.contains("-OuterViewInnerDisplay") {
-            return .regular
-        }
-        return Self.placement(for: traitCollection.horizontalSizeClass)
+        interfaceMode == .duoInnerOrPad ? .regular : .compact
     }
 
     nonisolated static func placement(for sizeClass: UIUserInterfaceSizeClass) -> ChromePlacement {
@@ -149,26 +205,27 @@ final class BrowserRootViewController: UIViewController {
         if state.pill == .editing || isOverviewVisible || isSheetOverlayVisible {
             return false
         }
-        return state.rail == .hidden
+        return state.pill == .minified
     }
 
     nonisolated static func shouldHideStatusBar(
-        for placement: ChromePlacement,
+        for mode: BrowserInterfaceMode,
         state: ChromeState,
         isOverviewVisible: Bool,
         isSheetOverlayVisible: Bool
     ) -> Bool {
-        guard placement == .regular else { return false }
-        return isRegularCollapsed(
-            state: state,
-            isOverviewVisible: isOverviewVisible,
-            isSheetOverlayVisible: isSheetOverlayVisible
-        )
+        // Active in both Mode 1 (Duo outer screen) and Mode 2 (Duo inner screen + iPads)
+        // when scrolling down and the address bar is collapsed (minified).
+        guard mode == .duoOuter || mode == .duoInnerOrPad else { return false }
+        if state.pill == .editing || isOverviewVisible || isSheetOverlayVisible {
+            return false
+        }
+        return state.pill == .minified
     }
 
     override var prefersStatusBarHidden: Bool {
         Self.shouldHideStatusBar(
-            for: chromePlacement,
+            for: interfaceMode,
             state: chromeController.state,
             isOverviewVisible: isOverviewVisible,
             isSheetOverlayVisible: isSheetOverlayVisible
@@ -184,6 +241,7 @@ final class BrowserRootViewController: UIViewController {
         guard lastStatusBarHidden != hidden else { return }
         lastStatusBarHidden = hidden
         setNeedsStatusBarAppearanceUpdate()
+        parent?.setNeedsStatusBarAppearanceUpdate()
     }
 
     /// Moves the shared pill between the bottom anchors and the toolbar slot.
@@ -193,8 +251,12 @@ final class BrowserRootViewController: UIViewController {
 
     func applyChromePlacement(for placement: ChromePlacement) {
         let isRegular = placement == .regular
-        topBarView.isHidden = !isRegular
-        railView.isHidden = isRegular
+        let isNonDuo = (interfaceMode == .nonDuoPhone) && !isRegular
+
+        topBarView.isNonDuoPhone = isNonDuo
+        topBarView.isHidden = !isRegular && !isNonDuo
+        railView.isHidden = isRegular || isNonDuo
+
         if isRegular {
             updateToolbarVisibility(for: chromeController.state)
             if pillView.superview !== topBarView.pillSlotView {
@@ -228,6 +290,10 @@ final class BrowserRootViewController: UIViewController {
             topBarAnimator?.stopAnimation(false)
             topBarAnimator?.finishAnimation(at: .current)
             topBarAnimator = nil
+            if isNonDuo {
+                topBarView.setCollapsed(chromeController.state.pill == .minified)
+                updateRailItems()
+            }
             if pillView.superview !== view {
                 NSLayoutConstraint.deactivate([
                     pillSlotLeadingConstraint,
@@ -633,142 +699,6 @@ extension BrowserRootViewController {
             .error("\(operation, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
     }
 
-    // MARK: - Snapshots
-
-    /// Single owner for page wiring: menus, zoom, downloads plus privacy routing.
-    /// Called at checkout before load so standard tabs never take private path.
-    func wirePage(_ page: WebPageController, for id: UUID) {
-        page.contextActions = elementContextActions
-        page.siteZoomStore = siteZoomStore
-        page.downloadsManager = downloadsManager
-        page.isPrivateTab = tabs.first(where: { $0.id == id })?.isPrivate ?? true
-        page.backgroundService = BackgroundDownloadService.shared
-    }
-
-    func ensureSnapshotListener(for id: UUID, page: WebPageController) {
-        // Recreated pages arrive unwired; reassert routing before listening.
-        wirePage(page, for: id)
-        if let bound = boundListenerPages[id],
-           bound == ObjectIdentifier(page),
-           snapshotListenerIDs[id] != nil
-        {
-            return
-        }
-        let listenerID = page.addSnapshotListener { [weak self] snapshot in
-            guard let self else { return }
-            self.handleSnapshot(snapshot, for: id)
-        }
-        snapshotListenerIDs[id] = listenerID
-        boundListenerPages[id] = ObjectIdentifier(page)
-    }
-
-    private func handleSnapshot(_ snapshot: WebPageSnapshot, for id: UUID) {
-        var didChange = false
-        var didCommitNewURL = false
-        var didTitleChange = false
-        // Fail-closed: a missing tab never records history.
-        var isPrivateTab = true
-        // Rejected schemes never persist: neither the in-memory strip nor the
-        // stores may adopt them, even if the web view somehow reports one.
-        let isSnapshotURLAllowed = snapshot.url.map(URLNormalizer.isLoadable) ?? true
-        if let index = tabs.firstIndex(where: { $0.id == id }) {
-            let record = tabs[index]
-            isPrivateTab = record.isPrivate
-            if !isSnapshotURLAllowed {
-                if record.url != nil || record.title != nil {
-                    didChange = true
-                    record.url = nil
-                    record.title = nil
-                    record.lastActiveAt = Date()
-                    do {
-                        try tabStore?.upsertTab(record)
-                    } catch {
-                        logPersistenceError(error, operation: "upsertTab")
-                    }
-                }
-            } else if record.url != snapshot.url || record.title != snapshot.title {
-                didChange = true
-                didCommitNewURL = record.url != snapshot.url && snapshot.url != nil
-                didTitleChange = record.title != snapshot.title
-                record.url = snapshot.url
-                record.title = snapshot.title
-                record.lastActiveAt = Date()
-                do {
-                    try tabStore?.upsertTab(record)
-                } catch {
-                    logPersistenceError(error, operation: "upsertTab")
-                }
-            }
-        }
-        // One history row per committed navigation; progress and title refreshes
-        // for the same URL must not duplicate it. Private tabs never record.
-        if didCommitNewURL, let url = snapshot.url, URLNormalizer.isLoadable(url), snapshot.lastError == nil, !isPrivateTab {
-            let title = HostFormatter.displayTitle(url: url, title: snapshot.title)
-            do {
-                try historyStore?.record(visit: PageVisit(url: url, title: title))
-            } catch {
-                logPersistenceError(error, operation: "recordVisit")
-            }
-        }
-        if !didCommitNewURL, didTitleChange, !isPrivateTab, snapshot.lastError == nil, let url = snapshot.url, URLNormalizer.isLoadable(url),
-           tabs.first(where: { $0.id == id })?.url == url,
-           let trimmed = snapshot.title?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !trimmed.isEmpty
-        {
-            let title = HostFormatter.displayTitle(url: url, title: trimmed)
-            do {
-                try historyStore?.refreshTitle(url: url, title: title)
-            } catch {
-                logPersistenceError(error, operation: "refreshHistoryTitle")
-            }
-        }
-        if isOverviewVisible, didChange {
-            overviewController.setItems(overviewItems(), selectedID: selectedTabID)
-        }
-        guard id == selectedTabID else { return }
-        refreshForSnapshot(snapshot)
-    }
-
-    func refreshForActiveSnapshot() {
-        guard let page = peekActivePage() else {
-            startPageContainer.isHidden = false
-            return
-        }
-        refreshForSnapshot(page.snapshot)
-    }
-
-    func refreshForSnapshot(_ snapshot: WebPageSnapshot) {
-        guard let id = selectedTabID else { return }
-        let showStart = shouldShowStartPage(for: id, snapshot: snapshot)
-        startPageContainer.isHidden = !showStart
-        if let webView = peekActivePage()?.webView {
-            webView.isHidden = showStart
-        }
-        updateStartPageContent(with: snapshot)
-        updatePillForSnapshot(snapshot)
-        updateErrorOverlay(for: snapshot)
-        updateRailItems()
-    }
-
-    func updateStartPageContent(with snapshot: WebPageSnapshot? = nil) {
-        startPageView?.viewModel.reload()
-        let snapshot = snapshot ?? peekActivePage()?.snapshot
-        startPageView?.updateActivePage(url: snapshot?.url, title: snapshot?.title)
-        startPageView?.reload()
-        if isEditingAddress {
-            let favorites = StartPageViewModel.sortedFavorites(bookmarkStore?.fetchFavorites() ?? [])
-            editorView.setFavorites(favorites)
-        }
-    }
-
-    private func updatePillForSnapshot(_ snapshot: WebPageSnapshot) {
-        let isLoading = snapshot.url != nil && snapshot.progress < 1 && snapshot.lastError == nil
-        pillView.configure(url: snapshot.url, isSecure: snapshot.isSecure, isLoading: isLoading)
-        if chromePlacement == .regular, chromeController.state.pill == .minified {
-            updateRegularPillGeometry()
-        }
-    }
-
     // MARK: - Fold handling
 
     func scheduleStructuralUpdate() {
@@ -794,6 +724,7 @@ extension BrowserRootViewController {
         applyChromePlacement(for: placement)
         editorView.chromePlacement = placement
         overviewController.showsInlineCommands = (placement == .regular)
+        bookmarksLibraryView.isNonDuoPhone = (interfaceMode == .nonDuoPhone)
         for overlay in [libraryOverlay, settingsOverlay, downloadsOverlay, bookmarkEditorOverlay]
             where overlay.isHidden
         {

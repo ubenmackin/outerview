@@ -393,7 +393,7 @@ extension BrowserRootViewController {
     // MARK: - Tab strip
 
     func updateTabStrip() {
-        if topBarView.isHidden {
+        if topBarView.isHidden || topBarView.isNonDuoPhone {
             tabStripView.isHidden = true
             return
         }
@@ -401,7 +401,7 @@ extension BrowserRootViewController {
             tabStripView.isHidden = true
             return
         }
-        if chromePlacement == .regular, chromeController.state.rail == .hidden || chromeController.state.pill == .editing {
+        if chromeController.state.pill == .minified || chromeController.state.pill == .editing {
             tabStripView.isHidden = true
             return
         }
