@@ -124,8 +124,9 @@ final class WebPageController: NSObject {
     init(configuration: WKWebViewConfiguration) {
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
-        // Full-bleed content: no automatic safe-area or readables-content
-        // insets; chrome floats above the web view instead of shrinking it.
+        // Full-bleed content: no automatic insets; Mode 3 parks below
+        // the cluster via manual safeAreaTop inset instead of shrinking
+        // the web view.
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.navigationDelegate = self
         webView.uiDelegate = self

@@ -179,7 +179,8 @@ extension BrowserRootViewController {
                     for: self.chromePlacement,
                     state: self.chromeController.state,
                     stripVisible: !self.tabStripView.isHidden,
-                    interfaceMode: self.interfaceMode
+                    interfaceMode: self.interfaceMode,
+                    safeAreaTop: self.view.safeAreaInsets.top
                 )
             }
             proxy.onScrollSettled = { [weak self] in
@@ -199,11 +200,13 @@ extension BrowserRootViewController {
         let placement = chromePlacement
         let state = chromeController.state
         let stripVisible = !tabStripView.isHidden
+        let safeAreaTop = view.safeAreaInsets.top
         let newTop = Self.topContentInset(
             for: placement,
             state: state,
             stripVisible: stripVisible,
-            interfaceMode: interfaceMode
+            interfaceMode: interfaceMode,
+            safeAreaTop: safeAreaTop
         )
         let newAdditionalTop = Self.additionalSafeAreaTopInset(for: placement, state: state)
         if additionalSafeAreaInsets.top != newAdditionalTop {
@@ -232,6 +235,8 @@ extension BrowserRootViewController {
                     let clampedY = min(max(compensated.y, minOffsetY), max(maxOffsetY, minOffsetY))
                     let target = CGPoint(x: compensated.x, y: clampedY)
                     scrollView.setContentOffset(target, animated: false)
+                    // Clear stale underlap immediately so headers park below the cluster.
+                    view.layoutIfNeeded()
                 }
                 proxy?.suppressDeltas = false
             }
@@ -248,7 +253,8 @@ extension BrowserRootViewController {
             for: chromePlacement,
             state: chromeController.state,
             stripVisible: !tabStripView.isHidden,
-            interfaceMode: interfaceMode
+            interfaceMode: interfaceMode,
+            safeAreaTop: view.safeAreaInsets.top
         )
         // Settled near the collapsed remnant (e.g. -48) while expanded expects
         // -expectedTop (e.g. -128): re-assert insets then park below the header.
@@ -411,8 +417,14 @@ extension BrowserRootViewController {
             if isMinified {
                 self.pillWidthConstraint.constant = AddressBarView.widthForBounds(self.pillReferenceWidth)
             }
+            self.editorView.isNonDuoPhone = (self.interfaceMode == .nonDuoPhone)
+            self.editorView.isEditing = self.isEditingAddress
             if self.interfaceMode == .nonDuoPhone {
                 self.applyNonDuoChromeVisibility()
+                if self.isEditingAddress, self.chromePlacement == .compact {
+                    self.bottomLeadingStack.isHidden = true
+                    self.bottomTrailingStack.isHidden = true
+                }
             } else {
                 self.pillView.isHidden = state.pill == .editing
             }
@@ -575,6 +587,21 @@ extension BrowserRootViewController {
     func setChromeItems(prefix: [RailAction], suffix: [RailAction]) {
         railView.setItems(prefix: prefix, suffix: suffix)
         if interfaceMode == .nonDuoPhone {
+            let isMode3Editing = isEditingAddress && chromePlacement == .compact
+            if isMode3Editing {
+                bottomLeadingStack.rebuild(with: [])
+                bottomTrailingStack.rebuild(with: [])
+                topBarView.setItems(prefix: [], suffix: [])
+                editorView.isNonDuoPhone = true
+                editorView.isEditing = true
+                applyNonDuoChromeVisibility()
+                bottomLeadingStack.isHidden = true
+                bottomTrailingStack.isHidden = true
+                view.layoutIfNeeded()
+                return
+            }
+            editorView.isNonDuoPhone = true
+            editorView.isEditing = isEditingAddress
             let isOverlay = isNonDuoChromeOverlay
             if isOverlay {
                 bottomLeadingStack.rebuild(with: [])
@@ -592,6 +619,8 @@ extension BrowserRootViewController {
             applyNonDuoChromeVisibility()
             return
         }
+        editorView.isNonDuoPhone = false
+        editorView.isEditing = isEditingAddress
         let isRegularApplied = chromePlacement == .regular || !topBarView.isHidden
         if isRegularApplied, !isOverviewVisible {
             if suppressesRegularToolbarButtons {

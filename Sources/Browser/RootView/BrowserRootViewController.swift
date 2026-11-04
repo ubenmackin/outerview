@@ -85,14 +85,17 @@ final class BrowserRootViewController: UIViewController {
         return slotWidth > 0 ? min(cap, slotWidth) : cap
     }
 
+    /// Mode 3 parks web content below the status cluster: inset equals
+    /// live safeAreaTop, never zero when a top inset is vended.
     nonisolated static func topContentInset(
         for placement: ChromePlacement,
         state: ChromeState,
         stripVisible: Bool,
-        interfaceMode: BrowserInterfaceMode = .duoInnerOrPad
+        interfaceMode: BrowserInterfaceMode = .duoInnerOrPad,
+        safeAreaTop: CGFloat = 0
     ) -> CGFloat {
         if interfaceMode == .nonDuoPhone {
-            return 0
+            return max(0, safeAreaTop)
         }
         guard placement == .regular else { return 0 }
         if state.pill == .editing || state.pill != .minified {
