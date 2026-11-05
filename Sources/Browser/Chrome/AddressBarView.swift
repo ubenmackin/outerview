@@ -168,6 +168,14 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
         }
     }
 
+    var showsPageMenu: Bool = true {
+        didSet {
+            if oldValue != showsPageMenu {
+                updatePresentation()
+            }
+        }
+    }
+
     private var pillPanRecognizer: UIPanGestureRecognizer?
 
     private var currentPill: PillState = .expanded
@@ -283,7 +291,7 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
         pageMenuButton.setImage(
             UIImage(
                 systemName: "list.bullet",
-                withConfiguration: UIImage.SymbolConfiguration(pointSize: 24, weight: .regular)
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .medium)
             ),
             for: .normal
         )
@@ -418,7 +426,7 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
 
     private func updatePresentation() {
         let isExpanded = currentPill == .expanded
-        pageMenuButton.isHidden = !isExpanded
+        pageMenuButton.isHidden = !isExpanded || !showsPageMenu
         updateAction()
         invalidateIntrinsicContentSize()
         setNeedsLayout()
@@ -445,7 +453,8 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
         if isLoading {
             actionButton.isHidden = !isExpanded
             downloadsButton.isHidden = true
-            actionButton.setImage(UIImage(systemName: "xmark"), for: .normal)
+            let stopConfig = UIImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
+            actionButton.setImage(UIImage(systemName: "xmark", withConfiguration: stopConfig), for: .normal)
             actionButton.accessibilityLabel = "Stop loading"
             return
         }
@@ -457,7 +466,8 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
         }
         actionButton.isHidden = !isExpanded
         downloadsButton.isHidden = true
-        actionButton.setImage(UIImage(systemName: "arrow.clockwise"), for: .normal)
+        let reloadConfig = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+        actionButton.setImage(UIImage(systemName: "arrow.clockwise", withConfiguration: reloadConfig), for: .normal)
         actionButton.accessibilityLabel = "Reload page"
     }
 

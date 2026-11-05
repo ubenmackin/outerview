@@ -49,6 +49,9 @@ final class StartPageView: UIView {
         super.init(frame: .zero)
         collectionView.dataSource = self
         collectionView.delegate = self
+        collectionView.dragInteractionEnabled = true
+        collectionView.dragDelegate = self
+        collectionView.dropDelegate = self
         setupHierarchy()
         observeHorizontalSizeClass()
         reload()
@@ -60,6 +63,7 @@ final class StartPageView: UIView {
     }
 
     func reload() {
+        viewModel.reload()
         let favoritesEmpty = viewModel.isFavoritesEmpty
         let recentsEmpty = viewModel.isRecentsEmpty
         collectionView.isHidden = favoritesEmpty
@@ -78,6 +82,26 @@ final class StartPageView: UIView {
         viewModel.updateActivePage(url: url, title: title)
         addCurrentPageTile.isEnabled = viewModel.canAddCurrentPage
         addCurrentPageTile.alpha = viewModel.canAddCurrentPage ? 1 : 0.5
+    }
+
+    nonisolated static func canBeginDrag(itemCount: Int, index: Int) -> Bool {
+        FavoritesGridView.canBeginDrag(itemCount: itemCount, index: index)
+    }
+
+    nonisolated static func reorderedIDs(
+        currentIDs: [UUID],
+        draggedIDs: [UUID],
+        destinationIndex: Int
+    ) -> [UUID] {
+        FavoritesGridView.reorderedIDs(
+            currentIDs: currentIDs,
+            draggedIDs: draggedIDs,
+            destinationIndex: destinationIndex
+        )
+    }
+
+    func applyOrderedFavorites(_ ordered: [UUID]) -> Bool {
+        viewModel.applyOrderedFavorites(ordered)
     }
 
     /// Extra bottom room, beyond the safe area, so the last row scrolls
@@ -366,6 +390,81 @@ extension StartPageView: UICollectionViewDataSource, UICollectionViewDelegate {
             }
             return UIMenu(children: [copyAction, deleteAction])
         }
+    }
+}
+
+// MARK: - UICollectionViewDragDelegate, UICollectionViewDropDelegate
+
+extension StartPageView: UICollectionViewDragDelegate, UICollectionViewDropDelegate {
+    func collectionView(
+        _: UICollectionView,
+        itemsForBeginning _: UIDragSession,
+        at indexPath: IndexPath
+    ) -> [UIDragItem] {
+        guard Self.canBeginDrag(itemCount: viewModel.favorites.count, index: indexPath.item) else { return [] }
+        let dragItem = UIDragItem(itemProvider: NSItemProvider())
+        dragItem.localObject = viewModel.favorites[indexPath.item].id
+        return [dragItem]
+    }
+
+    func collectionView(
+        _: UICollectionView,
+        dropSessionDidUpdate session: UIDropSession,
+        withDestinationIndexPath _: IndexPath?
+    ) -> UICollectionViewDropProposal {
+        guard session.localDragSession != nil else {
+            return UICollectionViewDropProposal(operation: .forbidden)
+        }
+        return UICollectionViewDropProposal(operation: .move, intent: .insertAtDestinationIndexPath)
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        performDropWith coordinator: UICollectionViewDropCoordinator
+    ) {
+        guard coordinator.proposal.operation == .move else { return }
+        let localItems = coordinator.items.filter { $0.dragItem.localObject is UUID }
+        guard !localItems.isEmpty else { return }
+        let currentIDs = viewModel.favorites.map(\.id)
+        guard !currentIDs.isEmpty else { return }
+        let draggedIDs = localItems.compactMap { $0.dragItem.localObject as? UUID }
+        guard !draggedIDs.isEmpty else { return }
+        // Nil destination means past the trailing edge.
+        let rawDestination = coordinator.destinationIndexPath?.item ?? currentIDs.count
+        let ordered = Self.reorderedIDs(
+            currentIDs: currentIDs,
+            draggedIDs: draggedIDs,
+            destinationIndex: rawDestination
+        )
+        guard ordered != currentIDs, localItems.count == 1, let item = localItems.first else {
+            for item in localItems {
+                if let source = item.sourceIndexPath {
+                    coordinator.drop(item.dragItem, toItemAt: source)
+                }
+            }
+            return
+        }
+        guard let sourceIndexPath = item.sourceIndexPath else {
+            reload()
+            return
+        }
+        let targetItem = min(max(rawDestination, 0), ordered.count - 1)
+        let targetIndexPath = IndexPath(item: targetItem, section: 0)
+        collectionView.performBatchUpdates({
+            _ = applyOrderedFavorites(ordered)
+            collectionView.deleteItems(at: [sourceIndexPath])
+            collectionView.insertItems(at: [targetIndexPath])
+        }, completion: { [weak self] _ in
+            guard let self else { return }
+            do {
+                try self.viewModel.persistReorderedFavorites(ordered)
+            } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
+                    .error("reorderFavorites failed: \(error.localizedDescription, privacy: .public)")
+                self.reload()
+            }
+        })
+        coordinator.drop(item.dragItem, toItemAt: targetIndexPath)
     }
 }
 

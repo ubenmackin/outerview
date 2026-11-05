@@ -6,14 +6,14 @@
 import UIKit
 
 enum LibraryTab: Int, CaseIterable, Sendable {
-    case favorites = 0
+    case startPage = 0
     case bookmarks = 1
     case history = 2
     case readingList = 3
 
     var title: String {
         switch self {
-        case .favorites: "Favorites"
+        case .startPage: "Start Page"
         case .bookmarks: "Bookmarks"
         case .history: "History"
         case .readingList: "Reading List"
@@ -22,7 +22,7 @@ enum LibraryTab: Int, CaseIterable, Sendable {
 
     var systemImageName: String {
         switch self {
-        case .favorites: "star"
+        case .startPage: "square.grid.2x2"
         case .bookmarks: "book"
         case .history: "clock"
         case .readingList: "eyeglasses"
@@ -30,12 +30,8 @@ enum LibraryTab: Int, CaseIterable, Sendable {
     }
 }
 
-/// Single owner for per-tab library commands. Both the regular inline header
-/// (`BookmarksLibraryView.updateInlineCommands`) and the compact rail
-/// (`BrowserRootViewController.updateLibraryRailItems`) render from this model
-/// so per-tab branching (bookmarks add/edit, history clear, reading-list
-/// menu/delete/selection, favorites empty plus Done/exit-selection semantics)
-/// can never drift apart.
+/// Single owner for per-tab library commands (bookmarks, history, reading-list, startPage).
+/// Inline header and rail both render from this model so sets never drift.
 struct LibraryTabCommands: Sendable, Equatable {
     var showsAdd: Bool
     var showsEdit: Bool
@@ -52,8 +48,7 @@ struct LibraryTabCommands: Sendable, Equatable {
         isEditingBookmarks: Bool,
         canClearHistory: Bool,
         isInSelection: Bool,
-        canDeleteSelection: Bool,
-        hasReadingListMenu: Bool
+        canDeleteSelection: Bool
     ) -> LibraryTabCommands {
         switch tab {
         case .bookmarks, .history, .readingList:
@@ -70,7 +65,7 @@ struct LibraryTabCommands: Sendable, Equatable {
                     doneExitsSelection: true
                 )
             }
-        case .favorites:
+        case .startPage:
             break
         }
 
@@ -106,12 +101,12 @@ struct LibraryTabCommands: Sendable, Equatable {
                 isEditingBookmarks: false,
                 showsClear: false,
                 canClearHistory: false,
-                showsMenu: hasReadingListMenu,
+                showsMenu: true,
                 showsDelete: false,
                 canDeleteSelection: false,
                 doneExitsSelection: false
             )
-        case .favorites:
+        case .startPage:
             return LibraryTabCommands(
                 showsAdd: false,
                 showsEdit: false,
@@ -156,7 +151,7 @@ final class LibraryTabBar: UIView {
     private(set) var selectedTab: LibraryTab = .bookmarks
 
     private let defaults: UserDefaults
-    private let segmentedControl: UISegmentedControl
+    let segmentedControl: UISegmentedControl
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -189,6 +184,17 @@ final class LibraryTabBar: UIView {
         updateSegmentAccessibility()
         if notify {
             onTabSelected?(tab)
+        }
+    }
+
+    func setStartPageIcon(isSearching: Bool) {
+        let config = UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
+        let iconName = isSearching ? "magnifyingglass" : LibraryTab.startPage.systemImageName
+        let image = UIImage(systemName: iconName, withConfiguration: config) ?? UIImage()
+        image.accessibilityLabel = isSearching ? "Search" : LibraryTab.startPage.title
+        UIView.performWithoutAnimation {
+            segmentedControl.setImage(image, forSegmentAt: LibraryTab.startPage.rawValue)
+            segmentedControl.layoutIfNeeded()
         }
     }
 

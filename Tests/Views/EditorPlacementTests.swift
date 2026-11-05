@@ -324,7 +324,35 @@ final class EditorPlacementTests: XCTestCase {
         let leading = root.bottomLeadingStack.arrangedSubviews.compactMap(\.accessibilityLabel)
         let trailing = root.bottomTrailingStack.arrangedSubviews.compactMap(\.accessibilityLabel)
         XCTAssertEqual(leading, ["Back"])
-        XCTAssertEqual(trailing, ["Bookmarks", "Tabs"])
+        XCTAssertEqual(trailing, ["Tabs"])
+    }
+
+    func testMode3EditingAddressBarTappableAfterKeyboardDismiss() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let root = BrowserRootViewController(database: database)
+        let phoneFrame = CGRect(x: 0, y: 0, width: 402, height: 874)
+        TestWindow.attach(root, frame: phoneFrame)
+        root.traitOverrides.horizontalSizeClass = .compact
+        root.view.layoutIfNeeded()
+        root.applyChromePlacement(for: .compact)
+        root.updateRailItems()
+        root.view.layoutIfNeeded()
+
+        root.beginEditing()
+        root.view.layoutIfNeeded()
+
+        XCTAssertTrue(root.isEditingAddress)
+        XCTAssertFalse(root.editorView.isHidden)
+
+        // Resign keyboard
+        root.editorView.resignFirstResponder()
+        root.view.layoutIfNeeded()
+
+        // Address bar should be docked at the bottom with 44 pt height
+        let tapPoint = CGPoint(x: 200, y: 810)
+        let hitView = root.view.hitTest(tapPoint, with: nil)
+        XCTAssertNotNil(hitView)
+        XCTAssertTrue(hitView is UITextField || hitView?.superview is UITextField || hitView?.accessibilityLabel == "Address or search query")
     }
 
     private func findDismissButton(in view: UIView) -> UIButton? {
@@ -349,5 +377,194 @@ final class EditorPlacementTests: XCTestCase {
             return true
         }
         return false
+    }
+
+    func testAddressBarTapAfterKeyboardDismiss() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let root = BrowserRootViewController(database: database)
+        let phoneFrame = CGRect(x: 0, y: 0, width: 402, height: 874)
+        TestWindow.attach(root, frame: phoneFrame)
+        root.traitOverrides.horizontalSizeClass = .compact
+        root.view.layoutIfNeeded()
+        root.applyChromePlacement(for: .compact)
+        root.updateRailItems()
+        root.view.layoutIfNeeded()
+
+        root.beginEditing()
+        root.view.layoutIfNeeded()
+
+        // Now simulate keyboard dismissal by resigning first responder
+        root.editorView.resignFirstResponder()
+        root.view.layoutIfNeeded()
+
+        let tapPoint = CGPoint(x: 200, y: 800)
+        let hitView = root.view.hitTest(tapPoint, with: nil)
+        XCTAssertNotNil(hitView)
+        XCTAssertTrue(hitView is UITextField || hitView?.superview is UITextField || hitView?.accessibilityLabel == "Address or search query")
+    }
+
+    func testMode3BrowsingAddressBarAndButtonsReceiveTouches() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let root = BrowserRootViewController(database: database)
+        let phoneFrame = CGRect(x: 0, y: 0, width: 402, height: 874)
+        TestWindow.attach(root, frame: phoneFrame)
+        root.traitOverrides.horizontalSizeClass = .compact
+        root.view.layoutIfNeeded()
+        root.applyChromePlacement(for: .compact)
+        root.updateRailItems()
+        root.view.layoutIfNeeded()
+
+        let url = try XCTUnwrap(URL(string: "https://www.apple.com"))
+        let record = TabRecord(url: url, title: "Apple", isPrivate: false)
+        root.tabs = [record]
+        root.tabPool.create(record)
+        root.selectTab(id: record.id)
+        root.view.layoutIfNeeded()
+
+        XCTAssertFalse(root.isEditingAddress)
+        XCTAssertTrue(root.editorView.isHidden)
+
+        // Pill must receive touches (not editor textField)
+        let pillCenter = root.pillView.convert(
+            CGPoint(x: root.pillView.bounds.midX, y: root.pillView.bounds.midY),
+            to: root.view
+        )
+        let hitPill = root.view.hitTest(pillCenter, with: nil)
+        XCTAssertNotNil(hitPill)
+        XCTAssertFalse(hitPill is UITextField)
+        XCTAssertTrue(hitPill === root.pillView || hitPill?.isDescendant(of: root.pillView) == true)
+
+        // Bottom leading stack (Back button) must receive touches
+        let leadCenter = root.bottomLeadingStack.convert(
+            CGPoint(x: root.bottomLeadingStack.bounds.midX, y: root.bottomLeadingStack.bounds.midY),
+            to: root.view
+        )
+        let hitLead = root.view.hitTest(leadCenter, with: nil)
+        XCTAssertNotNil(hitLead)
+        XCTAssertFalse(hitLead is UITextField)
+        XCTAssertTrue(hitLead?.isDescendant(of: root.bottomLeadingStack) == true)
+
+        // Bottom trailing stack (Tabs) must receive touches
+        let trailCenter = root.bottomTrailingStack.convert(
+            CGPoint(x: root.bottomTrailingStack.bounds.midX, y: root.bottomTrailingStack.bounds.midY),
+            to: root.view
+        )
+        let hitTrail = root.view.hitTest(trailCenter, with: nil)
+        XCTAssertNotNil(hitTrail)
+        XCTAssertFalse(hitTrail is UITextField)
+        XCTAssertTrue(hitTrail?.isDescendant(of: root.bottomTrailingStack) == true)
+    }
+
+    func testMode3ScrollMinifiesPillAndHidesBottomButtons() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let root = BrowserRootViewController(database: database)
+        let phoneFrame = CGRect(x: 0, y: 0, width: 402, height: 874)
+        TestWindow.attach(root, frame: phoneFrame)
+        root.traitOverrides.horizontalSizeClass = .compact
+        root.view.layoutIfNeeded()
+        root.applyChromePlacement(for: .compact)
+        root.updateRailItems()
+        root.view.layoutIfNeeded()
+
+        let url = try XCTUnwrap(URL(string: "https://www.apple.com"))
+        let record = TabRecord(url: url, title: "Apple", isPrivate: false)
+        root.tabs = [record]
+        root.tabPool.create(record)
+        root.selectTab(id: record.id)
+        root.view.layoutIfNeeded()
+
+        // Initially expanded
+        XCTAssertEqual(root.chromeController.state.pill, .expanded)
+        XCTAssertFalse(root.bottomLeadingStack.isHidden)
+        XCTAssertFalse(root.bottomTrailingStack.isHidden)
+        XCTAssertEqual(root.bottomLeadingStack.alpha, 1.0)
+        XCTAssertEqual(root.bottomTrailingStack.alpha, 1.0)
+
+        // Scroll down to minify
+        let minified = root.chromeController.handle(.scroll(offsetDelta: 30))
+        root.applyCommands(minified, animated: false)
+        root.view.layoutIfNeeded()
+
+        XCTAssertEqual(root.chromeController.state.pill, .minified)
+        XCTAssertTrue(root.bottomLeadingStack.isHidden)
+        XCTAssertTrue(root.bottomTrailingStack.isHidden)
+        XCTAssertEqual(root.bottomLeadingStack.alpha, 0.0)
+        XCTAssertEqual(root.bottomTrailingStack.alpha, 0.0)
+
+        // Scroll up to restore (revealThreshold is 32)
+        let expanded = root.chromeController.handle(.scroll(offsetDelta: -40))
+        root.applyCommands(expanded, animated: false)
+        root.view.layoutIfNeeded()
+
+        XCTAssertEqual(root.chromeController.state.pill, .expanded)
+        XCTAssertFalse(root.bottomLeadingStack.isHidden)
+        XCTAssertFalse(root.bottomTrailingStack.isHidden)
+        XCTAssertEqual(root.bottomLeadingStack.alpha, 1.0)
+        XCTAssertEqual(root.bottomTrailingStack.alpha, 1.0)
+    }
+
+    func testMode3PillTapOpensLibraryViewToStartPage() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let root = BrowserRootViewController(database: database)
+        let phoneFrame = CGRect(x: 0, y: 0, width: 402, height: 874)
+        TestWindow.attach(root, frame: phoneFrame)
+        root.traitOverrides.horizontalSizeClass = .compact
+        root.view.layoutIfNeeded()
+
+        let url = try XCTUnwrap(URL(string: "https://www.apple.com"))
+        let record = TabRecord(url: url, title: "Apple", isPrivate: false)
+        root.tabs = [record]
+        root.tabPool.create(record)
+        root.selectTab(id: record.id)
+        root.view.layoutIfNeeded()
+
+        XCTAssertFalse(root.isLibraryVisible)
+
+        // Pill tap in Mode 3 routes to openBookmarksLibrary(tab: .startPage)
+        root.handlePillTap()
+        root.view.layoutIfNeeded()
+
+        XCTAssertTrue(root.isLibraryVisible)
+        XCTAssertEqual(root.bookmarksLibraryView.currentTab, .startPage)
+    }
+
+    func testTextFieldShouldClearResetsTextAndNotifies() {
+        let editor = makeEditor(placement: .compact)
+        editor.configure(text: "https://apple.com", suggestions: [], engine: .google)
+        editor.isEditing = true
+        var changedText: String?
+        editor.onTextChanged = { text in
+            changedText = text
+        }
+
+        let textField = editor.textFieldForTesting
+        let shouldClear = editor.textFieldShouldClear(textField)
+        XCTAssertTrue(shouldClear)
+        XCTAssertEqual(textField.text, "")
+        XCTAssertEqual(changedText, "")
+        XCTAssertFalse(editor.isTypingModeForTesting)
+    }
+
+    func testMode3DismissButtonClosesLibraryView() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let root = BrowserRootViewController(database: database)
+        let phoneFrame = CGRect(x: 0, y: 0, width: 402, height: 874)
+        TestWindow.attach(root, frame: phoneFrame)
+        root.traitOverrides.horizontalSizeClass = .compact
+        root.view.layoutIfNeeded()
+
+        root.openBookmarksLibrary(tab: .startPage)
+        root.beginEditing()
+        root.view.layoutIfNeeded()
+
+        XCTAssertTrue(root.isLibraryVisible)
+        XCTAssertTrue(root.isEditingAddress)
+
+        // Tapping the big X dismiss button triggers dismissStartPageOrEditing()
+        root.dismissStartPageOrEditing()
+        root.view.layoutIfNeeded()
+
+        XCTAssertFalse(root.isEditingAddress)
+        XCTAssertFalse(root.isLibraryVisible)
     }
 }

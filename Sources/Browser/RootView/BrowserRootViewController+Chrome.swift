@@ -470,6 +470,14 @@ extension BrowserRootViewController {
             updateHeaderBackgrounds()
             updateStartPageTop()
             refreshStatusBarAppearanceIfNeeded()
+            let updateStacks: () -> Void = { [weak self] in
+                self?.applyNonDuoChromeVisibility()
+            }
+            if animated {
+                UIView.animate(withDuration: Self.pillMorphDuration, animations: updateStacks)
+            } else {
+                updateStacks()
+            }
             return
         }
 
@@ -537,13 +545,20 @@ extension BrowserRootViewController {
     }
 
     func dismissStartPageOrEditing() {
+        bookmarksLibraryView.resetFirstTabMode()
         let hadForcedStartPage = selectedTabID.map { forcedStartPageTabs.contains($0) } ?? false
         if isEditingAddress {
             endEditing(submitted: false)
+            if isLibraryVisible {
+                closeBookmarksLibrary()
+            }
             if hadForcedStartPage {
                 dismissForcedStartPage()
             }
             return
+        }
+        if isLibraryVisible {
+            closeBookmarksLibrary()
         }
         dismissForcedStartPage()
     }
@@ -563,10 +578,7 @@ extension BrowserRootViewController {
         if interfaceMode == .nonDuoPhone {
             return (
                 prefix: [backAction],
-                suffix: [
-                    .bookmarks { [weak self] in self?.openBookmarksLibrary() },
-                    tabAction
-                ]
+                suffix: [tabAction]
             )
         }
 
@@ -609,6 +621,10 @@ extension BrowserRootViewController {
                 } else {
                     topBarView.setItems(prefix: [], suffix: [])
                 }
+            } else if isLibraryVisible {
+                topBarView.setItems(prefix: [], suffix: [])
+                SystemToolbarMapper.populateBottomStack(bottomLeadingStack, with: [])
+                SystemToolbarMapper.populateBottomStack(bottomTrailingStack, with: suffix)
             } else {
                 topBarView.setItems(prefix: [], suffix: [])
                 SystemToolbarMapper.populateBottomStack(bottomLeadingStack, with: prefix)
@@ -665,8 +681,7 @@ extension BrowserRootViewController {
                         self?.presentDownloadsFilesPicker()
                     },
                     .clear(label: "Clear All", isEnabled: !downloadsManager.rows.isEmpty) { [weak self] in
-                        self?.downloadsManager.deleteAll()
-                        self?.updateRailItems()
+                        self?.promptClearAllDownloads()
                     }
                 ],
                 suffix: [
@@ -702,11 +717,25 @@ extension BrowserRootViewController {
             isEditingBookmarks: bookmarksLibraryView.isEditingBookmarks,
             canClearHistory: bookmarksLibraryView.canClearHistory,
             isInSelection: bookmarksLibraryView.isActiveTabInSelectionMode,
-            canDeleteSelection: bookmarksLibraryView.canDeleteActiveTabSelection,
-            hasReadingListMenu: readingMenu != nil
+            canDeleteSelection: bookmarksLibraryView.canDeleteActiveTabSelection
         )
         var prefix: [RailAction] = []
-        let suffix: [RailAction] = if commands.doneExitsSelection {
+        let suffix: [RailAction] = if interfaceMode == .nonDuoPhone {
+            [
+                RailAction(
+                    systemImageName: "xmark",
+                    accessibilityLabel: "Dismiss",
+                    handler: { [weak self] in
+                        if commands.doneExitsSelection {
+                            self?.bookmarksLibraryView.exitActiveTabSelectionMode()
+                            self?.updateLibraryRailItems(for: tab)
+                        } else {
+                            self?.closeBookmarksLibrary()
+                        }
+                    }
+                )
+            ]
+        } else if commands.doneExitsSelection {
             [
                 .done { [weak self] in
                     self?.bookmarksLibraryView.exitActiveTabSelectionMode()

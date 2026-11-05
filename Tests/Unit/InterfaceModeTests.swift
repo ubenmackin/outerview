@@ -163,7 +163,7 @@ final class InterfaceModeTests: XCTestCase {
         let leadingLabels = root.bottomLeadingStack.arrangedSubviews.compactMap(\.accessibilityLabel)
         let trailingLabels = root.bottomTrailingStack.arrangedSubviews.compactMap(\.accessibilityLabel)
         XCTAssertEqual(leadingLabels, ["Back"])
-        XCTAssertEqual(trailingLabels, ["Bookmarks", "Tabs"])
+        XCTAssertEqual(trailingLabels, ["Tabs"])
 
         // Verify Back and Tabs buttons have long-press menus configured (showsMenuAsPrimaryAction = false)
         guard let backButton = root.bottomLeadingStack.arrangedSubviews.first as? UIButton,

@@ -41,15 +41,29 @@ extension BrowserRootViewController {
     }
 
     func presentDownloadsSheet() {
+        let isPhone = interfaceMode == .nonDuoPhone
         let sheet = DownloadsSheetView(
             manager: downloadsManager,
-            inlineCommands: chromePlacement == .regular,
+            inlineCommands: chromePlacement == .regular || isPhone,
+            onOpenFiles: { [weak self] in self?.presentDownloadsFilesPicker() },
+            onClearAll: { [weak self] in self?.downloadsManager.deleteAll() },
             onDone: { [weak self] in self?.dismissDownloadsSheet() }
         )
         let hosting = UIHostingController(rootView: sheet)
-        presentOverlay(downloadsOverlay, newHosting: hosting, currentHosting: downloadsHosting, container: downloadsContainer)
         downloadsHosting = hosting
         isDownloadsVisible = true
+        if isPhone {
+            hosting.modalPresentationStyle = .pageSheet
+            hosting.presentationController?.delegate = self
+            if let sheetController = hosting.sheetPresentationController {
+                sheetController.prefersGrabberVisible = true
+            }
+            if view.window != nil {
+                present(hosting, animated: shouldAnimateModalSheets)
+            }
+        } else {
+            presentOverlay(downloadsOverlay, newHosting: hosting, currentHosting: nil, container: downloadsContainer)
+        }
         bringChromeToFront()
         updateRailItems()
         applyRailViews(animated: true)
@@ -57,10 +71,69 @@ extension BrowserRootViewController {
 
     func dismissDownloadsSheet() {
         isDownloadsVisible = false
-        dismissOverlay(downloadsOverlay, hosting: downloadsHosting, container: downloadsContainer)
-        downloadsHosting = nil
+        if let hosting = downloadsHosting {
+            if hosting.presentingViewController != nil {
+                hosting.dismiss(animated: shouldAnimateModalSheets)
+            }
+            dismissOverlay(downloadsOverlay, hosting: hosting, container: downloadsContainer)
+            downloadsHosting = nil
+        }
         updateRailItems()
         applyRailViews(animated: true)
+    }
+
+    /// Presented destructive prompt; tests drive confirm/cancel through it.
+    var clearAllConfirmationAlert: UIAlertController? {
+        var current: UIViewController? = self
+        while let vc = current {
+            if let alert = vc.presentedViewController as? UIAlertController,
+               alert.title == "Clear All Downloads?"
+            {
+                return alert
+            }
+            current = vc.presentedViewController
+        }
+        return nil
+    }
+
+    /// Simulates tapping the prompt destructive button; needs the prompt visible.
+    func confirmPresentedClearAllDownloads() {
+        guard clearAllConfirmationAlert != nil else { return }
+        downloadsManager.deleteAll()
+        updateRailItems()
+        clearAllConfirmationAlert?.dismiss(animated: false)
+    }
+
+    /// Simulates tapping the prompt cancel button; rows are never touched here.
+    func cancelPresentedClearAllDownloads() {
+        guard let alert = clearAllConfirmationAlert else { return }
+        alert.dismiss(animated: false)
+    }
+
+    func promptClearAllDownloads() {
+        var presenter: UIViewController = self
+        while let next = presenter.presentedViewController {
+            presenter = next
+        }
+        let sheet = UIAlertController(
+            title: "Clear All Downloads?",
+            message: "This deletes all downloads and their files.",
+            preferredStyle: .actionSheet
+        )
+        sheet.view.accessibilityIdentifier = "ClearAllDownloadsConfirm"
+        sheet.addAction(UIAlertAction(title: "Clear All", style: .destructive) { [weak self] _ in
+            self?.downloadsManager.deleteAll()
+            self?.updateRailItems()
+        })
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = presenter.view
+            popover.sourceRect = CGRect(
+                x: presenter.view.bounds.midX, y: presenter.view.bounds.midY, width: 0, height: 0
+            )
+            popover.permittedArrowDirections = []
+        }
+        presenter.present(sheet, animated: shouldAnimateModalSheets)
     }
 
     func presentDownloadsFilesPicker() {

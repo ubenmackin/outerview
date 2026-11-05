@@ -157,8 +157,8 @@ final class SelectionPersistenceTests: XCTestCase {
         root.openBookmarksLibrary()
         XCTAssertEqual(root.bookmarksLibraryView.currentTab, .history)
 
-        root.openBookmarksLibrary(tab: .favorites)
-        XCTAssertEqual(root.bookmarksLibraryView.currentTab, .favorites)
-        XCTAssertEqual(LibraryTabBar.storedTab(defaults: defaults), .favorites)
+        root.openBookmarksLibrary(tab: .startPage)
+        XCTAssertEqual(root.bookmarksLibraryView.currentTab, .startPage)
+        XCTAssertEqual(LibraryTabBar.storedTab(defaults: defaults), .startPage)
     }
 }

@@ -1,6 +1,7 @@
 // Downloads — Sheet layout and toolbar verification.
 
 @testable import OuterView
+import SwiftUI
 import UIKit
 import XCTest
 
@@ -45,6 +46,33 @@ final class DownloadsSheetTests: XCTestCase {
         control.sendActions(for: .touchUpInside)
         await Task.yield()
         await Task.yield()
+    }
+
+    private func waitForClearAllAlert(in root: BrowserRootViewController) async -> UIAlertController? {
+        let deadline = Date(timeIntervalSinceNow: 5.0)
+        while Date() < deadline {
+            if let alert = root.clearAllConfirmationAlert,
+               !alert.isBeingPresented, !alert.isBeingDismissed
+            {
+                return alert
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        if let alert = root.clearAllConfirmationAlert, !alert.isBeingPresented {
+            return alert
+        }
+        return nil
+    }
+
+    private func waitForClearAllDismissed(in root: BrowserRootViewController) async -> Bool {
+        let deadline = Date(timeIntervalSinceNow: 5.0)
+        while Date() < deadline {
+            if root.clearAllConfirmationAlert == nil {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return root.clearAllConfirmationAlert == nil
     }
 
     func testPresentSetsFlagShowsContainerAndRailMode() throws {
@@ -150,6 +178,42 @@ final class DownloadsSheetTests: XCTestCase {
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
+        // Sheet dialog gate: confirm deletes, cancel keeps.
+        let sheetFirstURL = tempDir.appendingPathComponent("sheet-first.bin")
+        try Data(repeating: 1, count: 256).write(to: sheetFirstURL)
+        _ = root.downloadsManager.registerRow(name: "sheet-first.bin", fileURL: sheetFirstURL)
+        let sheetSecondURL = tempDir.appendingPathComponent("sheet-second.bin")
+        try Data(repeating: 2, count: 256).write(to: sheetSecondURL)
+        let sheetSecond = root.downloadsManager.registerRow(name: "sheet-second.bin", fileURL: sheetSecondURL)
+        root.downloadsManager.applyProgress(0.5, for: sheetSecond)
+        XCTAssertEqual(root.downloadsManager.rows.count, 2)
+
+        root.presentDownloadsSheet()
+        let sheetHosting = try XCTUnwrap(root.downloadsHosting as? UIHostingController<DownloadsSheetView>)
+        XCTAssertNotNil(sheetHosting.rootView.onClearAll)
+        var sheet = sheetHosting.rootView
+        XCTAssertFalse(sheet.isShowingClearAllConfirm)
+        // Confirm without a request never deletes.
+        sheet.confirmClearAll()
+        XCTAssertEqual(root.downloadsManager.rows.count, 2)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sheetFirstURL.path))
+        // Cancel keeps rows and files.
+        sheet.requestClearAllConfirmation()
+        XCTAssertTrue(sheet.isShowingClearAllConfirm)
+        sheet.cancelClearAll()
+        XCTAssertFalse(sheet.isShowingClearAllConfirm)
+        XCTAssertEqual(root.downloadsManager.rows.count, 2)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sheetFirstURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sheetSecondURL.path))
+        // Confirm empties rows and files.
+        sheet.requestClearAllConfirmation()
+        sheet.confirmClearAll()
+        XCTAssertTrue(root.downloadsManager.rows.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sheetFirstURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sheetSecondURL.path))
+        root.dismissDownloadsSheet()
+
+        // Rail action-sheet gate: cancel keeps, confirm deletes.
         let firstURL = tempDir.appendingPathComponent("first.bin")
         try Data(repeating: 1, count: 256).write(to: firstURL)
         _ = root.downloadsManager.registerRow(name: "first.bin", fileURL: firstURL)
@@ -162,11 +226,40 @@ final class DownloadsSheetTests: XCTestCase {
         root.presentDownloadsSheet()
         root.updateRailItems()
 
-        // Mapped Clear All runs delete plus rail refresh.
+        // Mapped Clear All prompts instead of deleting outright.
         let clear = try XCTUnwrap(railItem(labeled: "Clear All", in: root.railView))
         XCTAssertTrue(clear.isEnabled)
         await fire(clear)
 
+        let pendingAlert = await waitForClearAllAlert(in: root)
+        let pending = try XCTUnwrap(pendingAlert)
+        XCTAssertEqual(pending.title, "Clear All Downloads?")
+        XCTAssertEqual(pending.message, "This deletes all downloads and their files.")
+        let pendingTitles = pending.actions.compactMap(\.title)
+        XCTAssertTrue(pendingTitles.contains("Clear All"))
+        XCTAssertTrue(pendingTitles.contains("Cancel"))
+        XCTAssertEqual(pending.actions.first(where: { $0.title == "Clear All" })?.style, .destructive)
+        XCTAssertEqual(root.downloadsManager.rows.count, 2)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: firstURL.path))
+
+        // Cancel keeps rows and files.
+        root.cancelPresentedClearAllDownloads()
+        let cancelDismissed = await waitForClearAllDismissed(in: root)
+        XCTAssertTrue(cancelDismissed)
+        XCTAssertEqual(root.downloadsManager.rows.count, 2)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: firstURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: secondURL.path))
+
+        // Confirm deletes rows and files.
+        root.updateRailItems()
+        let retry = try XCTUnwrap(railItem(labeled: "Clear All", in: root.railView))
+        await fire(retry)
+        let confirmingAlert = await waitForClearAllAlert(in: root)
+        let confirming = try XCTUnwrap(confirmingAlert)
+        XCTAssertEqual(confirming.title, "Clear All Downloads?")
+        root.confirmPresentedClearAllDownloads()
+        let confirmDismissed = await waitForClearAllDismissed(in: root)
+        XCTAssertTrue(confirmDismissed)
         XCTAssertTrue(root.downloadsManager.rows.isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: firstURL.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: secondURL.path))

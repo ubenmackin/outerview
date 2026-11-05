@@ -60,7 +60,11 @@ extension BrowserRootViewController {
                 }
             } else if record.url != snapshot.url || record.title != snapshot.title {
                 didChange = true
-                didCommitNewURL = record.url != snapshot.url && snapshot.url != nil
+                let isNewCommittedURL = snapshot.url != nil && lastCommittedURLByTab[id] != snapshot.url
+                didCommitNewURL = isNewCommittedURL
+                if isNewCommittedURL, let snapURL = snapshot.url {
+                    lastCommittedURLByTab[id] = snapURL
+                }
                 didTitleChange = record.title != snapshot.title
                 record.url = snapshot.url
                 record.title = snapshot.title
@@ -78,6 +82,7 @@ extension BrowserRootViewController {
             let title = HostFormatter.displayTitle(url: url, title: snapshot.title)
             do {
                 try historyStore?.record(visit: PageVisit(url: url, title: title))
+                updateStartPageContent(with: snapshot)
             } catch {
                 logPersistenceError(error, operation: "recordVisit")
             }
@@ -123,10 +128,10 @@ extension BrowserRootViewController {
     }
 
     func updateStartPageContent(with snapshot: WebPageSnapshot? = nil) {
-        startPageView?.viewModel.reload()
         let snapshot = snapshot ?? peekActivePage()?.snapshot
         startPageView?.updateActivePage(url: snapshot?.url, title: snapshot?.title)
         startPageView?.reload()
+        bookmarksLibraryView.startPageView?.reload()
         if isEditingAddress {
             let favorites = StartPageViewModel.sortedFavorites(bookmarkStore?.fetchFavorites() ?? [])
             editorView.setFavorites(favorites)

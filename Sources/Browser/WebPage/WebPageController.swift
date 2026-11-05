@@ -120,6 +120,9 @@ final class WebPageController: NSObject {
     /// Scoped by generation so a failed POST never bleeds into later responses.
     private var pendingActionRequest: URLRequest?
     private var pendingActionGeneration = 0
+    /// Title of the current document, cleared on navigation so previous
+    /// page titles never bleed into newly committed URLs.
+    private var currentDocumentTitle: String?
 
     init(configuration: WKWebViewConfiguration) {
         webView = WKWebView(frame: .zero, configuration: configuration)
@@ -311,7 +314,15 @@ final class WebPageController: NSObject {
     private func observeWebView() {
         observations = [
             makePublishingObservation(for: \.estimatedProgress),
-            makePublishingObservation(for: \.title),
+            webView.observe(\.title) { [weak self] _, _ in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if let title = self.webView.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+                        self.currentDocumentTitle = title
+                    }
+                    self.refreshSnapshot()
+                }
+            },
             makePublishingObservation(for: \.url),
             makePublishingObservation(for: \.canGoBack),
             makePublishingObservation(for: \.canGoForward),
@@ -327,7 +338,7 @@ final class WebPageController: NSObject {
     private func refreshSnapshot() {
         let candidate = WebPageSnapshot.make(
             url: webView.url,
-            title: webView.title,
+            title: currentDocumentTitle,
             progress: webView.estimatedProgress,
             canGoBack: webView.canGoBack,
             canGoForward: webView.canGoForward,
@@ -500,6 +511,7 @@ extension WebPageController: WKNavigationDelegate {
         // A fresh navigation attempt supersedes any previous failure display.
         lastError = nil
         lastErrorCode = nil
+        currentDocumentTitle = nil
         // A new document discards the reader transform applied to the old one.
         isReaderActive = false
         isReaderUnavailable = false
@@ -519,6 +531,9 @@ extension WebPageController: WKNavigationDelegate {
     func webView(_: WKWebView, didFinish _: WKNavigation!) {
         lastError = nil
         lastErrorCode = nil
+        if let title = webView.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+            currentDocumentTitle = title
+        }
         finishRefreshing()
         applySiteZoom()
         refreshSnapshot()

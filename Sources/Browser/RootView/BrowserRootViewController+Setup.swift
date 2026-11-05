@@ -64,16 +64,29 @@ extension BrowserRootViewController {
     /// Hidden rail has zero alpha and skips hit testing.
     func bringChromeToFront() {
         view.bringSubviewToFront(errorContainer)
-        if pillView.superview == view {
-            view.bringSubviewToFront(bottomLeadingStack)
-            view.bringSubviewToFront(bottomTrailingStack)
-            view.bringSubviewToFront(pillView)
+        // Mode 3 retains the pill above the library; elsewhere the
+        // library covers the pill so Mode 1 full-screen browsing hides it.
+        if interfaceMode == .nonDuoPhone {
+            if bookmarksLibraryView.superview === view {
+                view.bringSubviewToFront(bookmarksLibraryView)
+            }
+            if pillView.superview == view {
+                view.bringSubviewToFront(bottomLeadingStack)
+                view.bringSubviewToFront(bottomTrailingStack)
+                view.bringSubviewToFront(pillView)
+            }
+        } else {
+            if pillView.superview == view {
+                view.bringSubviewToFront(bottomLeadingStack)
+                view.bringSubviewToFront(bottomTrailingStack)
+                view.bringSubviewToFront(pillView)
+            }
+            if bookmarksLibraryView.superview === view {
+                view.bringSubviewToFront(bookmarksLibraryView)
+            }
         }
         view.bringSubviewToFront(findView)
         view.bringSubviewToFront(editorView)
-        if bookmarksLibraryView.superview === view {
-            view.bringSubviewToFront(bookmarksLibraryView)
-        }
         view.bringSubviewToFront(settingsContainer)
         view.bringSubviewToFront(downloadsContainer)
         view.bringSubviewToFront(bookmarkEditorContainer)
@@ -215,7 +228,7 @@ extension BrowserRootViewController {
         )
         pillSlotMaxTrailingConstraint.priority = .defaultHigh
 
-        // Mode 3 capsules: 50 pt glass holding 44 pt targets at 4 pt
+        // Mode 3: 44 pt native Liquid Glass buttons with 8 pt
         // spacing; outer insets stay 16 pt with 8 pt pill gaps.
         for stack in [bottomLeadingStack, bottomTrailingStack] {
             stack.axis = .horizontal
@@ -286,6 +299,9 @@ extension BrowserRootViewController {
             self.clearForcedStartPageForSelectedTab()
             self.loadActivePage(url)
             self.endEditing(submitted: true)
+            if self.isLibraryVisible {
+                self.closeBookmarksLibrary()
+            }
         }
         editorView.onDone = { [weak self] in self?.dismissStartPageOrEditing() }
     }
@@ -305,8 +321,13 @@ extension BrowserRootViewController {
             bookmarksLibraryView.configureStores(
                 bookmarkStore: bookmarkStore,
                 historyStore: historyStore,
-                readingListStore: readingListStore
+                readingListStore: readingListStore,
+                recentSearchStore: recentSearchStore
             )
+        }
+        bookmarksLibraryView.onSelectSearchQuery = { [weak self] query in
+            self?.closeBookmarksLibrary()
+            self?.submitAddressText(query)
         }
         bookmarksLibraryView.onOpenURL = { [weak self] url in
             self?.loadActivePage(url)
@@ -323,6 +344,10 @@ extension BrowserRootViewController {
             self?.presentBookmarkEditor(for: target)
         }
         bookmarksLibraryView.onTabChanged = { [weak self] tab in
+            // Dismissing only the keyboard would strand editing flags on with no focus.
+            if self?.isEditingAddress == true {
+                self?.endEditing(submitted: false)
+            }
             self?.updateLibraryRailItems(for: tab)
         }
         bookmarksLibraryView.onReadingListStateChanged = { [weak self] in
@@ -394,9 +419,20 @@ extension BrowserRootViewController {
 
     func presentSettingsSheet() {
         guard let hosting = makeSettingsController() else { return }
-        presentOverlay(settingsOverlay, newHosting: hosting, currentHosting: settingsHosting, container: settingsContainer)
         settingsHosting = hosting
         isSettingsVisible = true
+        if interfaceMode == .nonDuoPhone {
+            hosting.modalPresentationStyle = .pageSheet
+            hosting.presentationController?.delegate = self
+            if let sheet = hosting.sheetPresentationController {
+                sheet.prefersGrabberVisible = true
+            }
+            if view.window != nil {
+                present(hosting, animated: shouldAnimateModalSheets)
+            }
+        } else {
+            presentOverlay(settingsOverlay, newHosting: hosting, currentHosting: nil, container: settingsContainer)
+        }
         bringChromeToFront()
         updateRailItems()
         applyRailViews(animated: true)
@@ -404,8 +440,13 @@ extension BrowserRootViewController {
 
     func dismissSettingsSheet() {
         isSettingsVisible = false
-        dismissOverlay(settingsOverlay, hosting: settingsHosting, container: settingsContainer)
-        settingsHosting = nil
+        if let hosting = settingsHosting {
+            if hosting.presentingViewController != nil {
+                hosting.dismiss(animated: shouldAnimateModalSheets)
+            }
+            dismissOverlay(settingsOverlay, hosting: hosting, container: settingsContainer)
+            settingsHosting = nil
+        }
         updateRailItems()
         applyRailViews(animated: true)
     }
@@ -498,6 +539,9 @@ extension BrowserRootViewController {
         let resolved = tab ?? LibraryTabBar.storedTab(defaults: selectionDefaults)
         let placement = chromePlacement
         bookmarksLibraryView.isNonDuoPhone = (interfaceMode == .nonDuoPhone)
+        if interfaceMode == .nonDuoPhone {
+            pillView.showsPageMenu = false
+        }
         bookmarksLibraryView.applyPlacement(for: placement)
         libraryOverlay.applyPlacement(for: placement)
         libraryOverlay.isHidden = true
@@ -556,6 +600,8 @@ extension BrowserRootViewController {
     }
 
     func closeBookmarksLibrary() {
+        bookmarksLibraryView.resetFirstTabMode()
+        pillView.showsPageMenu = true
         bookmarksLibraryView.resetRegularSelectionModes()
         isLibraryVisible = false
         libraryOverlay.isHidden = true
@@ -684,5 +730,17 @@ extension BrowserRootViewController {
             startView.bottomAnchor.constraint(equalTo: startPageContainer.bottomAnchor)
         ])
         startPageView = startView
+    }
+}
+
+// MARK: - UIAdaptivePresentationControllerDelegate
+
+extension BrowserRootViewController: UIAdaptivePresentationControllerDelegate {
+    public func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        if presentationController.presentedViewController === settingsHosting {
+            dismissSettingsSheet()
+        } else if presentationController.presentedViewController === downloadsHosting {
+            dismissDownloadsSheet()
+        }
     }
 }

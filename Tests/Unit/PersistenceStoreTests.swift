@@ -162,6 +162,25 @@ final class PersistenceStoreTests: XCTestCase {
         XCTAssertEqual(store.fetchAll().map(\.title), ["Page"])
     }
 
+    func testHistoryRepairCorruptedTitles() throws {
+        let database = try makeDatabase()
+        let store = HistoryStore(database: database)
+        let appleURL = try XCTUnwrap(URL(string: "https://apple.com"))
+        let googleURL = try XCTUnwrap(URL(string: "https://google.com/search?q=apple"))
+
+        try store.record(visit: PageVisit(url: appleURL, title: "arsenal - Google Search"))
+        try store.record(visit: PageVisit(url: googleURL, title: "apple - Google Search"))
+
+        store.repairCorruptedTitles()
+
+        let entries = store.fetchAll()
+        let appleEntry = entries.first { $0.url == appleURL }
+        let googleEntry = entries.first { $0.url == googleURL }
+
+        XCTAssertEqual(appleEntry?.title, "apple.com")
+        XCTAssertEqual(googleEntry?.title, "apple - Google Search")
+    }
+
     func testHistoryRefreshTitleSameTitleChangesNothing() throws {
         let database = try makeDatabase()
         let store = HistoryStore(database: database)

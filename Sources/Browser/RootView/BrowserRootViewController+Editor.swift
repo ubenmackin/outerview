@@ -28,7 +28,16 @@ extension BrowserRootViewController {
         case .restoreChrome:
             applyRailMenuTapped()
         case .beginEditing:
-            beginEditing()
+            if interfaceMode == .nonDuoPhone {
+                if isLibraryVisible {
+                    bookmarksLibraryView.showRecentSearches()
+                    beginEditing()
+                } else {
+                    openBookmarksLibrary(tab: .startPage)
+                }
+            } else {
+                beginEditing()
+            }
         }
     }
 
@@ -59,6 +68,7 @@ extension BrowserRootViewController {
     }
 
     func endEditing(submitted: Bool) {
+        bookmarksLibraryView.resetFirstTabMode()
         cancelPendingSuggestions()
         deactivateEditor()
         applyEditEnded(submitted: submitted)
@@ -86,6 +96,9 @@ extension BrowserRootViewController {
             clearForcedStartPageForSelectedTab()
             loadActivePage(url)
             endEditing(submitted: true)
+            if isLibraryVisible {
+                closeBookmarksLibrary()
+            }
         case .failure(.empty):
             clearEditorInputError()
             endEditing(submitted: false)
@@ -133,9 +146,15 @@ extension BrowserRootViewController {
             clearForcedStartPageForSelectedTab()
             loadActivePage(url)
             endEditing(submitted: true)
+            if isLibraryVisible {
+                closeBookmarksLibrary()
+            }
         case let .openTab(_, _, tabID):
             selectTab(id: tabID)
             endEditing(submitted: true)
+            if isLibraryVisible {
+                closeBookmarksLibrary()
+            }
         case let .googleSuggest(query):
             submitAddressText(query)
         case let .search(query):
@@ -149,6 +168,9 @@ extension BrowserRootViewController {
             clearEditorInputError()
             clearForcedStartPageForSelectedTab()
             endEditing(submitted: true)
+            if isLibraryVisible {
+                closeBookmarksLibrary()
+            }
             refreshForActiveSnapshot()
             findInPage(needle)
         }
