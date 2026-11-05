@@ -33,6 +33,7 @@ final class HistoryStore {
 
     init(database: OuterViewDatabase) {
         self.database = database
+        repairCorruptedTitles()
     }
 
     private var context: ModelContext {
@@ -65,9 +66,56 @@ final class HistoryStore {
             sortBy: [SortDescriptor(\.visitedAt, order: .reverse)]
         )
         descriptor.fetchLimit = 1
-        guard let match = try context.fetch(descriptor).first, match.title != title else { return }
-        match.title = title
-        try context.save()
+        if let match = try context.fetch(descriptor).first, match.title != title {
+            match.title = title
+            try context.save()
+            return
+        }
+
+        // Fallback: match by normalized equivalent URL if URL differs by trailing slash or redirects
+        let recents = fetchRecents(limit: 10)
+        if let fallbackMatch = recents.first(where: {
+            Self.isEquivalentNavigationURL($0.url, url)
+        }), fallbackMatch.title != title {
+            fallbackMatch.title = title
+            try context.save()
+        }
+    }
+
+    private static func isEquivalentNavigationURL(_ firstURL: URL, _ secondURL: URL) -> Bool {
+        let hostA = HostFormatter.normalizedHost(HostFormatter.host(of: firstURL))
+        let hostB = HostFormatter.normalizedHost(HostFormatter.host(of: secondURL))
+        guard !hostA.isEmpty, hostA == hostB else { return false }
+        let pathA = firstURL.path().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let pathB = secondURL.path().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard pathA == pathB else { return false }
+        return firstURL.query() == secondURL.query()
+    }
+
+    /// Scans history entries to heal any entries corrupted by prior stale-title bugs
+    /// (e.g. non-search websites carrying a Google Search query title).
+    func repairCorruptedTitles() {
+        let entries = fetchAll(limit: 500)
+        var didModify = false
+        for entry in entries {
+            let host = HostFormatter.normalizedHost(HostFormatter.host(of: entry.url))
+            let isSearchHost = host.contains("google.") || host.contains("bing.") || host.contains("duckduckgo.") || host.contains("yahoo.") || host.contains("ecosia.")
+            if !isSearchHost {
+                let lowerTitle = entry.title.lowercased()
+                if lowerTitle.contains("google search") || lowerTitle.contains(" - bing") || lowerTitle.contains("duckduckgo search") {
+                    entry.title = HostFormatter.displayTitle(url: entry.url, title: nil)
+                    didModify = true
+                }
+            }
+        }
+        if didModify {
+            do {
+                try context.save()
+            } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
+                    .error("repairCorruptedTitles failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     func fetchRecents(limit: Int) -> [HistoryEntry] {

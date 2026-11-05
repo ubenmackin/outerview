@@ -5,6 +5,7 @@
 
 import Foundation
 @testable import OuterView
+import UIKit
 import XCTest
 
 final class FavoritesReorderTests: XCTestCase {
@@ -156,5 +157,115 @@ final class FavoritesReorderTests: XCTestCase {
 
         try store.reorderBookmarks(ordered)
         XCTAssertEqual(store.fetchFavorites().map(\.id), ordered)
+    }
+
+    @MainActor
+    func testStartPageHostOwnsPressDragReorder() throws {
+        let startView = try makeStartPageView()
+        XCTAssertTrue((startView as Any) is UICollectionViewDragDelegate)
+        XCTAssertTrue((startView as Any) is UICollectionViewDropDelegate)
+    }
+
+    @MainActor
+    func testStartPageCanBeginDragBounds() {
+        XCTAssertTrue(StartPageView.canBeginDrag(itemCount: 3, index: 0))
+        XCTAssertTrue(StartPageView.canBeginDrag(itemCount: 3, index: 2))
+        XCTAssertFalse(StartPageView.canBeginDrag(itemCount: 3, index: 3))
+        XCTAssertFalse(StartPageView.canBeginDrag(itemCount: 3, index: -1))
+        XCTAssertFalse(StartPageView.canBeginDrag(itemCount: 0, index: 0))
+    }
+
+    @MainActor
+    func testStartPageReorderedIDsMatchesGrid() {
+        let ids = makeIDs(4)
+        XCTAssertEqual(
+            StartPageView.reorderedIDs(currentIDs: ids, draggedIDs: [ids[0]], destinationIndex: 2),
+            FavoritesGridView.reorderedIDs(currentIDs: ids, draggedIDs: [ids[0]], destinationIndex: 2)
+        )
+        XCTAssertEqual(
+            StartPageView.reorderedIDs(currentIDs: ids, draggedIDs: [ids[3]], destinationIndex: 0),
+            [ids[3], ids[0], ids[1], ids[2]]
+        )
+        XCTAssertEqual(
+            StartPageView.reorderedIDs(currentIDs: ids, draggedIDs: [ids[0]], destinationIndex: 99),
+            [ids[1], ids[2], ids[3], ids[0]]
+        )
+        XCTAssertEqual(
+            StartPageView.reorderedIDs(currentIDs: ids, draggedIDs: [UUID()], destinationIndex: 0),
+            ids
+        )
+    }
+
+    @MainActor
+    func testStartPageApplyOrderedFavoritesMapping() throws {
+        let startView = try makeStartPageView(titles: ["A", "B", "C"])
+        let initialIDs = startView.viewModel.favorites.map(\.id)
+        XCTAssertEqual(initialIDs.count, 3)
+        let ordered = StartPageView.reorderedIDs(
+            currentIDs: initialIDs,
+            draggedIDs: [initialIDs[0]],
+            destinationIndex: 2
+        )
+        XCTAssertTrue(startView.applyOrderedFavorites(ordered))
+        XCTAssertEqual(startView.viewModel.favorites.map(\.id), ordered)
+    }
+
+    @MainActor
+    func testStartPageApplyOrderedFavoritesMissingIDReturnsFalse() throws {
+        let startView = try makeStartPageView(titles: ["A", "B", "C"])
+        let initialIDs = startView.viewModel.favorites.map(\.id)
+        XCTAssertEqual(initialIDs.count, 3)
+        var bad = initialIDs
+        bad[1] = UUID()
+        XCTAssertFalse(startView.applyOrderedFavorites(bad))
+        XCTAssertEqual(startView.viewModel.favorites.map(\.id), initialIDs)
+    }
+
+    @MainActor
+    func testStartPagePersistedReorderRoundTrip() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let bookmarkStore = BookmarkStore(database: database)
+        let historyStore = HistoryStore(database: database)
+        for (index, title) in ["A", "B", "C"].enumerated() {
+            let url = try XCTUnwrap(URL(string: "https://example.com/\(title.lowercased())"))
+            try bookmarkStore.add(
+                title: title,
+                url: url,
+                isFavorite: true,
+                addedDate: Date(timeIntervalSince1970: TimeInterval(index))
+            )
+        }
+        let viewModel = StartPageViewModel(bookmarkStore: bookmarkStore, historyStore: historyStore)
+        let initialIDs = viewModel.favorites.map(\.id)
+        XCTAssertEqual(initialIDs.count, 3)
+        let ordered = StartPageView.reorderedIDs(
+            currentIDs: initialIDs,
+            draggedIDs: [initialIDs[0]],
+            destinationIndex: 2
+        )
+        XCTAssertEqual(ordered, [initialIDs[1], initialIDs[2], initialIDs[0]])
+        XCTAssertTrue(viewModel.applyOrderedFavorites(ordered))
+        try viewModel.persistReorderedFavorites(ordered)
+        XCTAssertEqual(bookmarkStore.fetchFavorites().map(\.id), ordered)
+        viewModel.reload()
+        XCTAssertEqual(viewModel.favorites.map(\.id), ordered)
+    }
+
+    @MainActor
+    private func makeStartPageView(titles: [String] = ["A", "B", "C"]) throws -> StartPageView {
+        let database = try OuterViewDatabase(inMemory: true)
+        let bookmarkStore = BookmarkStore(database: database)
+        let historyStore = HistoryStore(database: database)
+        for (index, title) in titles.enumerated() {
+            let url = try XCTUnwrap(URL(string: "https://example.com/\(title.lowercased())"))
+            try bookmarkStore.add(
+                title: title,
+                url: url,
+                isFavorite: true,
+                addedDate: Date(timeIntervalSince1970: TimeInterval(index))
+            )
+        }
+        let viewModel = StartPageViewModel(bookmarkStore: bookmarkStore, historyStore: historyStore)
+        return StartPageView(viewModel: viewModel)
     }
 }

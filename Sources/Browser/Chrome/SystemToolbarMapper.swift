@@ -8,10 +8,10 @@ import UIKit
 enum SystemToolbarMapper {
     nonisolated static let symbolPointSize: CGFloat = 18
     nonisolated static let hitTarget: CGFloat = 44
-    nonisolated static let bottomBarHeight: CGFloat = 50
-    nonisolated static let bottomBarCornerRadius: CGFloat = 25
-    nonisolated static let bottomBarSymbolPointSize: CGFloat = 22
-    nonisolated static let bottomBarSpacing: CGFloat = 4
+    nonisolated static let bottomBarHeight: CGFloat = 44
+    nonisolated static let bottomBarCornerRadius: CGFloat = 22
+    nonisolated static let bottomBarSymbolPointSize: CGFloat = 18
+    nonisolated static let bottomBarSpacing: CGFloat = 8
 
     /// Symbol image honoring the 17–22 pt fail-closed band.
     static func symbolImage(named systemImageName: String) -> UIImage? {
@@ -66,11 +66,14 @@ enum SystemToolbarMapper {
         }
     }
 
-    /// Remove every arranged view so stale items never survive a reload.
+    /// Remove every view so stale items and backgrounds never survive a reload.
     static func clearStack(_ stack: UIStackView) {
         for arranged in stack.arrangedSubviews {
             stack.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
+        }
+        for subview in stack.subviews {
+            subview.removeFromSuperview()
         }
     }
 
@@ -111,15 +114,14 @@ enum SystemToolbarMapper {
         makeItems(prefix) + makeItems(suffix)
     }
 
-    /// Overview bar items with Done spacing. Single owner for the fixed
-    /// space so rail and grid toolbars can never drift apart.
+    /// Overview bar items with flexible space separating leading and trailing clusters.
     static func makeOverviewToolbarItems(prefix: [RailAction], suffix: [RailAction]) -> [UIBarButtonItem] {
-        var mapped = makeToolbarItems(prefix: prefix, suffix: suffix)
+        var mapped = makeItems(prefix)
         if !prefix.isEmpty, !suffix.isEmpty {
-            let spacer = UIBarButtonItem(barButtonSystemItem: .fixedSpace, target: nil, action: nil)
-            spacer.width = 8
-            mapped.insert(spacer, at: prefix.count)
+            let spacer = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
+            mapped.append(spacer)
         }
+        mapped.append(contentsOf: makeItems(suffix))
         return mapped
     }
 
@@ -163,12 +165,13 @@ enum SystemToolbarMapper {
         actions.map(railToolbar(for:))
     }
 
-    /// System button for stack hosts with no toolbar of their own. Glass
-    /// comes from the configuration plus the shared capsule behind.
+    /// System button for stack hosts with no toolbar of their own.
+    /// Uses native Liquid Glass button configuration with capsule geometry.
     static func makeButton(for action: RailAction) -> UIButton {
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
         var config = UIButton.Configuration.glass()
+        config.cornerStyle = .capsule
         let symbol = UIImage.SymbolConfiguration(
             pointSize: bottomBarSymbolPointSize,
             weight: .medium
@@ -204,56 +207,18 @@ enum SystemToolbarMapper {
         return button
     }
 
-    /// Bottom-stack host: full remove plus rebuild with system buttons over one
-    /// shared capsule, so stale circles never survive a state change.
+    /// Bottom-stack host: full remove plus rebuild with native glass buttons,
+    /// so stale buttons never survive a state change.
     static func populateBottomStack(_ stack: UIStackView, with actions: [RailAction]) {
         clearStack(stack)
         stack.axis = .horizontal
         stack.alignment = .center
         stack.spacing = bottomBarSpacing
-        ensureBottomBarCapsule(in: stack)
+        stack.backgroundColor = .clear
+        stack.isOpaque = false
         for action in actions {
             stack.addArrangedSubview(makeButton(for: action))
         }
         stack.layoutIfNeeded()
-    }
-
-    /// One shared capsule behind the buttons. Reused across rebuilds so no
-    /// stale background ever stacks above the buttons.
-    private static func ensureBottomBarCapsule(in stack: UIStackView) {
-        stack.backgroundColor = .clear
-        stack.isOpaque = false
-        stack.layer.cornerRadius = bottomBarCornerRadius
-        stack.clipsToBounds = true
-        let existing = stack.subviews.first {
-            $0 is UIVisualEffectView && !stack.arrangedSubviews.contains($0)
-        } as? UIVisualEffectView
-        let capsule: UIVisualEffectView
-        if let existing {
-            capsule = existing
-            if capsule.effect == nil {
-                capsule.effect = GlassEffect.make()
-            }
-        } else {
-            capsule = UIVisualEffectView(effect: GlassEffect.make())
-            capsule.isUserInteractionEnabled = false
-            capsule.translatesAutoresizingMaskIntoConstraints = false
-            capsule.layer.cornerRadius = bottomBarCornerRadius
-            capsule.clipsToBounds = true
-            if #available(iOS 26.0, *) {
-                capsule.cornerConfiguration = .capsule()
-            }
-            stack.insertSubview(capsule, at: 0)
-            NSLayoutConstraint.activate([
-                capsule.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
-                capsule.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
-                capsule.topAnchor.constraint(equalTo: stack.topAnchor),
-                capsule.bottomAnchor.constraint(equalTo: stack.bottomAnchor)
-            ])
-        }
-        capsule.isHidden = false
-        capsule.alpha = 1
-        capsule.layer.cornerRadius = bottomBarCornerRadius
-        capsule.clipsToBounds = true
     }
 }

@@ -1,7 +1,12 @@
 // RootView — Back history and tab group menus for chrome buttons.
 
+import Photos
 import UIKit
 import WebKit
+
+private enum PhotoSaveFailure: Error {
+    case accessDenied
+}
 
 extension BrowserRootViewController {
     // MARK: - Back History Menu
@@ -249,6 +254,54 @@ extension BrowserRootViewController {
                 self.logPersistenceError(error, operation: "createGroup")
             }
         })
+        present(alert, animated: true)
+    }
+
+    // MARK: - Photos
+
+    func saveImageToPhotos(from url: URL) {
+        guard URLNormalizer.isLoadable(url) else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                try await self.saveImageDataToPhotos(data)
+            } catch {
+                self.processPhotoSaveFailure(error)
+            }
+        }
+    }
+
+    private func saveImageDataToPhotos(_ data: Data) async throws {
+        let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+        switch status {
+        case .notDetermined:
+            let granted = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+            guard granted == .authorized || granted == .limited else {
+                throw PhotoSaveFailure.accessDenied
+            }
+        case .limited, .authorized:
+            break
+        default:
+            throw PhotoSaveFailure.accessDenied
+        }
+        try await PHPhotoLibrary.shared().performChanges {
+            let request = PHAssetCreationRequest.forAsset()
+            request.addResource(with: .photo, data: data, options: nil)
+        }
+    }
+
+    private func processPhotoSaveFailure(_ error: Error) {
+        guard error is PhotoSaveFailure else {
+            logPersistenceError(error, operation: "saveImageToPhotos")
+            return
+        }
+        let alert = UIAlertController(
+            title: "Can't Save Photo",
+            message: "OuterView does not have permission to add to your photo library.",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
         present(alert, animated: true)
     }
 }

@@ -67,6 +67,22 @@ final class StartPageViewModel {
         reload()
     }
 
+    func applyOrderedFavorites(_ ordered: [UUID]) -> Bool {
+        let byID = Dictionary(uniqueKeysWithValues: favorites.map { ($0.id, $0) })
+        var rebuilt: [Bookmark] = []
+        rebuilt.reserveCapacity(ordered.count)
+        for id in ordered {
+            guard let bookmark = byID[id] else { return false }
+            rebuilt.append(bookmark)
+        }
+        favorites = rebuilt
+        return true
+    }
+
+    func persistReorderedFavorites(_ ordered: [UUID]) throws {
+        try bookmarkStore.reorderBookmarks(ordered)
+    }
+
     static func sortedFavorites(_ bookmarks: [Bookmark]) -> [Bookmark] {
         bookmarks.sorted {
             if $0.sortOrder != $1.sortOrder {

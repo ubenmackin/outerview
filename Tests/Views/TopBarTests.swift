@@ -304,25 +304,20 @@ final class TopBarTests: XCTestCase {
         root.updateRailItems()
         root.view.layoutIfNeeded()
         XCTAssertTrue(root.railView.isHidden)
-        XCTAssertEqual(SideRailView.bottomBarHeight, 50)
-        XCTAssertEqual(SideRailView.bottomBarCornerRadius, 25)
-        XCTAssertEqual(SideRailView.bottomBarSpacing, 4)
-        XCTAssertEqual(SideRailView.bottomBarSymbolPointSize, 22)
+        XCTAssertEqual(SideRailView.bottomBarHeight, 44)
+        XCTAssertEqual(SideRailView.bottomBarCornerRadius, 22)
+        XCTAssertEqual(SideRailView.bottomBarSpacing, 8)
+        XCTAssertEqual(SideRailView.bottomBarSymbolPointSize, 18)
         for stack in [root.bottomLeadingStack, root.bottomTrailingStack] {
             let height = stack.constraints.first { $0.firstAttribute == .height }
-            XCTAssertEqual(height?.constant, 50)
-            XCTAssertEqual(stack.layer.cornerRadius, 25)
-            XCTAssertEqual(stack.spacing, 4)
-            let capsule = stack.subviews.first {
-                $0 is UIVisualEffectView && !stack.arrangedSubviews.contains($0)
-            } as? UIVisualEffectView
-            XCTAssertNotNil(capsule)
-            XCTAssertNotNil(capsule?.effect)
+            XCTAssertEqual(height?.constant, 44)
+            XCTAssertEqual(stack.layer.cornerRadius, 22)
+            XCTAssertEqual(stack.spacing, 8)
         }
         let leading = root.bottomLeadingStack.arrangedSubviews.compactMap(\.accessibilityLabel)
         let trailing = root.bottomTrailingStack.arrangedSubviews.compactMap(\.accessibilityLabel)
         XCTAssertEqual(leading, ["Back"])
-        XCTAssertEqual(trailing, ["Bookmarks", "Tabs"])
+        XCTAssertEqual(trailing, ["Tabs"])
     }
 
     func testMode3BottomBarToolbarGradeButtons() throws {
@@ -346,7 +341,7 @@ final class TopBarTests: XCTestCase {
                 XCTAssertTrue(button.constraints.contains {
                     $0.firstAttribute == .height && abs($0.constant - 44) < 0.5
                 })
-                // Glass lives in configuration; one shared capsule sits behind buttons.
+                // Native Liquid Glass buttons owned by UIButton.Configuration.glass.
                 XCTAssertTrue(button.subviews.compactMap { $0 as? UIVisualEffectView }.isEmpty)
             }
         }

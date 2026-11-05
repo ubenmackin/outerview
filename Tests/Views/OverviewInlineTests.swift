@@ -147,6 +147,26 @@ final class OverviewInlineTests: XCTestCase {
         XCTAssertFalse(root.railView.isHidden)
     }
 
+    func testMode3OverviewShowsTopToolbar() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let root = BrowserRootViewController(database: database)
+        let phoneFrame = CGRect(x: 0, y: 0, width: 402, height: 874)
+        TestWindow.attach(root, frame: phoneFrame)
+        root.traitOverrides.horizontalSizeClass = .compact
+        root.view.layoutIfNeeded()
+        root.applyChromePlacement(for: .compact)
+        root.setOverviewVisible(true)
+        root.view.layoutIfNeeded()
+
+        XCTAssertEqual(root.interfaceMode, .nonDuoPhone)
+        XCTAssertTrue(root.overviewController.showsInlineCommands)
+        XCTAssertTrue(root.overviewController.isInlineBarVisible)
+        XCTAssertTrue(root.overviewController.isInlineSearchVisible)
+        XCTAssertTrue(root.overviewController.isInlineMenuVisible)
+        XCTAssertTrue(root.overviewController.isInlineDoneVisible)
+        XCTAssertTrue(root.railView.isHidden)
+    }
+
     func testCompactKeepsRailCompositionPath() {
         let overview = makeOverview()
         XCTAssertFalse(overview.showsInlineCommands)

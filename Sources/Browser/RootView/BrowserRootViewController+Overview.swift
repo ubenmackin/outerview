@@ -40,6 +40,7 @@ extension BrowserRootViewController {
                 topBarView.trailingStack.alpha = 1
                 refreshStatusBarAppearanceIfNeeded()
             }
+            overviewController.showsInlineCommands = (chromePlacement == .regular || interfaceMode == .nonDuoPhone)
             applyOverviewChromeItems()
             overviewController.applyInlineCommandsVisibility()
             bringChromeToFront()
@@ -250,6 +251,7 @@ extension BrowserRootViewController {
         scrollProxies[id] = nil
         snapshotListenerIDs[id] = nil
         boundListenerPages[id] = nil
+        lastCommittedURLByTab[id] = nil
         forcedStartPageTabs.remove(id)
     }
 }

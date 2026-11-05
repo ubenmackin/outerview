@@ -19,7 +19,9 @@ final class LibrarySheetTests: XCTestCase {
     private func makeLibrary(tab: LibraryTab = .bookmarks, placement: ChromePlacement = .compact) throws -> BookmarksLibraryView {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
         let library = BookmarksLibraryView(defaults: defaults)
+        library.frame = CGRect(origin: .zero, size: TestWindow.defaultFrame.size)
         TestWindow.attach(library)
+        library.frame = CGRect(origin: .zero, size: TestWindow.defaultFrame.size)
         library.applyPlacement(for: placement)
         library.open(tab: tab)
         library.layoutIfNeeded()
@@ -108,7 +110,7 @@ final class LibrarySheetTests: XCTestCase {
     }
 
     func testRegularHeaderUsesToolbarGlassWithZeroVisibleTitles() throws {
-        for tab: LibraryTab in [.favorites, .bookmarks, .history, .readingList] {
+        for tab: LibraryTab in [.startPage, .bookmarks, .history, .readingList] {
             let library = try makeLibrary(tab: tab, placement: .regular)
             XCTAssertTrue(library.isDoneVisible)
             XCTAssertFalse(library.hasAnyVisibleButtonTitle)
@@ -167,16 +169,42 @@ final class LibrarySheetTests: XCTestCase {
         root.closeBookmarksLibrary()
     }
 
-    func testFavoritesTabShowsOnlyToolbarDoneOnRegular() throws {
-        let library = try makeLibrary(tab: .favorites, placement: .regular)
+    func testStartPageTabShowsOnlyToolbarDoneOnRegular() throws {
+        let library = try makeLibrary(tab: .startPage, placement: .regular)
         XCTAssertTrue(library.isDoneVisible)
         XCTAssertFalse(library.isOptionsMenuVisible)
         XCTAssertFalse(library.isInlineAddVisible)
         XCTAssertFalse(library.isInlineDeleteVisible)
+        XCTAssertEqual(library.headerToolbar.bounds.width, 44, accuracy: 1.0)
+    }
+
+    func testTrailingToolbarHasProperWidthForItems() throws {
+        let library = try makeLibrary(tab: .bookmarks, placement: .regular)
+        library.layoutIfNeeded()
+        XCTAssertEqual(library.headerToolbar.bounds.width, 96, accuracy: 1.0)
+        XCTAssertFalse(library.headerToolbar.bounds.isEmpty)
+    }
+
+    func testLibraryToolbarItemCountsPerTab() throws {
+        let library = try makeLibrary(tab: .startPage, placement: .regular)
+        XCTAssertEqual(library.trailingButtons.count, 1)
+        XCTAssertEqual(library.trailingToolbarItems.count, 1)
+
+        library.open(tab: .bookmarks)
+        XCTAssertEqual(library.trailingButtons.count, 2)
+        XCTAssertEqual(library.trailingToolbarItems.count, 2)
+
+        library.open(tab: .history)
+        XCTAssertEqual(library.trailingButtons.count, 2)
+        XCTAssertEqual(library.trailingToolbarItems.count, 2)
+
+        library.open(tab: .readingList)
+        XCTAssertEqual(library.trailingButtons.count, 2)
+        XCTAssertEqual(library.trailingToolbarItems.count, 2)
     }
 
     func testCompactHidesAllRegularHeaderControls() throws {
-        for tab: LibraryTab in [.favorites, .bookmarks, .history, .readingList] {
+        for tab: LibraryTab in [.startPage, .bookmarks, .history, .readingList] {
             let library = try makeLibrary(tab: tab, placement: .compact)
             XCTAssertFalse(library.isDoneVisible)
             XCTAssertFalse(library.isOptionsMenuVisible)
@@ -320,5 +348,63 @@ final class LibrarySheetTests: XCTestCase {
         }
         XCTAssertFalse(root.isLibraryVisible)
         XCTAssertNil(root.librarySheetController)
+    }
+
+    func testMode3LibraryTopToolbarButtonCounts() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let library = BookmarksLibraryView(defaults: defaults)
+        library.isNonDuoPhone = true
+        library.applyPlacement(for: .compact)
+
+        // Start Page: 0 buttons in top toolbar
+        library.open(tab: .startPage)
+        library.layoutIfNeeded()
+        XCTAssertEqual(library.trailingButtons.count, 0)
+
+        // Bookmarks: 1 button ("...")
+        library.open(tab: .bookmarks)
+        library.layoutIfNeeded()
+        XCTAssertEqual(library.trailingButtons.count, 1)
+        XCTAssertTrue(library.trailingButtons.first?.accessibilityLabel?.contains("Bookmarks Options") == true)
+
+        // History: 1 button ("...")
+        library.open(tab: .history)
+        library.layoutIfNeeded()
+        XCTAssertEqual(library.trailingButtons.count, 1)
+        XCTAssertTrue(library.trailingButtons.first?.accessibilityLabel?.contains("History Options") == true)
+
+        // Reading List: 1 button ("...")
+        library.open(tab: .readingList)
+        library.layoutIfNeeded()
+        XCTAssertEqual(library.trailingButtons.count, 1)
+        XCTAssertTrue(library.trailingButtons.first?.accessibilityLabel?.contains("Reading List") == true)
+    }
+
+    func testMode3LibraryBottomDismissButtonIsAlwaysXmark() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let root = BrowserRootViewController(database: database, defaults: defaults)
+        let phoneFrame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        TestWindow.attach(root, frame: phoneFrame)
+        root.openBookmarksLibrary(tab: .startPage)
+        root.view.layoutIfNeeded()
+
+        let suffix = root.bottomTrailingStack.arrangedSubviews.compactMap { $0 as? UIButton }
+        XCTAssertEqual(suffix.count, 1)
+        let button = try XCTUnwrap(suffix.first)
+        XCTAssertEqual(button.accessibilityLabel, "Dismiss")
+    }
+
+    func testLibraryTabBarSetStartPageIcon() {
+        let tabBar = LibraryTabBar()
+        tabBar.setStartPageIcon(isSearching: true)
+        let searchImage = tabBar.segmentedControl.imageForSegment(at: 0)
+        XCTAssertNotNil(searchImage)
+        XCTAssertEqual(searchImage?.accessibilityLabel, "Search")
+
+        tabBar.setStartPageIcon(isSearching: false)
+        let gridImage = tabBar.segmentedControl.imageForSegment(at: 0)
+        XCTAssertNotNil(gridImage)
+        XCTAssertEqual(gridImage?.accessibilityLabel, LibraryTab.startPage.title)
     }
 }

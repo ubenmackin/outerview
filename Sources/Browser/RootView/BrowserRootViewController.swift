@@ -1,15 +1,7 @@
 // RootView — Central browser coordinator owning chrome placement and tab content.
 
 import os
-import Photos
 import SwiftUI
-import UIKit
-
-/// Failure kind distinguishing Photos permission denial, which is surfaced to
-/// the user, from ordinary save errors, which are only logged.
-private enum PhotoSaveFailure: Error {
-    case accessDenied
-}
 
 /// Single chrome applier: tab content, floating rail + pill, editor, error
 /// overlay, and tab overview placeholder. Content renders full-bleed while
@@ -244,15 +236,16 @@ final class BrowserRootViewController: UIViewController {
         parent?.setNeedsStatusBarAppearanceUpdate()
     }
 
-    /// Mode 3 shows a transparent top bar only for settings/downloads/editor sheets.
+    /// Mode 3 shows the transparent bar for the editor overlay.
+    /// Editor over library keeps the bar so Cancel/Save stay reachable.
     var shouldShowNonDuoTopBar: Bool {
-        (isSettingsVisible || isDownloadsVisible || isBookmarkEditorVisible)
-            && !isOverviewVisible && !isLibraryVisible
+        (isBookmarkEditorVisible && !isBookmarkEditorPresentedModally)
+            && !isOverviewVisible
     }
 
     /// Any sheet or overview covering the Mode 3 browsing chrome.
     var isNonDuoChromeOverlay: Bool {
-        isOverviewVisible || isLibraryVisible || isSettingsVisible || isDownloadsVisible || isBookmarkEditorVisible
+        isOverviewVisible || (isBookmarkEditorVisible && !isBookmarkEditorPresentedModally)
     }
 
     /// Single visibility owner for Mode 3 bottom pill versus transparent bar versus hidden.
@@ -260,16 +253,33 @@ final class BrowserRootViewController: UIViewController {
         guard interfaceMode == .nonDuoPhone, chromePlacement != .regular else { return }
         let showsTopBar = shouldShowNonDuoTopBar
         let isOverlay = isNonDuoChromeOverlay
+        let hideBottomButtons = isOverlay || chromeController.state.pill == .minified || chromeController.state.rail == .hidden
         topBarView.isHidden = !showsTopBar
         topBarView.showsBackgroundBar = !showsTopBar
-        bottomLeadingStack.isHidden = isOverlay || bottomLeadingStack.arrangedSubviews.isEmpty
-        bottomTrailingStack.isHidden = isOverlay || bottomTrailingStack.arrangedSubviews.isEmpty
+        bottomLeadingStack.alpha = hideBottomButtons ? 0 : 1
+        bottomTrailingStack.alpha = hideBottomButtons ? 0 : 1
+        bottomLeadingStack.isUserInteractionEnabled = !hideBottomButtons
+        bottomTrailingStack.isUserInteractionEnabled = !hideBottomButtons
+        let hideLeading = hideBottomButtons || isLibraryVisible || bottomLeadingStack.arrangedSubviews.isEmpty
+        bottomLeadingStack.isHidden = hideLeading
+        bottomTrailingStack.isHidden = hideBottomButtons || bottomTrailingStack.arrangedSubviews.isEmpty
+        pillView.showsPageMenu = !isLibraryVisible
         if isOverlay {
             pillView.isHidden = true
         } else if isFindActive, chromeController.state.pill != .editing {
             pillView.isHidden = true
         } else {
             pillView.isHidden = chromeController.state.pill == .editing
+        }
+        let isMinified = chromeController.state.pill == .minified
+        if !isMinified {
+            if hideLeading {
+                pillBottomLeadingConstraint?.isActive = false
+                pillLeadingConstraint.isActive = true
+            } else {
+                pillLeadingConstraint.isActive = false
+                pillBottomLeadingConstraint?.isActive = true
+            }
         }
     }
 
@@ -380,6 +390,7 @@ final class BrowserRootViewController: UIViewController {
                 pillWidthConstraint.constant = AddressBarView.widthForBounds(pillReferenceWidth)
             }
         }
+        overviewController.showsInlineCommands = (placement == .regular || interfaceMode == .nonDuoPhone)
         editorView.applyPlacement(for: placement)
         if !isOverviewVisible {
             updateRailItems()
@@ -560,6 +571,7 @@ final class BrowserRootViewController: UIViewController {
     var snapshotListenerIDs: [UUID: UUID] = [:]
     var forcedStartPageTabs = Set<UUID>()
     var startPageView: StartPageView?
+    var lastCommittedURLByTab: [UUID: URL] = [:]
     var screenshotTabPreviews: [UUID: UIImage] = [:]
     /// Single construction site for element context-menu actions; every page
     /// receives it when its snapshot listener is wired.
@@ -863,7 +875,7 @@ extension BrowserRootViewController {
         var settingsView = SettingsView(
             database: database,
             siteZoomStore: siteZoomStore,
-            inlineCommands: chromePlacement == .regular
+            inlineCommands: chromePlacement == .regular || interfaceMode == .nonDuoPhone
         )
         settingsView.onDidClearHistory = { [weak self] in self?.refreshStartPageAfterHistoryClear() }
         settingsView.onDidClearTabs = { [weak self] in self?.resetAllTabsToSingleEmptyTab() }
@@ -931,55 +943,5 @@ extension BrowserRootViewController {
     private func shareElementURL(_ url: URL) {
         let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
         presentPopover(activity)
-    }
-
-    private func saveImageToPhotos(from url: URL) {
-        guard URLNormalizer.isLoadable(url) else { return }
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let (data, _) = try await URLSession.shared.data(from: url)
-                try await saveImageDataToPhotos(data)
-            } catch {
-                processPhotoSaveFailure(error)
-            }
-        }
-    }
-
-    /// Prompts for add-only Photos access on the first save, then inserts the
-    /// downloaded bytes as a single photo resource.
-    private func saveImageDataToPhotos(_ data: Data) async throws {
-        let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
-        switch status {
-        case .notDetermined:
-            let granted = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-            guard granted == .authorized || granted == .limited else {
-                throw PhotoSaveFailure.accessDenied
-            }
-        case .limited, .authorized:
-            break
-        default:
-            throw PhotoSaveFailure.accessDenied
-        }
-        try await PHPhotoLibrary.shared().performChanges {
-            let request = PHAssetCreationRequest.forAsset()
-            request.addResource(with: .photo, data: data, options: nil)
-        }
-    }
-
-    private func processPhotoSaveFailure(_ error: Error) {
-        // Permission denial is the only failure users can act on; the rest
-        // stays a log entry so failed saves never retry behind the user's back.
-        guard error is PhotoSaveFailure else {
-            logPersistenceError(error, operation: "saveImageToPhotos")
-            return
-        }
-        let alert = UIAlertController(
-            title: "Can't Save Photo",
-            message: "OuterView does not have permission to add to your photo library.",
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: "OK", style: .default))
-        present(alert, animated: true)
     }
 }

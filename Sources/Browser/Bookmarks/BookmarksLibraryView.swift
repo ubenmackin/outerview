@@ -52,12 +52,20 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     private let leadingTitleStack = UIStackView()
     private let folderBackButton = AccessibleButton(type: .system)
     private let sectionTitleLabel = UILabel()
+    private let trailingStack = UIStackView()
     private let trailingToolbar = SystemToolbarMapper.toolbar(items: [])
+    private var trailingToolbarWidthConstraint: NSLayoutConstraint!
+    private var contentBottomConstraint: NSLayoutConstraint!
 
     private var compactHeaderConstraints: [NSLayoutConstraint] = []
     private var regularHeaderConstraints: [NSLayoutConstraint] = []
 
-    /// Glass toolbar owning all trailing controls.
+    /// Glass buttons owning all trailing controls.
+    var trailingButtons: [UIButton] {
+        trailingStack.arrangedSubviews.compactMap { $0 as? UIButton }
+    }
+
+    /// Glass toolbar owning all trailing controls for backward compatibility.
     var headerToolbar: UIToolbar {
         trailingToolbar
     }
@@ -155,10 +163,17 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
 
     private let contentContainer = UIView()
     private(set) var bookmarksBrowserView: BookmarksBrowserView?
-    private(set) var favoritesGridView: FavoritesGridView?
+    private(set) var startPageView: StartPageView?
+    private(set) var recentSearchesView: RecentSearchesView?
     private(set) var historyListView: HistoryListView?
     private(set) var readingListView: ReadingListView?
 
+    enum FirstTabMode {
+        case startPage
+        case recentSearches
+    }
+
+    private(set) var firstTabMode: FirstTabMode = .startPage
     private(set) var activeTab: LibraryTab = .bookmarks
 
     var currentTab: LibraryTab {
@@ -183,6 +198,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
 
     var onReadingListStateChanged: (() -> Void)?
     var onDidMutateLibraryData: (() -> Void)?
+    var onSelectSearchQuery: ((String) -> Void)?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -201,7 +217,8 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     func configureStores(
         bookmarkStore: BookmarkStore,
         historyStore: HistoryStore,
-        readingListStore: ReadingListStore
+        readingListStore: ReadingListStore,
+        recentSearchStore: RecentSearchStore? = nil
     ) {
         let bookView = BookmarksBrowserView(bookmarkStore: bookmarkStore, defaults: defaults)
         bookView.onOpenURL = { [weak self] url in
@@ -217,27 +234,50 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
             self?.updateInlineCommands()
         }
         bookView.onDidMutateBookmarks = { [weak self] in
-            self?.favoritesGridView?.reload()
+            self?.startPageView?.reload()
             self?.onDidMutateLibraryData?()
         }
         self.bookmarksBrowserView = bookView
 
-        let favView = FavoritesGridView(bookmarkStore: bookmarkStore)
-        favView.onOpenURL = { [weak self] url in
-            self?.onOpenURL?(url)
-        }
-        favView.onDeleteFavorite = { [weak self] id in
+        let startPageVM = StartPageViewModel(bookmarkStore: bookmarkStore, historyStore: historyStore)
+        let spView = StartPageView(viewModel: startPageVM)
+        spView.delegate = self
+        spView.onDeleteFavorite = { [weak self] id in
             do {
                 try bookmarkStore.delete(id: id)
             } catch {
                 Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
                     .error("deleteFavorite failed: \(error.localizedDescription, privacy: .public)")
             }
-            self?.favoritesGridView?.reload()
+            self?.startPageView?.reload()
             self?.bookmarksBrowserView?.reload()
             self?.onDidMutateLibraryData?()
         }
-        self.favoritesGridView = favView
+        self.startPageView = spView
+
+        let rView = RecentSearchesView(recentSearchStore: recentSearchStore)
+        rView.onSelectQuery = { [weak self] query in
+            self?.onSelectSearchQuery?(query)
+        }
+        rView.onDeleteQuery = { [weak self] id in
+            do {
+                try recentSearchStore?.delete(id: id)
+            } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
+                    .error("delete recentSearch failed: \(error.localizedDescription, privacy: .public)")
+            }
+            self?.recentSearchesView?.reload()
+        }
+        rView.onClearAll = { [weak self] in
+            do {
+                try recentSearchStore?.clear()
+            } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
+                    .error("clear recentSearches failed: \(error.localizedDescription, privacy: .public)")
+            }
+            self?.recentSearchesView?.reload()
+        }
+        self.recentSearchesView = rView
 
         let histView = HistoryListView(historyStore: historyStore)
         histView.onOpenURL = { [weak self] url in
@@ -274,8 +314,25 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         updateVisibleTab()
     }
 
+    func showRecentSearches() {
+        activeTab = .startPage
+        topTabBar.selectTab(.startPage, notify: false)
+        firstTabMode = .recentSearches
+        topTabBar.setStartPageIcon(isSearching: true)
+        recentSearchesView?.reload()
+        updateVisibleTab()
+    }
+
+    func resetFirstTabMode() {
+        firstTabMode = .startPage
+        topTabBar.setStartPageIcon(isSearching: false)
+        updateVisibleTab()
+    }
+
     func open(tab: LibraryTab = .bookmarks) {
         resetRegularSelectionModes()
+        firstTabMode = .startPage
+        topTabBar.setStartPageIcon(isSearching: false)
         activeTab = tab
         Self.persist(tab: tab, defaults: defaults)
         topTabBar.selectTab(tab, notify: false)
@@ -286,7 +343,8 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
 
     func reload() {
         bookmarksBrowserView?.reload()
-        favoritesGridView?.reload()
+        startPageView?.reload()
+        recentSearchesView?.reload()
         historyListView?.reload()
         readingListView?.reload()
         updateInlineCommands()
@@ -307,7 +365,63 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     }
 
     func makeReadingListMenu() -> UIMenu? {
-        readingListView?.makeMenu()
+        if let menu = readingListView?.makeMenu() {
+            return menu
+        }
+        // Bare library has no list view yet; vend stored-default sections
+        // so the trailing button never renders an empty menu.
+        let displayMode = ReadingListView.storedDisplayMode(defaults: defaults)
+        let filterMode = ReadingListView.storedFilterMode(defaults: defaults)
+        let largeAction = UIAction(
+            title: "Large",
+            image: UIImage(systemName: "rectangle.grid.1x2"),
+            state: displayMode == .large ? .on : .off
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.readingListView?.setDisplayMode(.large)
+            ReadingListView.persist(displayMode: .large, defaults: self.defaults)
+            self.updateInlineCommands()
+        }
+        let compactAction = UIAction(
+            title: "Compact",
+            image: UIImage(systemName: "list.bullet"),
+            state: displayMode == .compact ? .on : .off
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.readingListView?.setDisplayMode(.compact)
+            ReadingListView.persist(displayMode: .compact, defaults: self.defaults)
+            self.updateInlineCommands()
+        }
+        let allAction = UIAction(
+            title: "All",
+            image: UIImage(systemName: "line.3.horizontal.decrease.circle"),
+            state: filterMode == .all ? .on : .off
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.readingListView?.setFilterMode(.all)
+            ReadingListView.persist(filterMode: .all, defaults: self.defaults)
+            self.updateInlineCommands()
+        }
+        let unreadAction = UIAction(
+            title: "Unread Only",
+            image: UIImage(systemName: "circle"),
+            state: filterMode == .unreadOnly ? .on : .off
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.readingListView?.setFilterMode(.unreadOnly)
+            ReadingListView.persist(filterMode: .unreadOnly, defaults: self.defaults)
+            self.updateInlineCommands()
+        }
+        let selectAction = UIAction(
+            title: "Select Items",
+            image: UIImage(systemName: "checkmark.circle")
+        ) { [weak self] _ in
+            self?.enterReadingListSelectionMode()
+        }
+        let displaySection = UIMenu(title: "", options: .displayInline, children: [largeAction, compactAction])
+        let filterSection = UIMenu(title: "", options: .displayInline, children: [allAction, unreadAction])
+        let actionsSection = UIMenu(title: "", options: .displayInline, children: [selectAction])
+        return UIMenu(title: "", children: [displaySection, filterSection, actionsSection])
     }
 
     func exitReadingListSelectionMode() {
@@ -333,12 +447,14 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         regularHeaderRow.isHidden = !isRegular
         NSLayoutConstraint.activate(isRegular ? regularHeaderConstraints : compactHeaderConstraints)
         applyChildHeaderVisibility()
+        contentBottomConstraint?.constant = isNonDuoPhone ? -84 : 0
         updateInlineCommands()
     }
 
     func updateInlineCommands() {
         guard chromePlacement == .regular || isNonDuoPhone else {
-            // Hidden toolbar must not keep stale regular items.
+            // Hidden controls must not keep stale regular items.
+            SystemToolbarMapper.clearStack(trailingStack)
             trailingToolbar.items = []
             return
         }
@@ -350,8 +466,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
             isEditingBookmarks: isEditingBookmarks,
             canClearHistory: canClearHistory,
             isInSelection: isActiveTabInSelectionMode,
-            canDeleteSelection: canDeleteActiveTabSelection,
-            hasReadingListMenu: readingMenu != nil
+            canDeleteSelection: canDeleteActiveTabSelection
         )
 
         if activeTab == .bookmarks, let bookmarksBrowserView {
@@ -408,38 +523,55 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
                 actions.append(.deleteSelected(isEnabled: commands.canDeleteSelection) { [weak self] in
                     self?.triggerInlineDelete()
                 })
-            } else if commands.showsMenu, let readingMenu {
-                actions.append(.readingListMenu(menu: readingMenu))
+            } else if commands.showsMenu, let menu = readingMenu ?? makeReadingListMenu(),
+                      !menu.children.isEmpty
+            {
+                actions.append(.readingListMenu(menu: menu))
             }
 
-        case .favorites:
+        case .startPage:
             break
         }
 
         // Close stays visible on empty lists; selection swaps it to Done.
-        if commands.isEditingBookmarks {
-            actions.append(RailAction(
-                systemImageName: "checkmark",
-                accessibilityLabel: "Done Editing",
-                isProminent: true,
-                handler: { [weak self] in self?.handlePrimaryCloseOrDone() }
-            ))
-        } else if commands.doneExitsSelection {
-            actions.append(RailAction(
-                systemImageName: "checkmark",
-                accessibilityLabel: "Done",
-                isProminent: true,
-                handler: { [weak self] in self?.handlePrimaryCloseOrDone() }
-            ))
-        } else {
-            actions.append(RailAction(
-                systemImageName: "xmark",
-                accessibilityLabel: "Done",
-                handler: { [weak self] in self?.handlePrimaryCloseOrDone() }
-            ))
+        // In Mode 3 (isNonDuoPhone), dismiss is owned solely by the bottom bar.
+        if !isNonDuoPhone {
+            if commands.isEditingBookmarks {
+                actions.append(RailAction(
+                    systemImageName: "checkmark",
+                    accessibilityLabel: "Done Editing",
+                    isProminent: true,
+                    handler: { [weak self] in self?.handlePrimaryCloseOrDone() }
+                ))
+            } else if commands.doneExitsSelection {
+                actions.append(RailAction(
+                    systemImageName: "checkmark",
+                    accessibilityLabel: "Done",
+                    isProminent: true,
+                    handler: { [weak self] in self?.handlePrimaryCloseOrDone() }
+                ))
+            } else {
+                actions.append(RailAction(
+                    systemImageName: "xmark",
+                    accessibilityLabel: "Done",
+                    handler: { [weak self] in self?.handlePrimaryCloseOrDone() }
+                ))
+            }
         }
-        // Live reload resets items on the same toolbar instance.
+        // Populate trailingStack with individual native Liquid Glass buttons
+        SystemToolbarMapper.clearStack(trailingStack)
+        for action in actions {
+            let button = SystemToolbarMapper.makeButton(for: action)
+            trailingStack.addArrangedSubview(button)
+        }
+
+        // Keep trailingToolbar in sync for test/contract compatibility
         trailingToolbar.items = SystemToolbarMapper.makeItems(actions)
+        let targetWidth = CGFloat(actions.count) * SystemToolbarMapper.hitTarget
+            + CGFloat(max(0, actions.count - 1)) * SystemToolbarMapper.bottomBarSpacing
+        if trailingToolbarWidthConstraint?.constant != targetWidth {
+            trailingToolbarWidthConstraint?.constant = targetWidth
+        }
     }
 
     // MARK: - Private
@@ -458,8 +590,13 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         topTabBar.onTabSelected = { [weak self] tab in
             guard let self else { return }
             self.resetRegularSelectionModes()
+            self.firstTabMode = .startPage
+            self.topTabBar.setStartPageIcon(isSearching: false)
             self.activeTab = tab
             Self.persist(tab: tab, defaults: self.defaults)
+            if tab == .startPage {
+                self.startPageView?.reload()
+            }
             self.updateVisibleTab()
             self.onTabChanged?(tab)
         }
@@ -502,7 +639,17 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         leadingTitleStack.addArrangedSubview(sectionTitleLabel)
         regularHeaderRow.addSubview(leadingTitleStack)
 
-        // Glass toolbar owns trailing controls; items reset on state change.
+        // Native glass button stack (HStack equivalent) owns visible controls
+        trailingStack.translatesAutoresizingMaskIntoConstraints = false
+        trailingStack.axis = .horizontal
+        trailingStack.alignment = .center
+        trailingStack.spacing = SystemToolbarMapper.bottomBarSpacing
+        regularHeaderRow.addSubview(trailingStack)
+
+        // Glass toolbar owns trailing controls off-screen for test/contract compatibility
+        trailingToolbar.isHidden = true
+        trailingToolbar.layoutMargins = .zero
+        trailingToolbar.directionalLayoutMargins = .zero
         regularHeaderRow.addSubview(trailingToolbar)
     }
 
@@ -550,10 +697,12 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
 
         let regHeaderHeight = regularHeaderRow.heightAnchor.constraint(equalToConstant: 44)
         regHeaderHeight.priority = UILayoutPriority(999)
+        trailingToolbarWidthConstraint = trailingToolbar.widthAnchor.constraint(equalToConstant: 0)
+        trailingToolbarWidthConstraint.priority = UILayoutPriority(999)
         let regTabRowHeight = headerContainer.heightAnchor.constraint(equalToConstant: 44)
         regTabRowHeight.priority = UILayoutPriority(999)
         let titleSpacing = leadingTitleStack.trailingAnchor.constraint(
-            lessThanOrEqualTo: trailingToolbar.leadingAnchor, constant: -12
+            lessThanOrEqualTo: trailingStack.leadingAnchor, constant: -12
         )
         titleSpacing.priority = UILayoutPriority(999)
 
@@ -564,8 +713,12 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
             regHeaderHeight,
             leadingTitleStack.leadingAnchor.constraint(equalTo: regularHeaderRow.leadingAnchor),
             leadingTitleStack.centerYAnchor.constraint(equalTo: regularHeaderRow.centerYAnchor),
+            trailingStack.trailingAnchor.constraint(equalTo: regularHeaderRow.trailingAnchor),
+            trailingStack.centerYAnchor.constraint(equalTo: regularHeaderRow.centerYAnchor),
+            trailingStack.heightAnchor.constraint(equalToConstant: 44),
             trailingToolbar.trailingAnchor.constraint(equalTo: regularHeaderRow.trailingAnchor),
             trailingToolbar.centerYAnchor.constraint(equalTo: regularHeaderRow.centerYAnchor),
+            trailingToolbarWidthConstraint,
             titleSpacing,
             headerContainer.topAnchor.constraint(equalTo: regularHeaderRow.bottomAnchor, constant: 8),
             regTabRowHeight,
@@ -574,6 +727,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
             contentContainer.topAnchor.constraint(equalTo: headerContainer.bottomAnchor, constant: 4)
         ]
 
+        contentBottomConstraint = contentContainer.bottomAnchor.constraint(equalTo: bottomAnchor)
         NSLayoutConstraint.activate([
             headerContainer.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor),
             headerContainer.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor),
@@ -582,7 +736,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
 
             contentContainer.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor),
             contentContainer.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor),
-            contentContainer.bottomAnchor.constraint(equalTo: bottomAnchor)
+            contentBottomConstraint
         ])
     }
 
@@ -592,10 +746,15 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
             contentContainer.addSubview(book)
             pin(book, inside: contentContainer)
         }
-        if let fav = favoritesGridView {
-            fav.translatesAutoresizingMaskIntoConstraints = false
-            contentContainer.addSubview(fav)
-            pin(fav, inside: contentContainer)
+        if let sp = startPageView {
+            sp.translatesAutoresizingMaskIntoConstraints = false
+            contentContainer.addSubview(sp)
+            pin(sp, inside: contentContainer)
+        }
+        if let recents = recentSearchesView {
+            recents.translatesAutoresizingMaskIntoConstraints = false
+            contentContainer.addSubview(recents)
+            pin(recents, inside: contentContainer)
         }
         if let hist = historyListView {
             hist.translatesAutoresizingMaskIntoConstraints = false
@@ -627,7 +786,8 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
 
     private func updateVisibleTab() {
         bookmarksBrowserView?.isHidden = (activeTab != .bookmarks)
-        favoritesGridView?.isHidden = (activeTab != .favorites)
+        startPageView?.isHidden = (activeTab != .startPage || firstTabMode != .startPage)
+        recentSearchesView?.isHidden = (activeTab != .startPage || firstTabMode != .recentSearches)
         historyListView?.isHidden = (activeTab != .history)
         readingListView?.isHidden = (activeTab != .readingList)
         updateInlineCommands()
@@ -642,8 +802,16 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
             historyListView?.reassertSearchTuck()
         case .readingList:
             readingListView?.reassertSearchTuck()
-        case .favorites:
+        case .startPage:
             break
         }
+    }
+}
+
+// MARK: - StartPageViewDelegate
+
+extension BookmarksLibraryView: StartPageViewDelegate {
+    func startPage(_: StartPageView, didOpenURL url: URL) {
+        onOpenURL?(url)
     }
 }

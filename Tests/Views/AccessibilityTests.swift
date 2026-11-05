@@ -13,7 +13,7 @@ final class AccessibilityTests: XCTestCase {
         let tabBar = LibraryTabBar()
         TestWindow.attach(tabBar)
 
-        XCTAssertEqual(tabBar.segmentAccessibilityLabel(at: 0), "Favorites")
+        XCTAssertEqual(tabBar.segmentAccessibilityLabel(at: 0), "Start Page")
         XCTAssertEqual(tabBar.segmentAccessibilityLabel(at: 1), "Bookmarks")
         XCTAssertEqual(tabBar.segmentAccessibilityLabel(at: 2), "History")
         XCTAssertEqual(tabBar.segmentAccessibilityLabel(at: 3), "Reading List")

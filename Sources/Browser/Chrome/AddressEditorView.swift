@@ -52,9 +52,10 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     }
 
     private(set) var suggestions: [Suggestion] = []
+    private(set) var suggestionSections: [SuggestionSection] = []
     private(set) var favorites: [Bookmark] = []
     private var activePageURL: URL?
-    private var searchEngine: SearchEngine = .google
+    private(set) var searchEngine: SearchEngine = .google
 
     // MARK: - Compact Hierarchy
 
@@ -96,6 +97,7 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     private var inputErrorTopConstraint: NSLayoutConstraint!
     private var inputErrorBottomConstraint: NSLayoutConstraint!
     private var inputErrorHeightConstraint: NSLayoutConstraint!
+    private var fieldRowStackTopConstraint: NSLayoutConstraint!
     private var regularErrorHeightConstraint: NSLayoutConstraint!
     private var regularCardTopConstraint: NSLayoutConstraint?
 
@@ -110,7 +112,7 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     }
 
     private var initialLoadedText: String = ""
-    private var isTypingMode: Bool = false
+    var isTypingMode: Bool = false
 
     override init(frame: CGRect) {
         favoritesFlowLayout.scrollDirection = .vertical
@@ -166,6 +168,8 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard !isHidden, isUserInteractionEnabled, alpha >= 0.01, isEditing else { return nil }
+
         // Prioritize dismiss so taps never fall through to rows behind.
         if chromePlacement == .compact, !inlineDismissButton.isHidden {
             let buttonFrame = inlineDismissButton.convert(inlineDismissButton.bounds, to: self)
@@ -173,8 +177,18 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
                 return inlineDismissButton
             }
         }
+        if chromePlacement == .compact, capsuleView.superview != nil {
+            let capsuleFrame = capsuleView.convert(capsuleView.bounds, to: self)
+            if capsuleFrame.contains(point) {
+                let localPoint = convert(point, to: capsuleView)
+                if let hit = capsuleView.hitTest(localPoint, with: event) {
+                    return hit
+                }
+                return textField.isUserInteractionEnabled ? textField : capsuleView
+            }
+        }
         let hit = super.hitTest(point, with: event)
-        if chromePlacement == .compact, hit === contentAreaContainer, suggestionsTableView.isHidden {
+        if chromePlacement == .compact, hit === contentAreaContainer || hit === self, suggestionsTableView.isHidden {
             return nil
         }
         return hit
@@ -232,8 +246,28 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
 
     func setSuggestions(_ suggestions: [Suggestion]) {
         self.suggestions = suggestions
+        buildSuggestionSections()
         suggestionsTableView.reloadData()
         updateVisibleContent()
+    }
+
+    private func buildSuggestionSections() {
+        var sections: [SuggestionSection] = []
+        let searchItems = suggestions.filter(\.isSearchSuggestion)
+        if !searchItems.isEmpty {
+            sections.append(SuggestionSection(
+                title: "\(searchEngine.displayName) Suggestions",
+                items: searchItems
+            ))
+        }
+        let localItems = suggestions.filter { !$0.isSearchSuggestion }
+        if !localItems.isEmpty {
+            sections.append(SuggestionSection(
+                title: "Bookmarks, History, and Tabs",
+                items: localItems
+            ))
+        }
+        suggestionSections = sections
     }
 
     func showInputError(_ message: String) {
@@ -309,6 +343,14 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
 
     var isClearWhileEditing: Bool {
         textField.clearButtonMode == .whileEditing
+    }
+
+    var textFieldForTesting: UITextField {
+        textField
+    }
+
+    var isTypingModeForTesting: Bool {
+        isTypingMode
     }
 
     var panelFrame: CGRect {
@@ -481,6 +523,9 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         inputErrorBottomConstraint = inputErrorLabel.bottomAnchor.constraint(
             equalTo: fieldRowStack.topAnchor, constant: -4
         )
+        fieldRowStackTopConstraint = fieldRowStack.topAnchor.constraint(
+            equalTo: bottomBarContainer.topAnchor
+        )
         inputErrorHeightConstraint = inputErrorLabel.heightAnchor.constraint(equalToConstant: 0)
         regularErrorHeightConstraint = regularErrorLabel.heightAnchor.constraint(equalToConstant: 0)
 
@@ -576,9 +621,10 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     }
 
     private func updateInputErrorConstraints() {
-        guard inputErrorTopConstraint != nil else { return }
+        guard inputErrorTopConstraint != nil, fieldRowStackTopConstraint != nil else { return }
         let hasError = !inputErrorLabel.isHidden
         if hasError {
+            fieldRowStackTopConstraint.isActive = false
             inputErrorHeightConstraint.isActive = false
             inputErrorBottomConstraint.constant = -4
             inputErrorTopConstraint.isActive = true
@@ -586,8 +632,8 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
             regularErrorHeightConstraint.isActive = false
         } else {
             inputErrorTopConstraint.isActive = false
-            inputErrorBottomConstraint.constant = 0
-            inputErrorBottomConstraint.isActive = true
+            inputErrorBottomConstraint.isActive = false
+            fieldRowStackTopConstraint.isActive = true
             inputErrorHeightConstraint.isActive = true
             regularErrorHeightConstraint.isActive = true
         }
@@ -736,7 +782,7 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         ]
     }
 
-    private func updateRegularLeadingIcon() {
+    func updateRegularLeadingIcon() {
         let trimmed = (textField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if !isTypingMode, !trimmed.isEmpty, let url = activePageURL {
             leadingIconImageView.image = FaviconService.shared.cachedFaviconOrMonogram(for: url, size: 20)
@@ -761,7 +807,7 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         }
     }
 
-    private func updateVisibleContent() {
+    func updateVisibleContent() {
         let shouldShowInlineDismiss = chromePlacement == .compact && isNonDuoPhone && isEditing
         inlineDismissButton.isHidden = !shouldShowInlineDismiss
 
@@ -772,7 +818,11 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
 
         let currentText = textField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let hasText = !currentText.isEmpty
-        let shouldShowSuggestions = (isTypingMode && hasText) || (!hasText && !suggestions.isEmpty)
+        let shouldShowSuggestions: Bool = if isNonDuoPhone, chromePlacement == .compact {
+            hasText && !suggestions.isEmpty
+        } else {
+            (isTypingMode && hasText) || (!hasText && !suggestions.isEmpty)
+        }
 
         if chromePlacement == .regular {
             suggestionsTableView.isHidden = !shouldShowSuggestions
@@ -913,80 +963,9 @@ extension AddressEditorView {
     }
 }
 
-// MARK: - UITableViewDataSource, UITableViewDelegate
+// MARK: - SuggestionSection
 
-extension AddressEditorView: UITableViewDataSource, UITableViewDelegate {
-    func tableView(_: UITableView, numberOfRowsInSection _: Int) -> Int {
-        suggestions.count
-    }
-
-    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "SuggestionCell", for: indexPath)
-        let suggestion = suggestions[indexPath.row]
-        let viewModel = SuggestionRowViewModel.make(for: suggestion, engine: searchEngine)
-        var content = UIListContentConfiguration.subtitleCell()
-        content.image = UIImage(systemName: viewModel.systemImageName)
-        content.imageProperties.tintColor = .secondaryLabel
-        content.text = viewModel.primary
-        content.textProperties.font = .preferredFont(forTextStyle: .body)
-        content.textProperties.color = .label
-        content.secondaryText = viewModel.secondary
-        content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
-        content.secondaryTextProperties.color = .secondaryLabel
-        content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20)
-        content.textToSecondaryTextVerticalPadding = 2
-        cell.contentConfiguration = content
-        cell.backgroundColor = .clear
-        cell.accessibilityTraits = .button
-        cell.accessibilityHint = "Double tap to select suggestion"
-        return cell
-    }
-
-    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        tableView.deselectRow(at: indexPath, animated: true)
-        onSelectSuggestion?(suggestions[indexPath.row])
-    }
-}
-
-// MARK: - UICollectionViewDataSource, UICollectionViewDelegate
-
-extension AddressEditorView: UICollectionViewDataSource, UICollectionViewDelegate {
-    func collectionView(_: UICollectionView, numberOfItemsInSection _: Int) -> Int {
-        favorites.count
-    }
-
-    func collectionView(
-        _ collectionView: UICollectionView,
-        cellForItemAt indexPath: IndexPath
-    ) -> UICollectionViewCell {
-        guard let cell = collectionView.dequeueReusableCell(
-            withReuseIdentifier: FavoriteTileCell.reuseIdentifier,
-            for: indexPath
-        ) as? FavoriteTileCell
-        else {
-            return UICollectionViewCell()
-        }
-        let bookmark = favorites[indexPath.item]
-        cell.configure(with: bookmark)
-        return cell
-    }
-
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        collectionView.deselectItem(at: indexPath, animated: true)
-        let bookmark = favorites[indexPath.item]
-        onSelectFavorite?(bookmark.url)
-    }
-}
-
-// MARK: - UITextFieldDelegate
-
-extension AddressEditorView: UITextFieldDelegate {
-    func textFieldDidBeginEditing(_: UITextField) {
-        updateVisibleContent()
-    }
-
-    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-        onSubmit?(textField.text ?? "")
-        return true
-    }
+struct SuggestionSection: Equatable, Sendable {
+    let title: String
+    let items: [Suggestion]
 }

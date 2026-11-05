@@ -73,7 +73,7 @@ extension BookmarksLibraryView {
             isHistoryInSelectionMode
         case .readingList:
             isReadingListInSelectionMode
-        case .favorites:
+        case .startPage:
             false
         }
     }
@@ -86,7 +86,7 @@ extension BookmarksLibraryView {
             canDeleteHistorySelection
         case .readingList:
             canDeleteReadingListSelection
-        case .favorites:
+        case .startPage:
             false
         }
     }
@@ -129,7 +129,7 @@ extension BookmarksLibraryView {
             exitHistorySelectionMode()
         case .readingList:
             exitReadingListSelectionMode()
-        case .favorites:
+        case .startPage:
             break
         }
     }
@@ -148,7 +148,7 @@ extension BookmarksLibraryView {
             deleteHistorySelectedItems()
         case .readingList:
             deleteReadingListSelectedItems()
-        case .favorites:
+        case .startPage:
             break
         }
     }
@@ -245,8 +245,7 @@ extension BookmarksLibraryView {
             isEditingBookmarks: isEditingBookmarks,
             canClearHistory: canClearHistory,
             isInSelection: isActiveTabInSelectionMode,
-            canDeleteSelection: canDeleteActiveTabSelection,
-            hasReadingListMenu: inlineMenu != nil || makeReadingListMenu() != nil
+            canDeleteSelection: canDeleteActiveTabSelection
         )
         if commands.isEditingBookmarks {
             triggerInlineToggleEdit()

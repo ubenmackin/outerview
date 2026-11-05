@@ -32,6 +32,15 @@ struct Suggestion: Identifiable, Hashable, Sendable {
             "find|\(term)"
         }
     }
+
+    var isSearchSuggestion: Bool {
+        switch kind {
+        case .googleSuggest, .search, .onPageFind:
+            true
+        case .openTab, .site:
+            false
+        }
+    }
 }
 
 /// Value-type snapshot of a bookmark so ranking can run off the main actor.
