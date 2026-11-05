@@ -60,18 +60,21 @@ final class OuterViewScreenshots: XCTestCase {
         // Inline commands appear only on regular; Done chrome exists in both.
         let isRegularPlacement = app.launchArguments.contains("-OuterViewInnerDisplay") || app.windows.firstMatch.frame.width > 500
         if isRegularPlacement {
-            let inlineDone = app.buttons["TabOverview.InlineDone"].firstMatch
+            let overviewToolbar = app.toolbars["TabOverview.Toolbar"].firstMatch
+            XCTAssertTrue(overviewToolbar.waitForExistence(timeout: 10))
+            let inlineDone = app.buttons["Done"].firstMatch
             XCTAssertTrue(inlineDone.waitForExistence(timeout: 10))
-            let inlineSearch = app.textFields["TabOverview.InlineSearchField"].firstMatch
+            let inlineSearch = app.buttons["Search"].firstMatch
             XCTAssertTrue(inlineSearch.waitForExistence(timeout: 10))
+            XCTAssertTrue(app.buttons["New Tab"].firstMatch.waitForExistence(timeout: 10))
+            XCTAssertTrue(app.buttons["Overview Menu"].firstMatch.waitForExistence(timeout: 10))
             let inlineHittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: inlineDone)
             XCTAssertTrue(XCTWaiter.wait(for: [inlineHittable], timeout: 10) == .completed)
             inlineDone.tap()
         } else {
             XCTAssertTrue(app.buttons["Done"].firstMatch.waitForExistence(timeout: 10))
             // Inline overview chrome is regular-only; it must never appear on compact.
-            XCTAssertFalse(app.buttons["TabOverview.InlineDone"].exists)
-            XCTAssertFalse(app.textFields["TabOverview.InlineSearchField"].exists)
+            XCTAssertFalse(app.toolbars["TabOverview.Toolbar"].firstMatch.isHittable)
             let overviewDone = app.buttons.allElementsBoundByIndex.first(where: { $0.label == "Done" && $0.isHittable })
             XCTAssertNotNil(overviewDone)
             overviewDone?.tap()

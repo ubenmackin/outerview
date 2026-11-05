@@ -1,10 +1,7 @@
-//
-//  ChromeGeometryTests.swift
-//  OuterViewTests
-//
-
+// Chrome — Geometry plus rail to toolbar mapping verification.
 import CoreGraphics
 @testable import OuterView
+import UIKit
 import XCTest
 
 final class ChromeGeometryTests: XCTestCase {
@@ -100,25 +97,41 @@ final class ChromeGeometryTests: XCTestCase {
     func testRailActionButtonEnablement() {
         let disabledBack = RailAction.back(isEnabled: false) {}
         XCTAssertFalse(disabledBack.isEnabled)
-
         let enabledBack = RailAction.back(isEnabled: true) {}
         XCTAssertTrue(enabledBack.isEnabled)
-
-        let button = RailButton(action: disabledBack)
-        XCTAssertFalse(button.isEnabled)
-        XCTAssertEqual(button.alpha, 0.35, accuracy: 0.01)
+        // System mapping keeps disabled items visible; UIKit dims them.
+        let disabledItem = SystemToolbarMapper.makeItem(for: disabledBack)
+        XCTAssertFalse(disabledItem.isEnabled)
+        XCTAssertEqual(disabledItem.accessibilityLabel, "Back")
+        let disabledButton = SystemToolbarMapper.makeButton(for: disabledBack)
+        XCTAssertFalse(disabledButton.isEnabled)
+        XCTAssertEqual(disabledButton.alpha, 0.35, accuracy: 0.01)
     }
 
     @MainActor
-    func testRailButtonConstraintPriority() {
+    func testSystemToolbarButtonMetrics() {
         let action = RailAction.done {}
-        let button = RailButton(action: action)
-        let widthConstraint = button.constraints.first { $0.firstAttribute == .width }
-        let heightConstraint = button.constraints.first { $0.firstAttribute == .height }
-        XCTAssertEqual(widthConstraint?.constant, SideRailView.buttonDiameter)
-        XCTAssertEqual(widthConstraint?.priority, UILayoutPriority(999))
-        XCTAssertEqual(heightConstraint?.constant, SideRailView.buttonDiameter)
-        XCTAssertEqual(heightConstraint?.priority, UILayoutPriority(999))
+        let button = SystemToolbarMapper.makeButton(for: action)
+        let width = button.constraints.first { $0.firstAttribute == .width }
+        let height = button.constraints.first { $0.firstAttribute == .height }
+        XCTAssertEqual(width?.constant, SystemToolbarMapper.hitTarget)
+        XCTAssertEqual(height?.constant, SystemToolbarMapper.hitTarget)
+        XCTAssertEqual(button.configuration?.baseBackgroundColor, .systemBlue)
+        XCTAssertEqual(button.configuration?.baseForegroundColor, .white)
+        let item = SystemToolbarMapper.makeItem(for: action)
+        XCTAssertEqual(item.accessibilityLabel, "Done")
+        XCTAssertEqual(item.tintColor, .systemBlue)
+        XCTAssertTrue(item.isEnabled)
+    }
+
+    @MainActor
+    func testSystemToolbarItemsPreserveOrder() {
+        let items = SystemToolbarMapper.makeToolbarItems(
+            prefix: [.back(handler: {}), .bookmarks(handler: {})],
+            suffix: [.newTab(handler: {}), .tabs(handler: {})]
+        )
+        XCTAssertEqual(items.count, 4)
+        XCTAssertEqual(items.map(\.accessibilityLabel), ["Back", "Bookmarks", "New Tab", "Tabs"])
     }
 
     @MainActor
@@ -165,9 +178,12 @@ final class ChromeGeometryTests: XCTestCase {
         let done = RailAction.done {}
         XCTAssertTrue(done.isProminent)
         XCTAssertEqual(done.systemImageName, "checkmark")
-        let doneButton = RailButton(action: done)
-        XCTAssertEqual(doneButton.backgroundColor, .systemBlue)
-        XCTAssertEqual(doneButton.tintColor, .white)
+        let doneItem = SystemToolbarMapper.makeItem(for: done)
+        XCTAssertEqual(doneItem.tintColor, .systemBlue)
+        XCTAssertEqual(doneItem.accessibilityLabel, "Done")
+        let doneButton = SystemToolbarMapper.makeButton(for: done)
+        XCTAssertEqual(doneButton.configuration?.baseBackgroundColor, .systemBlue)
+        XCTAssertEqual(doneButton.configuration?.baseForegroundColor, .white)
     }
 
     @MainActor

@@ -1,7 +1,4 @@
-//
-//  DownloadsSheetTests.swift
-//  OuterViewTests
-//
+// Downloads — Sheet layout and toolbar verification.
 
 @testable import OuterView
 import UIKit
@@ -27,14 +24,27 @@ final class DownloadsSheetTests: XCTestCase {
         return root
     }
 
-    private func railButtons(in rail: SideRailView) -> [UIButton] {
+    private func railItems(in rail: SideRailView) -> [UIBarButtonItem] {
         rail.subviews
             .compactMap { $0 as? UIStackView }
-            .flatMap { $0.arrangedSubviews.compactMap { $0 as? UIButton } }
+            .flatMap { $0.arrangedSubviews.compactMap { $0 as? UIToolbar } }
+            .compactMap(\.items)
+            .flatMap(\.self)
     }
 
-    private func railButton(labeled label: String, in rail: SideRailView) -> UIButton? {
-        railButtons(in: rail).first(where: { $0.accessibilityLabel == label })
+    private func railItem(labeled label: String, in rail: SideRailView) -> UIBarButtonItem? {
+        railItems(in: rail).first(where: { $0.accessibilityLabel == label })
+    }
+
+    /// Fires the mapped bar action through a control so the UIAction
+    /// handler path runs instead of calling the root directly.
+    private func fire(_ item: UIBarButtonItem) async {
+        guard let action = item.primaryAction else { return }
+        let control = UIControl()
+        control.addAction(action, for: .touchUpInside)
+        control.sendActions(for: .touchUpInside)
+        await Task.yield()
+        await Task.yield()
     }
 
     func testPresentSetsFlagShowsContainerAndRailMode() throws {
@@ -89,12 +99,10 @@ final class DownloadsSheetTests: XCTestCase {
         root.presentDownloadsSheet()
         root.updateRailItems()
 
-        let files = try XCTUnwrap(railButton(labeled: "Files", in: root.railView))
-        let clear = try XCTUnwrap(railButton(labeled: "Clear All", in: root.railView))
-        let done = try XCTUnwrap(railButton(labeled: "Done", in: root.railView))
-        XCTAssertNotNil(files)
-        XCTAssertNotNil(clear)
-        XCTAssertNotNil(done)
+        let labels = railItems(in: root.railView).compactMap(\.accessibilityLabel)
+        XCTAssertTrue(labels.contains("Files"))
+        XCTAssertTrue(labels.contains("Clear All"))
+        XCTAssertTrue(labels.contains("Done"))
         root.dismissDownloadsSheet()
     }
 
@@ -104,7 +112,7 @@ final class DownloadsSheetTests: XCTestCase {
         root.presentDownloadsSheet()
         root.updateRailItems()
 
-        let clear = try XCTUnwrap(railButton(labeled: "Clear All", in: root.railView))
+        let clear = try XCTUnwrap(railItem(labeled: "Clear All", in: root.railView))
         XCTAssertFalse(clear.isEnabled)
         root.dismissDownloadsSheet()
     }
@@ -115,25 +123,27 @@ final class DownloadsSheetTests: XCTestCase {
         root.presentDownloadsSheet()
         root.updateRailItems()
 
-        let clear = try XCTUnwrap(railButton(labeled: "Clear All", in: root.railView))
+        let clear = try XCTUnwrap(railItem(labeled: "Clear All", in: root.railView))
         XCTAssertTrue(clear.isEnabled)
         root.dismissDownloadsSheet()
     }
 
-    func testDoneButtonDismissesSheet() throws {
+    func testDoneButtonDismissesSheet() async throws {
         let root = try makeRoot()
         root.presentDownloadsSheet()
         root.updateRailItems()
 
-        let done = try XCTUnwrap(railButton(labeled: "Done", in: root.railView))
-        done.sendActions(for: .touchUpInside)
+        // System owns tap elasticity; firing the mapped Done closes the sheet.
+        let done = try XCTUnwrap(railItem(labeled: "Done", in: root.railView))
+        XCTAssertNotNil(done.primaryAction)
+        await fire(done)
 
         XCTAssertFalse(root.isDownloadsVisible)
         XCTAssertTrue(root.downloadsContainer.isHidden)
         XCTAssertNil(root.downloadsHosting)
     }
 
-    func testClearAllEmptiesRowsAndFiles() throws {
+    func testClearAllEmptiesRowsAndFiles() async throws {
         let root = try makeRoot()
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -152,27 +162,30 @@ final class DownloadsSheetTests: XCTestCase {
         root.presentDownloadsSheet()
         root.updateRailItems()
 
-        let clear = try XCTUnwrap(railButton(labeled: "Clear All", in: root.railView))
+        // Mapped Clear All runs delete plus rail refresh.
+        let clear = try XCTUnwrap(railItem(labeled: "Clear All", in: root.railView))
         XCTAssertTrue(clear.isEnabled)
-        clear.sendActions(for: .touchUpInside)
+        await fire(clear)
 
         XCTAssertTrue(root.downloadsManager.rows.isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: firstURL.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: secondURL.path))
 
         root.updateRailItems()
-        let refreshed = try XCTUnwrap(railButton(labeled: "Clear All", in: root.railView))
+        let refreshed = try XCTUnwrap(railItem(labeled: "Clear All", in: root.railView))
         XCTAssertFalse(refreshed.isEnabled)
         root.dismissDownloadsSheet()
     }
 
-    func testFilesButtonPresentsPicker() throws {
+    func testFilesButtonPresentsPicker() async throws {
         let root = try makeRoot()
         root.presentDownloadsSheet()
         root.updateRailItems()
 
-        let files = try XCTUnwrap(railButton(labeled: "Files", in: root.railView))
-        files.sendActions(for: .touchUpInside)
+        // Mapped Files opener records the picker for the test host.
+        let files = try XCTUnwrap(railItem(labeled: "Files", in: root.railView))
+        XCTAssertNotNil(files.primaryAction)
+        await fire(files)
 
         let picker = try XCTUnwrap(root.presentedDownloadsPicker)
         XCTAssertNotNil(picker)

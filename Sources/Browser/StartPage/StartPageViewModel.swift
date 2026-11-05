@@ -1,7 +1,4 @@
-//
-//  StartPageViewModel.swift
-//  OuterView
-//
+// StartPage — Content source for favorites plus recents.
 
 import Foundation
 import Observation
@@ -12,7 +9,7 @@ import UIKit
 @MainActor
 @Observable
 final class StartPageViewModel {
-    static let recentsLimit = 8
+    nonisolated static let recentsLimit = 8
 
     private let bookmarkStore: BookmarkStore
     private let historyStore: HistoryStore
@@ -93,11 +90,11 @@ final class StartPageViewModel {
         return Array(unique.prefix(Self.recentsLimit))
     }
 
-    static func isFavoritesEmpty(_ favorites: [Bookmark]) -> Bool {
+    nonisolated static func isFavoritesEmpty(_ favorites: [Bookmark]) -> Bool {
         favorites.isEmpty
     }
 
-    static func isRecentsEmpty(_ recents: [HistoryEntry]) -> Bool {
+    nonisolated static func isRecentsEmpty(_ recents: [HistoryEntry]) -> Bool {
         recents.isEmpty
     }
 

@@ -1,15 +1,11 @@
-//
-//  TabOverviewViewController.swift
-//  OuterView
-//
+// TabOverview — Visual grid plus system toolbar chrome.
 
 import os
 import UIKit
 
-/// UserDefaults keys libraryTab as Int, overviewMode as String, and overviewGroup as String.
-/// Values are read at init and setup and written on every change; private mode is never
-/// written and restores as standard. Unparseable values fall back to bookmarks, standard,
-/// and nil; a stored group id resolving to no existing group restores as nil.
+/// UserDefaults keys libraryTab, overviewMode, and overviewGroup.
+/// Private mode is never written; unparseable values fall back to defaults.
+/// Unknown group id restores as nil.
 enum TabOverviewMode: Int, Sendable, CaseIterable {
     case standard = 0
     case privateMode = 1
@@ -210,12 +206,9 @@ final class TabOverviewViewController: UIViewController {
         return result
     }
 
-    /// Multi-item drop math. `destinationIndex` is in pre-drop coordinates
-    /// (the caller passes `visible count` when UIKit supplies a nil
-    /// destination, i.e. past the trailing edge). Dragged IDs keep their
-    /// drop order as a single block; unknown or duplicated IDs are ignored.
-    /// A single dragged tab reuses `moveID` so the single-move math stays
-    /// on the production path.
+    /// Multi-item drop math in pre-drop coordinates; nil means trailing edge.
+    /// Dragged IDs keep drop order as one block; unknown/duplicates ignored.
+    /// Single dragged tab reuses `moveID` to stay on production path.
     nonisolated static func reorderedIDs(
         currentIDs: [UUID],
         draggedIDs: [UUID],
@@ -256,12 +249,9 @@ final class TabOverviewViewController: UIViewController {
         return result
     }
 
-    /// Mode-first splice for reorder: grid-ordered mode tabs first (in the
-    /// grid's order), then every untouched tab in strip order. Untouched
-    /// means "not in the reordered mode block", so opposite-mode tabs
-    /// present in the grid order are preserved in strip order. Pure so
-    /// mixed-mode splicing is unit-testable without persistence or the pool.
-    /// IDs in the grid order but missing from the strip are dropped.
+    /// Mode-first splice: grid-ordered mode tabs first, then untouched strip order.
+    /// Pure so mixed-mode splicing tests without persistence or pool.
+    /// Grid IDs missing from the strip are dropped.
     nonisolated static func spliceTabOrder(
         currentIDs: [UUID],
         privacyByID: [UUID: Bool],
@@ -349,39 +339,48 @@ final class TabOverviewViewController: UIViewController {
     let collectionView: UICollectionView
     private let flowLayout = UICollectionViewFlowLayout()
     private let filterRow = UIView()
-    private let filterField = UITextField()
+    let filterField = UITextField()
     private var filterHeightConstraint: NSLayoutConstraint!
-    private let inlineBar = UIView()
-    let inlineSearchField = UITextField()
-    private let inlineMenuButton = UIButton(type: .system)
-    private let inlineDoneButton = UIButton(type: .system)
-    private let inlineStack = UIStackView()
+    private let inlineBar = UIToolbar()
     private var inlineBarHeightConstraint: NSLayoutConstraint!
     let pickerBar = TabGroupPickerBar()
     private let emptyLabel = UILabel()
+
+    var overviewToolbar: UIToolbar {
+        inlineBar
+    }
 
     var isInlineBarVisible: Bool {
         isViewLoaded && !inlineBar.isHidden
     }
 
     var isInlineSearchVisible: Bool {
-        isInlineBarVisible && !inlineSearchField.isHidden
+        isInlineBarVisible && (inlineBar.items?.contains { $0.accessibilityLabel == "Search" } ?? false)
     }
 
     var isInlineMenuVisible: Bool {
-        isInlineBarVisible && !inlineMenuButton.isHidden
+        isInlineBarVisible && (inlineBar.items?.contains { $0.accessibilityLabel == "Overview Menu" } ?? false)
     }
 
     var isInlineDoneVisible: Bool {
-        isInlineBarVisible && !inlineDoneButton.isHidden
+        isInlineBarVisible && (inlineBar.items?.contains { $0.accessibilityLabel == "Done" } ?? false)
     }
 
     var inlineMenu: UIMenu? {
-        inlineMenuButton.menu
+        makeInlineOverviewMenu()
     }
 
     func performInlineDone() {
-        inlineDoneButton.sendActions(for: .touchUpInside)
+        delegate?.tabOverviewDidFinish(self)
+    }
+
+    func refreshOverviewToolbar() {
+        let items = overviewChromeItems()
+        inlineBar.items = SystemToolbarMapper.makeOverviewToolbarItems(prefix: items.prefix, suffix: items.suffix)
+    }
+
+    func setToolbarItems(_ items: [UIBarButtonItem]) {
+        inlineBar.items = items
     }
 
     override init(nibName nibNameOrNil: String?, bundle nibBundleOrNil: Bundle?) {
@@ -438,6 +437,9 @@ final class TabOverviewViewController: UIViewController {
         self.selectedGroupID = selectedGroupID.flatMap { id in groups.contains(where: { $0.id == id }) ? id : nil }
         applyMode(mode, notify: false)
         updatePickerBar()
+        if isViewLoaded {
+            applyInlineCommandsVisibility()
+        }
         requestPreviews()
     }
 
@@ -487,27 +489,11 @@ final class TabOverviewViewController: UIViewController {
 
     func setFilterVisible(_ visible: Bool) {
         isFilterVisible = visible
-        if showsInlineCommands {
-            filterRow.isHidden = true
-            filterHeightConstraint.constant = 0
-            if !visible {
-                filterQuery = ""
-                filterField.text = ""
-                inlineSearchField.text = ""
-            } else {
-                inlineSearchField.becomeFirstResponder()
-            }
-            collectionView.reloadData()
-            updateEmptyState()
-            view.setNeedsLayout()
-            return
-        }
         filterRow.isHidden = !visible
         filterHeightConstraint.constant = visible ? 44 : 0
         if !visible {
             filterQuery = ""
             filterField.text = ""
-            inlineSearchField.text = ""
         } else {
             filterField.becomeFirstResponder()
         }
@@ -516,11 +502,9 @@ final class TabOverviewViewController: UIViewController {
         view.setNeedsLayout()
     }
 
-    /// Exact overview rail composition: search + command menu up top, new
-    /// tab + done at the bottom. The owner forwards its chrome views here
-    /// so browsing and overview rails can never drift apart. On regular
-    /// width the same prefix/suffix mirrors into the top toolbar because
-    /// the rail hides while the toolbar keeps browsing items otherwise.
+    /// Exact overview rail: search plus menu on top, new tab plus done below.
+    /// Owner forwards chrome here so browsing and overview never drift.
+    /// Regular mirrors prefix/suffix into top toolbar while rail hides.
     func overviewChromeItems() -> (prefix: [RailAction], suffix: [RailAction]) {
         let prefix: [RailAction] = [
             .search { [weak self] in
@@ -555,55 +539,15 @@ final class TabOverviewViewController: UIViewController {
     private func setupInlineBarViews() {
         inlineBar.isHidden = true
         inlineBar.translatesAutoresizingMaskIntoConstraints = false
+        // Shared glass styling stays in the mapper via its factory.
+        inlineBar.isTranslucent = true
+        inlineBar.backgroundColor = .clear
+        let appearance = SystemToolbarMapper.toolbarAppearance()
+        inlineBar.standardAppearance = appearance
+        inlineBar.scrollEdgeAppearance = appearance
+        inlineBar.accessibilityIdentifier = "TabOverview.Toolbar"
         view.addSubview(inlineBar)
-
-        inlineSearchField.placeholder = "Search Tabs"
-        inlineSearchField.accessibilityLabel = "Search open tabs"
-        inlineSearchField.adjustsFontForContentSizeCategory = true
-        inlineSearchField.borderStyle = .roundedRect
-        inlineSearchField.clearButtonMode = .whileEditing
-        inlineSearchField.autocapitalizationType = .none
-        inlineSearchField.autocorrectionType = .no
-        inlineSearchField.translatesAutoresizingMaskIntoConstraints = false
-        inlineSearchField.accessibilityIdentifier = "TabOverview.InlineSearchField"
-        inlineSearchField.addAction(
-            UIAction { [weak self] _ in
-                guard let self else { return }
-                self.filterQuery = self.inlineSearchField.text ?? ""
-                self.filterField.text = self.inlineSearchField.text
-                self.collectionView.reloadData()
-                self.updateEmptyState()
-            },
-            for: .editingChanged
-        )
-
-        inlineMenuButton.setImage(UIImage(systemName: "ellipsis"), for: .normal)
-        inlineMenuButton.accessibilityLabel = "Overview Menu"
-        inlineMenuButton.accessibilityIdentifier = "TabOverview.InlineMenu"
-        inlineMenuButton.showsMenuAsPrimaryAction = true
-        inlineMenuButton.menu = makeInlineOverviewMenu()
-        inlineMenuButton.translatesAutoresizingMaskIntoConstraints = false
-
-        inlineDoneButton.setTitle("Done", for: .normal)
-        inlineDoneButton.accessibilityLabel = "Done"
-        inlineDoneButton.accessibilityIdentifier = "TabOverview.InlineDone"
-        inlineDoneButton.addAction(
-            UIAction { [weak self] _ in
-                guard let self else { return }
-                self.delegate?.tabOverviewDidFinish(self)
-            },
-            for: .touchUpInside
-        )
-        inlineDoneButton.translatesAutoresizingMaskIntoConstraints = false
-
-        inlineStack.axis = .horizontal
-        inlineStack.alignment = .center
-        inlineStack.spacing = 8
-        inlineStack.translatesAutoresizingMaskIntoConstraints = false
-        inlineBar.addSubview(inlineStack)
-        inlineStack.addArrangedSubview(inlineSearchField)
-        inlineStack.addArrangedSubview(inlineMenuButton)
-        inlineStack.addArrangedSubview(inlineDoneButton)
+        refreshOverviewToolbar()
     }
 
     private func setupFilterViews() {
@@ -624,7 +568,6 @@ final class TabOverviewViewController: UIViewController {
             UIAction { [weak self] _ in
                 guard let self else { return }
                 self.filterQuery = self.filterField.text ?? ""
-                self.inlineSearchField.text = self.filterField.text
                 self.collectionView.reloadData()
                 self.updateEmptyState()
             },
@@ -678,11 +621,6 @@ final class TabOverviewViewController: UIViewController {
             inlineBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
             inlineBarHeightConstraint,
 
-            inlineStack.leadingAnchor.constraint(equalTo: inlineBar.leadingAnchor),
-            inlineStack.trailingAnchor.constraint(equalTo: inlineBar.trailingAnchor),
-            inlineStack.topAnchor.constraint(equalTo: inlineBar.topAnchor),
-            inlineStack.bottomAnchor.constraint(equalTo: inlineBar.bottomAnchor),
-
             filterRow.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             filterRow.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
             filterRow.topAnchor.constraint(equalTo: inlineBar.bottomAnchor),
@@ -713,40 +651,20 @@ final class TabOverviewViewController: UIViewController {
         ])
         let filterHeight = filterField.heightAnchor.constraint(equalToConstant: 36)
         filterHeight.priority = .defaultHigh
-        let inlineSearchHeight = inlineSearchField.heightAnchor.constraint(equalToConstant: 36)
-        inlineSearchHeight.priority = .defaultHigh
-        let inlineMenuWidth = inlineMenuButton.widthAnchor.constraint(equalToConstant: 44)
-        inlineMenuWidth.priority = .defaultHigh
-        let inlineMenuHeight = inlineMenuButton.heightAnchor.constraint(equalToConstant: 44)
-        inlineMenuHeight.priority = .defaultHigh
-        let inlineDoneHeight = inlineDoneButton.heightAnchor.constraint(equalToConstant: 44)
-        inlineDoneHeight.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            filterHeight,
-            inlineSearchHeight,
-            inlineMenuWidth,
-            inlineMenuHeight,
-            inlineDoneHeight
+            filterHeight
         ])
     }
 
-    private func applyInlineCommandsVisibility() {
+    func applyInlineCommandsVisibility() {
         guard isViewLoaded else { return }
         let showsInline = showsInlineCommands
         inlineBar.isHidden = !showsInline
         inlineBarHeightConstraint.constant = showsInline ? 44 : 0
-        inlineMenuButton.menu = makeInlineOverviewMenu()
-        if showsInline {
-            filterRow.isHidden = true
-            filterHeightConstraint.constant = 0
-            inlineSearchField.text = filterQuery
-            filterField.text = filterQuery
-        } else {
-            filterRow.isHidden = !isFilterVisible
-            filterHeightConstraint.constant = isFilterVisible ? 44 : 0
-            filterField.text = filterQuery
-            inlineSearchField.text = filterQuery
-        }
+        refreshOverviewToolbar()
+        filterRow.isHidden = !isFilterVisible
+        filterHeightConstraint.constant = isFilterVisible ? 44 : 0
+        filterField.text = filterQuery
         collectionView.reloadData()
         updateEmptyState()
         view.setNeedsLayout()

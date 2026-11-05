@@ -1,14 +1,10 @@
-//
-//  BrowserRootViewController+Overview.swift
-//  OuterView
-//
+// RootView — Overview chrome composition plus toolbar mirroring.
 
 import UIKit
 
-/// UserDefaults keys libraryTab as Int, overviewMode as String, and overviewGroup as String.
-/// Values are read at init and setup and written on every change; private mode is never
-/// written and restores as standard. Unparseable values fall back to bookmarks, standard,
-/// and nil; a stored group id resolving to no existing group restores as nil.
+/// UserDefaults keys libraryTab, overviewMode, and overviewGroup.
+/// Private mode is never written; unparseable values fall back to defaults.
+/// Unknown group id restores as nil.
 extension BrowserRootViewController {
     // MARK: - Overview
 
@@ -45,6 +41,7 @@ extension BrowserRootViewController {
                 refreshStatusBarAppearanceIfNeeded()
             }
             applyOverviewChromeItems()
+            overviewController.applyInlineCommandsVisibility()
             bringChromeToFront()
         } else {
             overviewView.isHidden = true
@@ -54,14 +51,15 @@ extension BrowserRootViewController {
         }
     }
 
-    /// Single owner for overview chrome composition. Overview and sheet
-    /// overlays are mutually exclusive — the overview surface sits above the
-    /// sheet overlays — so toolbar writes route through `setChromeItems` to
-    /// keep the single sheet-suppression owner instead of writing
-    /// `topBarView` directly.
+    /// Single owner for overview chrome composition.
+    /// Overview sits above sheet overlays, so writes route via `setChromeItems`.
+    /// Never writes `topBarView` directly to keep sheet suppression single-owned.
     func applyOverviewChromeItems() {
         let items = overviewController.overviewChromeItems()
         setChromeItems(prefix: items.prefix, suffix: items.suffix)
+        // Mirror the same actions into the overview toolbar via the mapper.
+        let toolbarItems = SystemToolbarMapper.makeOverviewToolbarItems(prefix: items.prefix, suffix: items.suffix)
+        overviewController.setToolbarItems(toolbarItems)
     }
 
     func overviewGroups() -> [TabGroup] {

@@ -11,7 +11,8 @@ protocol BackgroundLaunchHandlerStore: AnyObject {
 }
 
 /// Sole transfer owner for standard-tab downloads, backed by one background session.
-final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+@MainActor
+final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
     static let shared = BackgroundDownloadService()
 
     static let sessionIdentifier = "com.volcrypt.OuterView.downloads"
@@ -143,7 +144,7 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate, @un
     }
 
     /// Removes a file without throwing; failures only log.
-    private func cleanupItem(at url: URL) {
+    private nonisolated func cleanupItem(at url: URL) {
         do {
             try FileManager.default.removeItem(at: url)
         } catch {
@@ -165,7 +166,7 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate, @un
 
     /// Delivered on the session queue after every enqueued message has been handled;
     /// returning the stored system completion here lets iOS snapshot the app switcher.
-    func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+    nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         guard let identifier = session.configuration.identifier else { return }
         Task { @MainActor [weak self] in
             guard let store = self?.launchHandlerStore else { return }
@@ -175,7 +176,7 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate, @un
 
     // MARK: - URLSessionDownloadDelegate
 
-    func urlSession(
+    nonisolated func urlSession(
         _ _: URLSession,
         downloadTask: URLSessionDownloadTask,
         didWriteData _: Int64,
@@ -192,7 +193,7 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate, @un
         }
     }
 
-    func urlSession(
+    nonisolated func urlSession(
         _ _: URLSession,
         downloadTask: URLSessionDownloadTask,
         didFinishDownloadingTo location: URL
@@ -231,7 +232,7 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate, @un
         }
     }
 
-    func urlSession(_ _: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    nonisolated func urlSession(_ _: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         let key = ObjectIdentifier(task)
         Task { @MainActor [weak self] in
             // Success without error is owned by finalize; leave mapping for it.
@@ -281,7 +282,7 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate, @un
     }
 
     /// Drops a staged file with no destination and clears mappings.
-    private func discardStagedDownload(taskKey: ObjectIdentifier, resolved: ResolvedDownload, stagedURL: URL) async {
+    private nonisolated func discardStagedDownload(taskKey: ObjectIdentifier, resolved: ResolvedDownload, stagedURL: URL) async {
         cleanupItem(at: stagedURL)
         await MainActor.run { [weak self] in
             guard let self else { return }
@@ -303,7 +304,7 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate, @un
     }
 
     /// Records a move failure on the mapped or relaunched row.
-    private func failStagedMove(
+    private nonisolated func failStagedMove(
         taskKey: ObjectIdentifier,
         resolved: ResolvedDownload,
         stagedURL: URL,
@@ -330,7 +331,7 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate, @un
     }
 
     /// Completes a moved file; relaunched completions surface a finished row.
-    private func finishMovedDownload(
+    private nonisolated func finishMovedDownload(
         taskKey: ObjectIdentifier,
         resolved: ResolvedDownload,
         destination: URL
@@ -362,7 +363,7 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate, @un
     }
 
     /// Resolves the destination on MainActor, moves off MainActor, then completes rows.
-    private func finalizeDownload(taskKey: ObjectIdentifier, fallbackName: String, stagedURL: URL) async {
+    private nonisolated func finalizeDownload(taskKey: ObjectIdentifier, fallbackName: String, stagedURL: URL) async {
         let resolved: ResolvedDownload = await MainActor.run { [weak self] in
             guard let self else { return ResolvedDownload(rowID: nil, clean: fallbackName, destination: nil) }
             return self.resolveDownload(taskKey: taskKey, fallbackName: fallbackName)

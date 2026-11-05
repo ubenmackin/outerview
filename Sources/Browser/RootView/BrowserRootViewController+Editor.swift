@@ -1,4 +1,4 @@
-// RootView — Address editing lifecycle plus suggestion pipeline and Mode 3 inline Done.
+// RootView — Address editing lifecycle plus suggestion pipeline and Mode 3 inline dismiss.
 import UIKit
 
 extension BrowserRootViewController {
@@ -38,6 +38,8 @@ extension BrowserRootViewController {
         editorView.isNonDuoPhone = (mode == .nonDuoPhone)
         editorView.isEditing = true
         editorView.applyPlacement(for: placement)
+        // Dismiss clears editing without submitting text.
+        editorView.onDone = { [weak self] in self?.dismissStartPageOrEditing() }
         let engine = currentSearchEngine()
         configureEditor(text: editorInitialText(), engine: engine)
         if placement == .compact, selectedTabID != nil, peekActivePage()?.snapshot.url != nil {

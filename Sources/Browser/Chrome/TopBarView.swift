@@ -41,8 +41,9 @@ extension ChromePlacementDriven {
 /// edge with blurred page content behind it in every state.
 @MainActor
 enum RegularHeaderBackground {
+    /// Shared glass: toolbar appearances vend the same blur, so no seam forms.
     static func makeBlurEffect() -> UIVisualEffect {
-        UIBlurEffect(style: .systemChromeMaterial)
+        GlassEffect.makeBlur()
     }
 
     static func apply(to view: UIView, blurView: UIVisualEffectView) {
@@ -66,13 +67,9 @@ enum RegularHeaderBackground {
     }
 }
 
-/// Regular-width toolbar owning button clusters flanking the shared pill slot.
-/// The bar spans edge to edge with blurred page content behind it; leading
-/// cluster inset 28, trailing cluster inset 164 (expanding dynamically for
-/// top-right status occlusions), cluster spacing 12.
-/// Expanded bar height is 84 pt and collapses to 48 pt on scroll; expanded
-/// pill caps at 380 centered on the bar; collapsed keeps the mini capsule
-/// centered.
+/// Regular-width toolbar flanking the shared pill slot; blurred behind.
+/// Leading inset 28, trailing inset 164, pill gaps plus stack spacing 12.
+/// Expanded 84 pt collapses to 48 pt; pill caps at 380 centered.
 @MainActor
 final class TopBarView: UIView {
     nonisolated static let barHeight: CGFloat = 84
@@ -93,6 +90,8 @@ final class TopBarView: UIView {
 
     let leadingStack = UIStackView()
     let trailingStack = UIStackView()
+    let leadingToolbar = SystemToolbarMapper.toolbar(items: [])
+    let trailingToolbar = SystemToolbarMapper.toolbar(items: [])
     let pillSlotView = UIView()
     var onSlotWidthChanged: (() -> Void)?
     private let blurView = UIVisualEffectView(effect: RegularHeaderBackground.makeBlurEffect())
@@ -209,8 +208,11 @@ final class TopBarView: UIView {
     }
 
     func setItems(prefix: [RailAction], suffix: [RailAction]) {
-        leadingStack.rebuild(with: prefix)
-        trailingStack.rebuild(with: suffix)
+        // Full reset through the mapper: stale items never survive a reload.
+        // Intra-toolbar gaps stay system default; clusterSpacing owns the
+        // stack spacing plus the pill gaps pinned in setup.
+        leadingToolbar.items = SystemToolbarMapper.makeItems(prefix)
+        trailingToolbar.items = SystemToolbarMapper.makeItems(suffix)
         setNeedsUpdateConstraints()
         setNeedsLayout()
     }
@@ -258,6 +260,8 @@ final class TopBarView: UIView {
             stack.translatesAutoresizingMaskIntoConstraints = false
             addSubview(stack)
         }
+        leadingStack.addArrangedSubview(leadingToolbar)
+        trailingStack.addArrangedSubview(trailingToolbar)
         pillSlotView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(pillSlotView)
 

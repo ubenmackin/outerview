@@ -1,7 +1,4 @@
-//
-//  RegularHeaderTests.swift
-//  OuterViewTests
-//
+// Chrome — Regular header layout and pill width verification.
 
 @testable import OuterView
 import UIKit
@@ -24,7 +21,8 @@ final class RegularHeaderTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
         let root = BrowserRootViewController(database: database, defaults: defaults)
         let parent = UIViewController()
-        TestWindow.attach(parent)
+        // Regular needs inner-display width; 466 pt outer leaves no slot for caps.
+        TestWindow.attach(parent, frame: CGRect(x: 0, y: 0, width: 951, height: 669))
         parent.addChild(root)
         root.traitOverrides.horizontalSizeClass = .regular
         parent.view.addSubview(root.view)
@@ -245,21 +243,27 @@ final class RegularHeaderTests: XCTestCase {
         XCTAssertTrue(root.pillSlotCenterXConstraint.isActive)
         XCTAssertTrue(root.pillSlotWidthConstraint.isActive)
         let expandedSlotWidth = root.topBarView.pillSlotView.bounds.width
-        let expandedExpected = expandedSlotWidth > 0
-            ? min(TopBarView.expandedPillMaxWidth, expandedSlotWidth)
-            : TopBarView.expandedPillMaxWidth
+        let expandedExpected = BrowserRootViewController.regularPillTarget(
+            slotWidth: expandedSlotWidth,
+            isMinified: false,
+            preferredMinifiedWidth: root.pillView.preferredMinifiedWidth()
+        )
         XCTAssertEqual(TopBarView.expandedPillMaxWidth, 380)
         XCTAssertEqual(root.pillSlotWidthConstraint.constant, expandedExpected, accuracy: 0.5)
         scroll(root, delta: 30)
+        root.view.layoutIfNeeded()
+        root.view.layoutIfNeeded()
         root.view.layoutIfNeeded()
         XCTAssertFalse(root.pillSlotLeadingConstraint.isActive)
         XCTAssertFalse(root.pillSlotTrailingConstraint.isActive)
         XCTAssertTrue(root.pillSlotCenterXConstraint.isActive)
         XCTAssertTrue(root.pillSlotWidthConstraint.isActive)
         let slotWidth = root.topBarView.pillSlotView.bounds.width
-        let minifiedExpected = slotWidth > 0
-            ? min(AddressBarView.minifiedMaxWidth, slotWidth)
-            : AddressBarView.minifiedMaxWidth
+        let minifiedExpected = BrowserRootViewController.regularPillTarget(
+            slotWidth: slotWidth,
+            isMinified: true,
+            preferredMinifiedWidth: root.pillView.preferredMinifiedWidth()
+        )
         XCTAssertEqual(AddressBarView.minifiedMaxWidth, 220)
         XCTAssertEqual(root.pillSlotWidthConstraint.constant, minifiedExpected, accuracy: 0.5)
     }
@@ -281,9 +285,11 @@ final class RegularHeaderTests: XCTestCase {
         XCTAssertTrue(root.pillSlotCenterXConstraint.isActive)
         XCTAssertTrue(root.pillSlotWidthConstraint.isActive)
         let slotWidth = root.topBarView.pillSlotView.bounds.width
-        let expected = slotWidth > 0
-            ? min(TopBarView.expandedPillMaxWidth, slotWidth)
-            : TopBarView.expandedPillMaxWidth
+        let expected = BrowserRootViewController.regularPillTarget(
+            slotWidth: slotWidth,
+            isMinified: false,
+            preferredMinifiedWidth: root.pillView.preferredMinifiedWidth()
+        )
         XCTAssertEqual(root.pillSlotWidthConstraint.constant, expected, accuracy: 0.5)
         XCTAssertTrue(root.startPageTopToStripConstraint?.isActive ?? false)
         XCTAssertFalse(root.startPageTopToBarConstraint?.isActive ?? true)
@@ -296,6 +302,8 @@ final class RegularHeaderTests: XCTestCase {
         XCTAssertEqual(root.topBarView.currentHeightConstant, TopBarView.barHeight)
         XCTAssertFalse(root.prefersStatusBarHidden)
         scroll(root, delta: 30)
+        root.view.layoutIfNeeded()
+        root.view.layoutIfNeeded()
         root.view.layoutIfNeeded()
         XCTAssertEqual(root.chromeController.state.rail, .hidden)
         XCTAssertEqual(root.chromeController.state.pill, .minified)
@@ -316,12 +324,18 @@ final class RegularHeaderTests: XCTestCase {
         XCTAssertTrue(root.pillSlotCenterXConstraint.isActive)
         XCTAssertTrue(root.pillSlotWidthConstraint.isActive)
         let slotWidth = root.topBarView.pillSlotView.bounds.width
-        let expected = slotWidth > 0 ? min(AddressBarView.minifiedMaxWidth, slotWidth) : AddressBarView.minifiedMaxWidth
+        let expected = BrowserRootViewController.regularPillTarget(
+            slotWidth: slotWidth,
+            isMinified: true,
+            preferredMinifiedWidth: root.pillView.preferredMinifiedWidth()
+        )
         XCTAssertEqual(root.pillSlotWidthConstraint.constant, expected, accuracy: 0.5)
         XCTAssertEqual(root.pillHeightConstraint.constant, AddressBarView.minifiedHeight, accuracy: 0.001)
         XCTAssertTrue(root.startPageTopToBarConstraint?.isActive ?? false)
         XCTAssertFalse(root.startPageTopToStripConstraint?.isActive ?? true)
         scroll(root, delta: -40)
+        root.view.layoutIfNeeded()
+        root.view.layoutIfNeeded()
         root.view.layoutIfNeeded()
         XCTAssertEqual(root.chromeController.state.rail, .visible)
         XCTAssertFalse(root.topBarView.isHidden)
@@ -339,9 +353,11 @@ final class RegularHeaderTests: XCTestCase {
         XCTAssertTrue(root.pillSlotCenterXConstraint.isActive)
         XCTAssertTrue(root.pillSlotWidthConstraint.isActive)
         let restoredSlotWidth = root.topBarView.pillSlotView.bounds.width
-        let restoredExpected = restoredSlotWidth > 0
-            ? min(TopBarView.expandedPillMaxWidth, restoredSlotWidth)
-            : TopBarView.expandedPillMaxWidth
+        let restoredExpected = BrowserRootViewController.regularPillTarget(
+            slotWidth: restoredSlotWidth,
+            isMinified: false,
+            preferredMinifiedWidth: root.pillView.preferredMinifiedWidth()
+        )
         XCTAssertEqual(root.pillSlotWidthConstraint.constant, restoredExpected, accuracy: 0.5)
     }
 

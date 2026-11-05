@@ -1,7 +1,4 @@
-//
-//  SettingsSheetTests.swift
-//  OuterViewTests
-//
+// Settings — Sheet layout and toolbar verification.
 
 @testable import OuterView
 import SwiftUI
@@ -17,14 +14,24 @@ final class SettingsSheetTests: XCTestCase {
         return root
     }
 
-    private func doneButton(in rail: SideRailView) -> UIButton? {
-        let stacks = rail.subviews.compactMap { $0 as? UIStackView }
-        for stack in stacks {
-            for button in stack.arrangedSubviews.compactMap({ $0 as? UIButton }) where button.accessibilityLabel == "Done" {
-                return button
-            }
+    private func doneItem(in rail: SideRailView) -> UIBarButtonItem? {
+        let toolbars = rail.subviews
+            .compactMap { $0 as? UIStackView }
+            .flatMap { $0.arrangedSubviews.compactMap { $0 as? UIToolbar } }
+        return toolbars.compactMap(\.items).flatMap(\.self).first {
+            $0.accessibilityLabel == "Done"
         }
-        return nil
+    }
+
+    /// Fires the mapped bar action through a control so the UIAction
+    /// handler path runs instead of calling the root directly.
+    private func fire(_ item: UIBarButtonItem) async {
+        guard let action = item.primaryAction else { return }
+        let control = UIControl()
+        control.addAction(action, for: .touchUpInside)
+        control.sendActions(for: .touchUpInside)
+        await Task.yield()
+        await Task.yield()
     }
 
     func testPresentSetsFlagShowsContainerAndRailMode() throws {
@@ -93,13 +100,15 @@ final class SettingsSheetTests: XCTestCase {
         XCTAssertEqual(root.currentRailMode, .browsing)
     }
 
-    func testDoneButtonDismissesSheet() throws {
+    func testDoneButtonDismissesSheet() async throws {
         let root = try makeRoot()
         root.presentSettingsSheet()
         root.updateRailItems()
 
-        let done = try XCTUnwrap(doneButton(in: root.railView))
-        done.sendActions(for: .touchUpInside)
+        // System owns tap elasticity; firing the mapped Done closes the sheet.
+        let done = try XCTUnwrap(doneItem(in: root.railView))
+        XCTAssertNotNil(done.primaryAction)
+        await fire(done)
 
         XCTAssertFalse(root.isSettingsVisible)
         XCTAssertTrue(root.settingsContainer.isHidden)

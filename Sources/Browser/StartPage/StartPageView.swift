@@ -1,7 +1,4 @@
-//
-//  StartPageView.swift
-//  OuterView
-//
+// StartPage — Unified start surface with scrollable recents.
 
 import os
 import UIKit
@@ -86,9 +83,19 @@ final class StartPageView: UIView {
     /// Extra bottom room, beyond the safe area, so the last row scrolls
     /// clear of the floating address pill.
     func setBottomChromeInset(_ inset: CGFloat) {
+        // Reasserted on every inset update so short lists stay draggable.
+        scrollView.alwaysBounceVertical = true
+        scrollView.keyboardDismissMode = .onDrag
         guard scrollView.contentInset.bottom != inset else { return }
         scrollView.contentInset.bottom = inset
         scrollView.verticalScrollIndicatorInsets.bottom = inset
+        // Clamp stale offset after shrink so short lists park at top.
+        let minY = -scrollView.adjustedContentInset.top
+        let maxY = scrollView.contentSize.height - scrollView.bounds.height + inset
+        let clampedY = min(max(scrollView.contentOffset.y, minY), max(maxY, minY))
+        if scrollView.contentOffset.y != clampedY {
+            scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: clampedY), animated: false)
+        }
     }
 
     override func layoutSubviews() {
@@ -114,6 +121,9 @@ final class StartPageView: UIView {
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.backgroundColor = .clear
+        // Drag dismisses keyboard; bounce keeps short lists scrollable.
+        scrollView.keyboardDismissMode = .onDrag
+        scrollView.alwaysBounceVertical = true
         addSubview(scrollView)
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor),
@@ -284,10 +294,12 @@ final class StartPageView: UIView {
             button.accessibilityIdentifier = "StartPage.RecentRow.\(url.absoluteString)"
             button.addAction(UIAction { [weak self] _ in
                 guard let self else { return }
+                // Fail closed: non-web schemes never leave the start page.
+                guard URLNormalizer.isLoadable(url) else { return }
                 self.delegate?.startPage(self, didOpenURL: url)
             }, for: .touchUpInside)
 
-            Task { [weak button, targetURL = url] in
+            Task { @MainActor [weak button, targetURL = url] in
                 let fetched = await FaviconService.shared.favicon(for: targetURL, size: 26)
                 guard let button else { return }
                 var config = button.configuration
