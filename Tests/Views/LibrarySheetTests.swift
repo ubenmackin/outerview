@@ -1,4 +1,4 @@
-// Bookmarks — Native regular Library page sheet, circular Safari header controls, and compact parity tests.
+// Bookmarks — Native regular Library page sheet and compact parity tests.
 
 @testable import OuterView
 import UIKit
@@ -64,7 +64,6 @@ final class LibrarySheetTests: XCTestCase {
         XCTAssertEqual(OverlayCardView.dimAlpha, 0.2, accuracy: 0.001)
         XCTAssertEqual(OverlayCardView.contentPadding, 16)
         XCTAssertEqual(LibrarySheetViewController.preferredSheetCornerRadius, 32)
-        XCTAssertEqual(BookmarksLibraryView.circleButtonDiameter, 36)
         XCTAssertEqual(TopBarView.barHeight, 84)
         XCTAssertEqual(TabStripView.stripHeight, 44)
         XCTAssertEqual(TopBarView.remnantHeight, 48)
@@ -108,7 +107,7 @@ final class LibrarySheetTests: XCTestCase {
         XCTAssertTrue(card.dimView.isHidden)
     }
 
-    func testRegularHeaderUsesCircularIconButtonsWithZeroBlueTextTitles() throws {
+    func testRegularHeaderUsesToolbarGlassWithZeroVisibleTitles() throws {
         for tab: LibraryTab in [.favorites, .bookmarks, .history, .readingList] {
             let library = try makeLibrary(tab: tab, placement: .regular)
             XCTAssertTrue(library.isDoneVisible)
@@ -117,7 +116,7 @@ final class LibrarySheetTests: XCTestCase {
         }
     }
 
-    func testBookmarksTabShowsCircularOptionsAndCloseOnRegular() throws {
+    func testBookmarksTabShowsToolbarOptionsAndDoneOnRegular() throws {
         let library = try makeLibrary(tab: .bookmarks, placement: .regular)
         XCTAssertTrue(library.isDoneVisible)
         XCTAssertTrue(library.isOptionsMenuVisible)
@@ -145,7 +144,7 @@ final class LibrarySheetTests: XCTestCase {
         XCTAssertEqual(actionTitles, ["Select Bookmarks", "Edit Bookmarks", "New Folder"])
     }
 
-    func testHistoryTabShowsCircularOptionsMenuOnRegular() throws {
+    func testHistoryTabShowsToolbarOptionsMenuOnRegular() throws {
         let library = try makeLibrary(tab: .history, placement: .regular)
         XCTAssertTrue(library.isDoneVisible)
         XCTAssertTrue(library.isOptionsMenuVisible)
@@ -155,7 +154,7 @@ final class LibrarySheetTests: XCTestCase {
         XCTAssertEqual(actionTitles, ["Select Websites", "Clear History…"])
     }
 
-    func testReadingListTabShowsCircularOptionsMenuOnRegular() throws {
+    func testReadingListTabShowsToolbarOptionsMenuOnRegular() throws {
         let root = try makeRoot()
         root.openBookmarksLibrary(tab: .readingList)
         root.bookmarksLibraryView.applyPlacement(for: .regular)
@@ -168,7 +167,7 @@ final class LibrarySheetTests: XCTestCase {
         root.closeBookmarksLibrary()
     }
 
-    func testFavoritesTabShowsOnlyCloseCircleOnRegular() throws {
+    func testFavoritesTabShowsOnlyToolbarDoneOnRegular() throws {
         let library = try makeLibrary(tab: .favorites, placement: .regular)
         XCTAssertTrue(library.isDoneVisible)
         XCTAssertFalse(library.isOptionsMenuVisible)
@@ -266,7 +265,7 @@ final class LibrarySheetTests: XCTestCase {
         root.closeBookmarksLibrary()
     }
 
-    func testSelectionModeShowsDeleteCircleAndDoneExitsSelectionFirst() throws {
+    func testSelectionModeShowsToolbarDeleteAndDoneExitsSelectionFirst() throws {
         let fixture = try makeRegularRoot()
         let root = fixture.root
         root.openBookmarksLibrary(tab: .readingList)

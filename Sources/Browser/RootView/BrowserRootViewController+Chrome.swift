@@ -51,10 +51,9 @@ extension BrowserRootViewController {
         applyContentInsets()
     }
 
-    /// Single owner for regular toolbar visibility: editing/overview shows
-    /// the bar with both stacks, sheet overlays show the bar but hide the
-    /// duplicated stacks, otherwise collapsed shrinks the bar to remnantHeight
-    /// while hiding both stacks plus the strip.
+    /// Single owner for regular toolbar visibility.
+    /// Sheet overlays show the bar but hide duplicated stacks.
+    /// Collapsed shrinks to remnant height hiding stacks plus strip.
     func updateToolbarVisibility(for state: ChromeState) {
         railView.isHidden = true
         topBarView.isHidden = false
@@ -191,10 +190,9 @@ extension BrowserRootViewController {
         proxy.attach(to: page.webView.scrollView)
     }
 
-    /// Tells only the content about the chrome reservation. The root keeps
-    /// the real system safe area so chrome anchored to it never pushes
-    /// itself; web content keeps rendering under the chrome and only its
-    /// scrollable range grows.
+    /// Reserves chrome space for content only; root keeps real safe area.
+    /// Chrome anchored to safe area never pushes itself.
+    /// Web content renders under chrome; only scroll range grows.
     func applyContentInsets() {
         guard isViewLoaded else { return }
         let placement = chromePlacement
@@ -589,8 +587,8 @@ extension BrowserRootViewController {
         if interfaceMode == .nonDuoPhone {
             let isMode3Editing = isEditingAddress && chromePlacement == .compact
             if isMode3Editing {
-                bottomLeadingStack.rebuild(with: [])
-                bottomTrailingStack.rebuild(with: [])
+                SystemToolbarMapper.populateBottomStack(bottomLeadingStack, with: [])
+                SystemToolbarMapper.populateBottomStack(bottomTrailingStack, with: [])
                 topBarView.setItems(prefix: [], suffix: [])
                 editorView.isNonDuoPhone = true
                 editorView.isEditing = true
@@ -604,8 +602,8 @@ extension BrowserRootViewController {
             editorView.isEditing = isEditingAddress
             let isOverlay = isNonDuoChromeOverlay
             if isOverlay {
-                bottomLeadingStack.rebuild(with: [])
-                bottomTrailingStack.rebuild(with: [])
+                SystemToolbarMapper.populateBottomStack(bottomLeadingStack, with: [])
+                SystemToolbarMapper.populateBottomStack(bottomTrailingStack, with: [])
                 if shouldShowNonDuoTopBar {
                     topBarView.setItems(prefix: prefix, suffix: suffix)
                 } else {
@@ -613,8 +611,8 @@ extension BrowserRootViewController {
                 }
             } else {
                 topBarView.setItems(prefix: [], suffix: [])
-                bottomLeadingStack.rebuild(with: prefix)
-                bottomTrailingStack.rebuild(with: suffix)
+                SystemToolbarMapper.populateBottomStack(bottomLeadingStack, with: prefix)
+                SystemToolbarMapper.populateBottomStack(bottomTrailingStack, with: suffix)
             }
             applyNonDuoChromeVisibility()
             return
@@ -692,6 +690,66 @@ extension BrowserRootViewController {
             let browsing = makeBrowsingChromeItems()
             setChromeItems(prefix: browsing.prefix, suffix: browsing.suffix)
         }
+    }
+
+    /// Library rail plus inline header share one commands model.
+    /// Both render from `LibraryTabCommands.make` so per-tab sets never drift.
+    func updateLibraryRailItems(for tab: LibraryTab) {
+        guard isLibraryVisible else { return }
+        let readingMenu = bookmarksLibraryView.makeReadingListMenu()
+        let commands = LibraryTabCommands.make(
+            for: tab,
+            isEditingBookmarks: bookmarksLibraryView.isEditingBookmarks,
+            canClearHistory: bookmarksLibraryView.canClearHistory,
+            isInSelection: bookmarksLibraryView.isActiveTabInSelectionMode,
+            canDeleteSelection: bookmarksLibraryView.canDeleteActiveTabSelection,
+            hasReadingListMenu: readingMenu != nil
+        )
+        var prefix: [RailAction] = []
+        let suffix: [RailAction] = if commands.doneExitsSelection {
+            [
+                .done { [weak self] in
+                    self?.bookmarksLibraryView.exitActiveTabSelectionMode()
+                    self?.updateLibraryRailItems(for: tab)
+                }
+            ]
+        } else {
+            [
+                .done { [weak self] in
+                    self?.closeBookmarksLibrary()
+                }
+            ]
+        }
+        if commands.showsAdd {
+            prefix.append(.addFolder { [weak self] in
+                self?.bookmarksLibraryView.promptNewFolder()
+            })
+        }
+        if commands.showsEdit {
+            let isEditing = commands.isEditingBookmarks
+            prefix.append(.edit(isEditing: isEditing) { [weak self] in
+                self?.bookmarksLibraryView.toggleBookmarksEdit()
+                self?.updateLibraryRailItems(for: tab)
+            })
+        }
+        if commands.showsClear {
+            let canClear = commands.canClearHistory
+            prefix.append(.clear(isEnabled: canClear) { [weak self] in
+                self?.bookmarksLibraryView.promptClearHistory()
+            })
+        }
+        if commands.showsMenu, let menu = readingMenu {
+            prefix.append(.readingListMenu(menu: menu))
+        }
+        if commands.showsDelete {
+            let canDelete = commands.canDeleteSelection
+            prefix.append(.deleteSelected(isEnabled: canDelete) { [weak self] in
+                self?.bookmarksLibraryView.deleteSelectedItemsForActiveTab()
+                self?.updateLibraryRailItems(for: tab)
+            })
+        }
+        setChromeItems(prefix: prefix, suffix: suffix)
+        bookmarksLibraryView.updateInlineCommands()
     }
 
     // MARK: - Scroll bridges

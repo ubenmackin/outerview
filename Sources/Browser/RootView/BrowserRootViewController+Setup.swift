@@ -59,10 +59,9 @@ extension BrowserRootViewController {
         }
     }
 
-    /// Single z-order for the floating layers. The rail is topmost so the
-    /// overview's own rail composition (Search/Menu/New/Done) is never
-    /// covered by the opaque overview surface; a hidden rail has zero alpha
-    /// and is skipped by hit testing.
+    /// Single z-order for floating layers; rail stays topmost.
+    /// Overview rail composition is never covered by its surface.
+    /// Hidden rail has zero alpha and skips hit testing.
     func bringChromeToFront() {
         view.bringSubviewToFront(errorContainer)
         if pillView.superview == view {
@@ -115,11 +114,9 @@ extension BrowserRootViewController {
         ])
     }
 
-    /// Shared Contract REGULAR-COLLAPSE: collapsed keeps topBarView visible with
-    /// both stacks plus strip hidden; expanded centered with min(380,slotWidth)
-    /// and collapsed centered with min(220,slotWidth) through bar-scoped centerX
-    /// plus width constraints; collapsed top inset equals TopBarView.remnantHeight;
-    /// additionalSafeArea top is zero in every placement and state; no remnant view exists anywhere.
+    /// REGULAR-COLLAPSE: collapsed keeps bar visible hiding stacks plus strip.
+    /// Pill centers via bar-scoped centerX plus width; collapsed inset is remnant height.
+    /// Additional safe-area top is zero; no remnant view exists.
     func setupTopBar() {
         topBarView.translatesAutoresizingMaskIntoConstraints = false
         topBarView.isHidden = true
@@ -223,10 +220,10 @@ extension BrowserRootViewController {
         for stack in [bottomLeadingStack, bottomTrailingStack] {
             stack.axis = .horizontal
             stack.alignment = .center
-            stack.spacing = SideRailView.bottomBarSpacing
+            stack.spacing = SystemToolbarMapper.bottomBarSpacing
             stack.translatesAutoresizingMaskIntoConstraints = false
             stack.isHidden = true
-            stack.layer.cornerRadius = SideRailView.bottomBarCornerRadius
+            stack.layer.cornerRadius = SystemToolbarMapper.bottomBarCornerRadius
             stack.clipsToBounds = true
             view.addSubview(stack)
         }
@@ -244,10 +241,10 @@ extension BrowserRootViewController {
             pillTrailingConstraint,
             bottomLeadingStack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             bottomLeadingStack.centerYAnchor.constraint(equalTo: pillView.centerYAnchor),
-            bottomLeadingStack.heightAnchor.constraint(equalToConstant: SideRailView.bottomBarHeight),
+            bottomLeadingStack.heightAnchor.constraint(equalToConstant: SystemToolbarMapper.bottomBarHeight),
             bottomTrailingStack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
             bottomTrailingStack.centerYAnchor.constraint(equalTo: pillView.centerYAnchor),
-            bottomTrailingStack.heightAnchor.constraint(equalToConstant: SideRailView.bottomBarHeight)
+            bottomTrailingStack.heightAnchor.constraint(equalToConstant: SystemToolbarMapper.bottomBarHeight)
         ])
         pillView.onPillTap = { [weak self] in self?.handlePillTap() }
         pillView.onHorizontalPan = { [weak self] event in self?.handleHorizontalPan(event) }
@@ -350,10 +347,9 @@ extension BrowserRootViewController {
         ])
     }
 
-    /// Single present path for settings/downloads/bookmark-editor sheets:
-    /// regular renders inside a centered `OverlayCardView`, compact pins
-    /// full-bleed inside the container with the trailing edge at the safe
-    /// area so the rail column stays clear.
+    /// Single present path for settings/downloads/bookmark-editor sheets.
+    /// Regular centers in `OverlayCardView`; compact pins full-bleed.
+    /// Compact trailing edge respects safe area so rail stays clear.
     func presentOverlay(_ overlay: OverlayCardView, newHosting: UIViewController, currentHosting: UIViewController?, container: UIView) {
         let placement = chromePlacement
         overlay.applyPlacement(for: placement)
@@ -615,69 +611,6 @@ extension BrowserRootViewController {
         bookmarksLibraryView.isHidden = true
         updateRailItems()
         applyChromeViews(animated: false)
-    }
-
-    func updateLibraryRailItems(for tab: LibraryTab) {
-        guard isLibraryVisible else { return }
-        // Single-owner composition: the per-tab branching lives in
-        // `LibraryTabCommands.make` and both the rail and the inline header
-        // render from it, mirroring `overviewMenuActions`.
-        let readingMenu = bookmarksLibraryView.makeReadingListMenu()
-        let commands = LibraryTabCommands.make(
-            for: tab,
-            isEditingBookmarks: bookmarksLibraryView.isEditingBookmarks,
-            canClearHistory: bookmarksLibraryView.canClearHistory,
-            isInSelection: tab == .readingList && bookmarksLibraryView.isReadingListInSelectionMode,
-            canDeleteSelection: bookmarksLibraryView.canDeleteReadingListSelection,
-            hasReadingListMenu: readingMenu != nil
-        )
-        var prefix: [RailAction] = []
-        let suffix: [RailAction] = if commands.doneExitsSelection {
-            // No Library-exit action while selecting: the blue check ends
-            // selection mode first; rail exit returns once it ends.
-            [
-                .done { [weak self] in
-                    self?.bookmarksLibraryView.exitReadingListSelectionMode()
-                    self?.updateLibraryRailItems(for: .readingList)
-                }
-            ]
-        } else {
-            [
-                .done { [weak self] in
-                    self?.closeBookmarksLibrary()
-                }
-            ]
-        }
-        if commands.showsAdd {
-            prefix.append(.addFolder { [weak self] in
-                self?.bookmarksLibraryView.promptNewFolder()
-            })
-        }
-        if commands.showsEdit {
-            let isEditing = commands.isEditingBookmarks
-            prefix.append(.edit(isEditing: isEditing) { [weak self] in
-                self?.bookmarksLibraryView.toggleBookmarksEdit()
-                self?.updateLibraryRailItems(for: .bookmarks)
-            })
-        }
-        if commands.showsClear {
-            let canClear = commands.canClearHistory
-            prefix.append(.clear(isEnabled: canClear) { [weak self] in
-                self?.bookmarksLibraryView.promptClearHistory()
-            })
-        }
-        if commands.showsMenu, let menu = readingMenu {
-            prefix.append(.readingListMenu(menu: menu))
-        }
-        if commands.showsDelete {
-            let canDelete = commands.canDeleteSelection
-            prefix.append(.deleteSelected(isEnabled: canDelete) { [weak self] in
-                self?.bookmarksLibraryView.deleteReadingListSelectedItems()
-                self?.updateLibraryRailItems(for: .readingList)
-            })
-        }
-
-        setChromeItems(prefix: prefix, suffix: suffix)
     }
 
     func setupOverview() {

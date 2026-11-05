@@ -10,12 +10,13 @@ import XCTest
 final class TopBarTests: XCTestCase {
     private func railLabels(in root: BrowserRootViewController) -> [String] {
         let stacks = root.railView.subviews.compactMap { $0 as? UIStackView }
-        return stacks.flatMap(\.arrangedSubviews).compactMap(\.accessibilityLabel)
+        let toolbars = stacks.flatMap(\.arrangedSubviews).compactMap { $0 as? UIToolbar }
+        return toolbars.compactMap(\.items).flatMap(\.self).compactMap(\.accessibilityLabel)
     }
 
     private func toolbarLabels(in root: BrowserRootViewController) -> [String] {
-        let stacks = [root.topBarView.leadingStack, root.topBarView.trailingStack]
-        return stacks.flatMap(\.arrangedSubviews).compactMap(\.accessibilityLabel)
+        let items = (root.topBarView.leadingToolbar.items ?? []) + (root.topBarView.trailingToolbar.items ?? [])
+        return items.compactMap(\.accessibilityLabel)
     }
 
     func testPlacementResolution() {
@@ -62,21 +63,23 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(bar.currentHeightConstant, 84)
     }
 
-    func testToolbarBuildsRailButtonsHorizontally() {
+    func testToolbarBuildsBarItemsHorizontally() {
         let bar = TopBarView()
         TestWindow.attach(bar)
         bar.setItems(
             prefix: [.back(handler: {}), .bookmarks(handler: {})],
             suffix: [.newTab(handler: {}), .tabs(handler: {})]
         )
-        XCTAssertEqual(bar.leadingStack.arrangedSubviews.count, 2)
-        XCTAssertEqual(bar.trailingStack.arrangedSubviews.count, 2)
-        for view in bar.leadingStack.arrangedSubviews + bar.trailingStack.arrangedSubviews {
-            XCTAssertTrue(view is RailButton)
-        }
+        XCTAssertEqual(bar.leadingToolbar.items?.count, 2)
+        XCTAssertEqual(bar.trailingToolbar.items?.count, 2)
+        XCTAssertEqual(bar.leadingToolbar.items?.compactMap(\.accessibilityLabel), ["Back", "Bookmarks"])
+        XCTAssertEqual(bar.trailingToolbar.items?.compactMap(\.accessibilityLabel), ["New Tab", "Tabs"])
+        // System toolbar hosts bar items with glass background; no custom circles remain.
+        XCTAssertTrue(bar.leadingToolbar.items?.allSatisfy { $0.image != nil } ?? false)
         bar.setItems(prefix: [], suffix: [.done(handler: {})])
-        XCTAssertEqual(bar.leadingStack.arrangedSubviews.count, 0)
-        XCTAssertEqual(bar.trailingStack.arrangedSubviews.count, 1)
+        XCTAssertEqual(bar.leadingToolbar.items?.count, 0)
+        XCTAssertEqual(bar.trailingToolbar.items?.count, 1)
+        XCTAssertEqual(bar.trailingToolbar.items?.first?.tintColor, .systemBlue)
     }
 
     func testPillSlotParentingPerPlacement() throws {
@@ -145,7 +148,8 @@ final class TopBarTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
         let root = BrowserRootViewController(database: database, defaults: defaults)
         let parent = UIViewController()
-        TestWindow.attach(parent)
+        // Regular needs inner-display width; 466 pt outer leaves no slot for caps.
+        TestWindow.attach(parent, frame: CGRect(x: 0, y: 0, width: 951, height: 669))
         parent.addChild(root)
         root.traitOverrides.horizontalSizeClass = .regular
         parent.view.addSubview(root.view)
@@ -169,17 +173,21 @@ final class TopBarTests: XCTestCase {
         root.applyChromeViews(animated: false)
         root.view.layoutIfNeeded()
         root.view.layoutIfNeeded()
+        root.view.layoutIfNeeded()
         XCTAssertFalse(root.pillSlotLeadingConstraint.isActive)
         XCTAssertFalse(root.pillSlotTrailingConstraint.isActive)
         XCTAssertTrue(root.pillSlotCenterXConstraint.isActive)
         XCTAssertTrue(root.pillSlotWidthConstraint.isActive)
         let expandedSlotWidth = root.topBarView.pillSlotView.bounds.width
-        let expandedExpected = expandedSlotWidth > 0
-            ? min(TopBarView.expandedPillMaxWidth, expandedSlotWidth)
-            : TopBarView.expandedPillMaxWidth
+        let expandedExpected = BrowserRootViewController.regularPillTarget(
+            slotWidth: expandedSlotWidth,
+            isMinified: false,
+            preferredMinifiedWidth: root.pillView.preferredMinifiedWidth()
+        )
         XCTAssertEqual(root.pillSlotWidthConstraint.constant, expandedExpected, accuracy: 0.5)
         let minified = root.chromeController.handle(.scroll(offsetDelta: 30))
         root.applyCommands(minified, animated: false)
+        root.view.layoutIfNeeded()
         root.view.layoutIfNeeded()
         root.view.layoutIfNeeded()
         XCTAssertFalse(root.pillSlotLeadingConstraint.isActive)
@@ -187,9 +195,11 @@ final class TopBarTests: XCTestCase {
         XCTAssertTrue(root.pillSlotCenterXConstraint.isActive)
         XCTAssertTrue(root.pillSlotWidthConstraint.isActive)
         let slotWidth = root.topBarView.pillSlotView.bounds.width
-        let minifiedExpected = slotWidth > 0
-            ? min(AddressBarView.minifiedMaxWidth, slotWidth)
-            : AddressBarView.minifiedMaxWidth
+        let minifiedExpected = BrowserRootViewController.regularPillTarget(
+            slotWidth: slotWidth,
+            isMinified: true,
+            preferredMinifiedWidth: root.pillView.preferredMinifiedWidth()
+        )
         XCTAssertEqual(root.pillSlotWidthConstraint.constant, minifiedExpected, accuracy: 0.5)
     }
 
@@ -327,29 +337,34 @@ final class TopBarTests: XCTestCase {
         root.updateRailItems()
         root.view.layoutIfNeeded()
         for stack in [root.bottomLeadingStack, root.bottomTrailingStack] {
-            for case let button as RailButton in stack.arrangedSubviews {
-                XCTAssertTrue(button.isBottomBar)
-                let glasses = button.subviews.compactMap { $0 as? UIVisualEffectView }
-                XCTAssertTrue(glasses.allSatisfy { $0.isHidden || $0.alpha < 0.5 })
+            let buttons = stack.arrangedSubviews.compactMap { $0 as? UIButton }
+            XCTAssertFalse(buttons.isEmpty)
+            for button in buttons {
                 XCTAssertTrue(button.constraints.contains {
                     $0.firstAttribute == .width && abs($0.constant - 44) < 0.5
                 })
+                XCTAssertTrue(button.constraints.contains {
+                    $0.firstAttribute == .height && abs($0.constant - 44) < 0.5
+                })
+                // Glass lives in configuration; one shared capsule sits behind buttons.
+                XCTAssertTrue(button.subviews.compactMap { $0 as? UIVisualEffectView }.isEmpty)
             }
         }
         root.setChromeItems(prefix: [], suffix: [.done {}])
         root.view.layoutIfNeeded()
-        guard let done = root.bottomTrailingStack.arrangedSubviews.first as? RailButton else {
+        guard let done = root.bottomTrailingStack.arrangedSubviews.first as? UIButton else {
             XCTFail("Expected Done button")
             return
         }
         XCTAssertEqual(done.accessibilityLabel, "Done")
-        XCTAssertEqual(done.backgroundColor, .systemBlue)
+        XCTAssertEqual(done.configuration?.baseBackgroundColor, .systemBlue)
+        XCTAssertEqual(done.configuration?.baseForegroundColor, .white)
     }
 
     func testMode1Mode2ChromeUnchanged() {
-        XCTAssertEqual(SideRailView.buttonDiameter, 44)
+        XCTAssertEqual(SystemToolbarMapper.hitTarget, 44)
         XCTAssertEqual(SideRailView.spacing, 8)
-        XCTAssertEqual(SideRailView.railSymbolPointSize, 18)
+        XCTAssertEqual(SystemToolbarMapper.symbolPointSize, 18)
         XCTAssertEqual(TopBarView.barHeight, 84)
         XCTAssertEqual(TopBarView.remnantHeight, 48)
     }

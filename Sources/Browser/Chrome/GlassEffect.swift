@@ -1,7 +1,4 @@
-//
-//  GlassEffect.swift
-//  OuterView
-//
+// Chrome — Liquid Glass background effect shared by chrome surfaces.
 
 import UIKit
 
@@ -11,10 +8,18 @@ import UIKit
 enum GlassEffect {
     static func make() -> UIVisualEffect {
         if #available(iOS 26.0, *) {
-            UIGlassEffect()
+            let effect = UIGlassEffect(style: .regular)
+            effect.isInteractive = true
+            return effect
         } else {
-            UIBlurEffect(style: .systemMaterial)
+            return UIBlurEffect(style: .systemMaterial)
         }
+    }
+
+    /// Blur-only variant for bar appearances, which accept
+    /// `UIBlurEffect` rather than arbitrary visual effects.
+    static func makeBlur() -> UIBlurEffect {
+        UIBlurEffect(style: .systemMaterial)
     }
 }
 

@@ -3,16 +3,12 @@
 import os
 import UIKit
 
-/// Full-screen overlay on compact and native page-sheet content on regular for
-/// Bookmarks, Favorites, History, and Reading List (matching Safari).
-/// UserDefaults keys libraryTab as Int, overviewMode as String, and overviewGroup as String.
-/// Values are read at init and setup and written on every change; private mode is never
-/// written and restores as standard. Unparseable values fall back to bookmarks, standard,
-/// and nil; a stored group id resolving to no existing group restores as nil.
+/// Library overlay: compact full-screen, regular page-sheet content.
+/// Hosts Bookmarks, Favorites, History, and Reading List.
+/// Stored tab falls back to bookmarks when unparseable.
 @MainActor
 final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     nonisolated static let libraryTabDefaultsKey = "libraryTab"
-    nonisolated static let circleButtonDiameter: CGFloat = 36
 
     nonisolated static func storedTab(defaults: UserDefaults = .standard) -> LibraryTab {
         LibraryTabBar.storedTab(defaults: defaults)
@@ -56,37 +52,52 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     private let leadingTitleStack = UIStackView()
     private let folderBackButton = AccessibleButton(type: .system)
     private let sectionTitleLabel = UILabel()
-    private let trailingCircleStack = UIStackView()
-    private let optionsMenuButton = AccessibleButton(type: .system)
-    private let addFolderCircleButton = AccessibleButton(type: .system)
-    private let deleteCircleButton = AccessibleButton(type: .system)
-    private let closeOrDoneCircleButton = AccessibleButton(type: .system)
+    private let trailingToolbar = SystemToolbarMapper.toolbar(items: [])
 
     private var compactHeaderConstraints: [NSLayoutConstraint] = []
     private var regularHeaderConstraints: [NSLayoutConstraint] = []
 
+    /// Glass toolbar owning all trailing controls.
+    var headerToolbar: UIToolbar {
+        trailingToolbar
+    }
+
+    var trailingToolbarItems: [UIBarButtonItem] {
+        trailingToolbar.items ?? []
+    }
+
     var isDoneVisible: Bool {
-        !regularHeaderRow.isHidden && !closeOrDoneCircleButton.isHidden
+        guard !regularHeaderRow.isHidden else { return false }
+        return trailingToolbarItems.contains {
+            $0.accessibilityLabel == "Done" || $0.accessibilityLabel == "Done Editing"
+        }
     }
 
     var isOptionsMenuVisible: Bool {
-        !regularHeaderRow.isHidden && !optionsMenuButton.isHidden
+        guard !regularHeaderRow.isHidden else { return false }
+        return trailingToolbarItems.contains {
+            ($0.accessibilityLabel ?? "").hasSuffix("Options")
+        }
     }
 
     var currentOptionsMenu: UIMenu? {
-        optionsMenuButton.menu
+        trailingToolbarItems.first {
+            ($0.accessibilityLabel ?? "").hasSuffix("Options")
+        }?.menu
     }
 
     var isInlineAddVisible: Bool {
-        !regularHeaderRow.isHidden && !addFolderCircleButton.isHidden
+        guard !regularHeaderRow.isHidden else { return false }
+        return trailingToolbarItems.contains { $0.accessibilityLabel == "New Folder" }
     }
 
     var isInlineDeleteVisible: Bool {
-        !regularHeaderRow.isHidden && !deleteCircleButton.isHidden
+        guard !regularHeaderRow.isHidden else { return false }
+        return trailingToolbarItems.contains { $0.accessibilityLabel == "Delete Selected" }
     }
 
     var isInlineDeleteEnabled: Bool {
-        deleteCircleButton.isEnabled
+        trailingToolbarItems.first { $0.accessibilityLabel == "Delete Selected" }?.isEnabled ?? false
     }
 
     var isFolderBackVisible: Bool {
@@ -98,22 +109,24 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     }
 
     var closeButtonAccessibilityLabel: String? {
-        closeOrDoneCircleButton.accessibilityLabel
+        trailingToolbarItems.first {
+            $0.accessibilityLabel == "Done" || $0.accessibilityLabel == "Done Editing"
+        }?.accessibilityLabel
     }
 
     var hasAnyVisibleButtonTitle: Bool {
-        let buttons = [
-            folderBackButton,
-            optionsMenuButton,
-            addFolderCircleButton,
-            deleteCircleButton,
-            closeOrDoneCircleButton
-        ]
-        return buttons.contains { !$0.isHidden && !(($0.title(for: .normal) ?? "").isEmpty) }
+        trailingToolbarItems.contains {
+            guard let title = $0.title, !title.isEmpty else { return false }
+            // Image items render the symbol, never the title string.
+            if $0.image != nil {
+                return false
+            }
+            return $0.primaryAction?.image == nil
+        }
     }
 
     func performDone() {
-        closeOrDoneCircleButton.sendActions(for: .touchUpInside)
+        handlePrimaryCloseOrDone()
     }
 
     func performInlineAdd() {
@@ -325,11 +338,8 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
 
     func updateInlineCommands() {
         guard chromePlacement == .regular || isNonDuoPhone else {
-            optionsMenuButton.isHidden = true
-            addFolderCircleButton.isHidden = true
-            deleteCircleButton.isHidden = true
-            closeOrDoneCircleButton.isHidden = true
-            folderBackButton.isHidden = true
+            // Hidden toolbar must not keep stale regular items.
+            trailingToolbar.items = []
             return
         }
 
@@ -354,78 +364,82 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         }
 
         applyRegularTrailingButtons(for: commands, readingMenu: readingMenu)
-
-        closeOrDoneCircleButton.isHidden = false
-        if commands.isEditingBookmarks {
-            styleAccentCheckButton(closeOrDoneCircleButton, accessibilityLabel: "Done Editing")
-        } else if commands.doneExitsSelection {
-            styleAccentCheckButton(closeOrDoneCircleButton, accessibilityLabel: "Done")
-        } else {
-            styleCloseButton(closeOrDoneCircleButton, accessibilityLabel: "Done")
-        }
     }
 
     private func applyRegularTrailingButtons(for commands: LibraryTabCommands, readingMenu: UIMenu?) {
+        var actions: [RailAction] = []
         switch activeTab {
         case .bookmarks:
             if commands.showsDelete {
-                optionsMenuButton.isHidden = true
-                optionsMenuButton.menu = nil
-                addFolderCircleButton.isHidden = true
-                deleteCircleButton.isHidden = false
-                deleteCircleButton.isEnabled = commands.canDeleteSelection
+                actions.append(.deleteSelected(isEnabled: commands.canDeleteSelection) { [weak self] in
+                    self?.triggerInlineDelete()
+                })
             } else if commands.isEditingBookmarks {
-                optionsMenuButton.isHidden = true
-                optionsMenuButton.menu = nil
-                addFolderCircleButton.isHidden = false
-                addFolderCircleButton.isEnabled = bookmarksBrowserView?.canCreateFolder ?? true
-                deleteCircleButton.isHidden = true
+                let canCreate = bookmarksBrowserView?.canCreateFolder ?? true
+                actions.append(RailAction(
+                    systemImageName: "folder.badge.plus",
+                    accessibilityLabel: "New Folder",
+                    isEnabled: canCreate,
+                    handler: { [weak self] in self?.triggerInlineAdd() }
+                ))
             } else {
-                optionsMenuButton.menu = makeBookmarksOptionsMenu()
-                optionsMenuButton.accessibilityLabel = "Bookmarks Options"
-                optionsMenuButton.isHidden = false
-                addFolderCircleButton.isHidden = true
-                deleteCircleButton.isHidden = true
+                actions.append(RailAction(
+                    systemImageName: "ellipsis",
+                    accessibilityLabel: "Bookmarks Options",
+                    menu: makeBookmarksOptionsMenu()
+                ))
             }
 
         case .history:
-            addFolderCircleButton.isHidden = true
             if commands.showsDelete {
-                optionsMenuButton.isHidden = true
-                optionsMenuButton.menu = nil
-                deleteCircleButton.isHidden = false
-                deleteCircleButton.isEnabled = commands.canDeleteSelection
+                actions.append(.deleteSelected(isEnabled: commands.canDeleteSelection) { [weak self] in
+                    self?.triggerInlineDelete()
+                })
             } else {
-                optionsMenuButton.menu = makeHistoryOptionsMenu(canClear: commands.canClearHistory)
-                optionsMenuButton.accessibilityLabel = "History Options"
-                optionsMenuButton.isHidden = false
-                deleteCircleButton.isHidden = true
+                actions.append(RailAction(
+                    systemImageName: "ellipsis",
+                    accessibilityLabel: "History Options",
+                    menu: makeHistoryOptionsMenu(canClear: commands.canClearHistory)
+                ))
             }
 
         case .readingList:
-            addFolderCircleButton.isHidden = true
             if commands.showsDelete {
-                optionsMenuButton.isHidden = true
-                optionsMenuButton.menu = nil
-                deleteCircleButton.isHidden = false
-                deleteCircleButton.isEnabled = commands.canDeleteSelection
+                actions.append(.deleteSelected(isEnabled: commands.canDeleteSelection) { [weak self] in
+                    self?.triggerInlineDelete()
+                })
             } else if commands.showsMenu, let readingMenu {
-                optionsMenuButton.menu = readingMenu
-                optionsMenuButton.accessibilityLabel = "Reading List Options"
-                optionsMenuButton.isHidden = false
-                deleteCircleButton.isHidden = true
-            } else {
-                optionsMenuButton.isHidden = true
-                optionsMenuButton.menu = nil
-                deleteCircleButton.isHidden = true
+                actions.append(.readingListMenu(menu: readingMenu))
             }
 
         case .favorites:
-            optionsMenuButton.isHidden = true
-            optionsMenuButton.menu = nil
-            addFolderCircleButton.isHidden = true
-            deleteCircleButton.isHidden = true
+            break
         }
+
+        // Close stays visible on empty lists; selection swaps it to Done.
+        if commands.isEditingBookmarks {
+            actions.append(RailAction(
+                systemImageName: "checkmark",
+                accessibilityLabel: "Done Editing",
+                isProminent: true,
+                handler: { [weak self] in self?.handlePrimaryCloseOrDone() }
+            ))
+        } else if commands.doneExitsSelection {
+            actions.append(RailAction(
+                systemImageName: "checkmark",
+                accessibilityLabel: "Done",
+                isProminent: true,
+                handler: { [weak self] in self?.handlePrimaryCloseOrDone() }
+            ))
+        } else {
+            actions.append(RailAction(
+                systemImageName: "xmark",
+                accessibilityLabel: "Done",
+                handler: { [weak self] in self?.handlePrimaryCloseOrDone() }
+            ))
+        }
+        // Live reload resets items on the same toolbar instance.
+        trailingToolbar.items = SystemToolbarMapper.makeItems(actions)
     }
 
     // MARK: - Private
@@ -457,15 +471,22 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     }
 
     private func setupRegularHeaderControls() {
-        styleNeutralCircleButton(
-            folderBackButton,
-            symbolName: "chevron.backward",
-            accessibilityLabel: "Back to Bookmarks"
-        )
+        // Plain back chevron without circle fill.
+        folderBackButton.translatesAutoresizingMaskIntoConstraints = false
+        let backConfig = UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
+        folderBackButton.setImage(UIImage(systemName: "chevron.backward", withConfiguration: backConfig), for: .normal)
+        folderBackButton.setTitle(nil, for: .normal)
+        folderBackButton.tintColor = .label
+        folderBackButton.backgroundColor = .clear
+        folderBackButton.accessibilityLabel = "Back to Bookmarks"
         folderBackButton.isHidden = true
         folderBackButton.addAction(UIAction { [weak self] _ in
             self?.bookmarksBrowserView?.popNavigation()
         }, for: .touchUpInside)
+        NSLayoutConstraint.activate([
+            folderBackButton.widthAnchor.constraint(equalToConstant: SystemToolbarMapper.hitTarget),
+            folderBackButton.heightAnchor.constraint(equalToConstant: SystemToolbarMapper.hitTarget)
+        ])
 
         let baseTitleFont = UIFont.systemFont(ofSize: 22, weight: .bold)
         sectionTitleLabel.font = UIFontMetrics(forTextStyle: .title2).scaledFont(for: baseTitleFont)
@@ -481,98 +502,8 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         leadingTitleStack.addArrangedSubview(sectionTitleLabel)
         regularHeaderRow.addSubview(leadingTitleStack)
 
-        styleNeutralCircleButton(
-            optionsMenuButton,
-            symbolName: "ellipsis",
-            accessibilityLabel: "Library Options"
-        )
-        optionsMenuButton.showsMenuAsPrimaryAction = true
-
-        styleNeutralCircleButton(
-            addFolderCircleButton,
-            symbolName: "folder.badge.plus",
-            accessibilityLabel: "New Folder"
-        )
-        addFolderCircleButton.isHidden = true
-        addFolderCircleButton.addAction(UIAction { [weak self] _ in
-            self?.triggerInlineAdd()
-        }, for: .touchUpInside)
-
-        styleNeutralCircleButton(
-            deleteCircleButton,
-            symbolName: "trash",
-            accessibilityLabel: "Delete Selected",
-            tintColor: .systemRed
-        )
-        deleteCircleButton.isHidden = true
-        deleteCircleButton.addAction(UIAction { [weak self] _ in
-            self?.triggerInlineDelete()
-        }, for: .touchUpInside)
-
-        styleCloseButton(closeOrDoneCircleButton, accessibilityLabel: "Done")
-        closeOrDoneCircleButton.addAction(UIAction { [weak self] _ in
-            self?.handlePrimaryCloseOrDone()
-        }, for: .touchUpInside)
-
-        trailingCircleStack.translatesAutoresizingMaskIntoConstraints = false
-        trailingCircleStack.axis = .horizontal
-        trailingCircleStack.alignment = .center
-        trailingCircleStack.spacing = 10
-        trailingCircleStack.addArrangedSubview(optionsMenuButton)
-        trailingCircleStack.addArrangedSubview(addFolderCircleButton)
-        trailingCircleStack.addArrangedSubview(deleteCircleButton)
-        trailingCircleStack.addArrangedSubview(closeOrDoneCircleButton)
-        regularHeaderRow.addSubview(trailingCircleStack)
-    }
-
-    private func styleNeutralCircleButton(
-        _ button: UIButton,
-        symbolName: String,
-        accessibilityLabel: String,
-        tintColor: UIColor = .label
-    ) {
-        button.translatesAutoresizingMaskIntoConstraints = false
-        let config = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
-        button.setImage(UIImage(systemName: symbolName, withConfiguration: config), for: .normal)
-        button.setTitle(nil, for: .normal)
-        button.tintColor = tintColor
-        button.backgroundColor = .tertiarySystemFill
-        button.layer.cornerRadius = Self.circleButtonDiameter / 2
-        button.clipsToBounds = true
-        button.accessibilityLabel = accessibilityLabel
-        NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: Self.circleButtonDiameter),
-            button.heightAnchor.constraint(equalToConstant: Self.circleButtonDiameter)
-        ])
-    }
-
-    private func styleCloseButton(_ button: UIButton, accessibilityLabel: String) {
-        let config = UIImage.SymbolConfiguration(pointSize: 14, weight: .bold)
-        button.setImage(UIImage(systemName: "xmark", withConfiguration: config), for: .normal)
-        button.setTitle(nil, for: .normal)
-        button.tintColor = .secondaryLabel
-        button.backgroundColor = .tertiarySystemFill
-        button.layer.cornerRadius = Self.circleButtonDiameter / 2
-        button.clipsToBounds = true
-        button.accessibilityLabel = accessibilityLabel
-        if button.constraints.isEmpty {
-            button.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                button.widthAnchor.constraint(equalToConstant: Self.circleButtonDiameter),
-                button.heightAnchor.constraint(equalToConstant: Self.circleButtonDiameter)
-            ])
-        }
-    }
-
-    private func styleAccentCheckButton(_ button: UIButton, accessibilityLabel: String) {
-        let config = UIImage.SymbolConfiguration(pointSize: 15, weight: .bold)
-        button.setImage(UIImage(systemName: "checkmark", withConfiguration: config), for: .normal)
-        button.setTitle(nil, for: .normal)
-        button.tintColor = .white
-        button.backgroundColor = .systemBlue
-        button.layer.cornerRadius = Self.circleButtonDiameter / 2
-        button.clipsToBounds = true
-        button.accessibilityLabel = accessibilityLabel
+        // Glass toolbar owns trailing controls; items reset on state change.
+        regularHeaderRow.addSubview(trailingToolbar)
     }
 
     private func setupContainersAndConstraints() {
@@ -622,7 +553,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         let regTabRowHeight = headerContainer.heightAnchor.constraint(equalToConstant: 44)
         regTabRowHeight.priority = UILayoutPriority(999)
         let titleSpacing = leadingTitleStack.trailingAnchor.constraint(
-            lessThanOrEqualTo: trailingCircleStack.leadingAnchor, constant: -12
+            lessThanOrEqualTo: trailingToolbar.leadingAnchor, constant: -12
         )
         titleSpacing.priority = UILayoutPriority(999)
 
@@ -633,8 +564,8 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
             regHeaderHeight,
             leadingTitleStack.leadingAnchor.constraint(equalTo: regularHeaderRow.leadingAnchor),
             leadingTitleStack.centerYAnchor.constraint(equalTo: regularHeaderRow.centerYAnchor),
-            trailingCircleStack.trailingAnchor.constraint(equalTo: regularHeaderRow.trailingAnchor),
-            trailingCircleStack.centerYAnchor.constraint(equalTo: regularHeaderRow.centerYAnchor),
+            trailingToolbar.trailingAnchor.constraint(equalTo: regularHeaderRow.trailingAnchor),
+            trailingToolbar.centerYAnchor.constraint(equalTo: regularHeaderRow.centerYAnchor),
             titleSpacing,
             headerContainer.topAnchor.constraint(equalTo: regularHeaderRow.bottomAnchor, constant: 8),
             regTabRowHeight,

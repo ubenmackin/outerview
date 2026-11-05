@@ -1,7 +1,4 @@
-//
-//  OverviewInlineTests.swift
-//  OuterViewTests
-//
+// TabOverview — Inline toolbar visibility and search filtering verification.
 
 @testable import OuterView
 import UIKit
@@ -171,12 +168,12 @@ final class OverviewInlineTests: XCTestCase {
         overview.showsInlineCommands = true
         overview.view.layoutIfNeeded()
         XCTAssertEqual(overview.visibleItems.count, 3)
-        overview.inlineSearchField.text = "appl"
-        overview.inlineSearchField.sendActions(for: .editingChanged)
+        overview.filterField.text = "appl"
+        overview.filterField.sendActions(for: .editingChanged)
         XCTAssertEqual(overview.filterQuery, "appl")
         XCTAssertEqual(overview.visibleItems.map(\.title), ["Apple"])
-        overview.inlineSearchField.text = ""
-        overview.inlineSearchField.sendActions(for: .editingChanged)
+        overview.filterField.text = ""
+        overview.filterField.sendActions(for: .editingChanged)
         XCTAssertEqual(overview.visibleItems.count, 3)
     }
 

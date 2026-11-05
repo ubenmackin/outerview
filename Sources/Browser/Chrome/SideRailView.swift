@@ -1,8 +1,8 @@
-// Chrome — Adaptive command rail with circular glass buttons and stack layout.
+// Chrome — Adaptive command rail hosting system toolbar glass.
 
 import UIKit
 
-/// One circular rail button model: icon, accessibility label, and tap handler.
+/// One rail button model: icon, accessibility label, and tap handler.
 struct RailAction {
     let systemImageName: String
     let accessibilityLabel: String
@@ -151,220 +151,34 @@ struct RailAction {
     }
 }
 
-/// Circular 44 pt Liquid Glass button backing one `RailAction`.
-/// Bottom-bar instances use 22 pt symbols with no per-button glass.
-@MainActor
-final class RailButton: UIButton {
-    private let glassView: UIVisualEffectView
-    private var action: RailAction?
-    private(set) var isBottomBar = false
-
-    init(action: RailAction, isBottomBar: Bool = false) {
-        glassView = UIVisualEffectView(effect: GlassEffect.make())
-        self.action = action
-        self.isBottomBar = isBottomBar
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-        accessibilityLabel = action.accessibilityLabel
-        isEnabled = action.isEnabled
-        alpha = action.isEnabled ? 1.0 : 0.35
-        applyStyle(isProminent: action.isProminent, isBottomBar: isBottomBar)
-        let pointSize = isBottomBar ? SideRailView.bottomBarSymbolPointSize : SideRailView.railSymbolPointSize
-        let config = UIImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
-        setImage(
-            UIImage(systemName: action.systemImageName, withConfiguration: config)?
-                .withRenderingMode(.alwaysTemplate),
-            for: .normal
-        )
-        if let menuProvider = action.menuProvider {
-            self.menu = UIMenu(children: [
-                UIDeferredMenuElement { completion in
-                    let resolved = menuProvider()
-                    completion(resolved?.children ?? [])
-                }
-            ])
-            self.showsMenuAsPrimaryAction = action.showsMenuAsPrimaryAction
-            if !action.showsMenuAsPrimaryAction {
-                addAction(UIAction { [weak self] _ in self?.action?.handler() }, for: .touchUpInside)
-            }
-        } else if let menu = action.menu {
-            self.menu = menu
-            self.showsMenuAsPrimaryAction = action.showsMenuAsPrimaryAction
-            if !action.showsMenuAsPrimaryAction {
-                addAction(UIAction { [weak self] _ in self?.action?.handler() }, for: .touchUpInside)
-            }
-        } else {
-            addAction(UIAction { [weak self] _ in self?.action?.handler() }, for: .touchUpInside)
-        }
-        setupGlass()
-    }
-
-    @available(*, unavailable)
-    required init?(coder _: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        let radius = bounds.width / 2
-        if layer.cornerRadius != radius {
-            layer.cornerRadius = radius
-        }
-        if glassView.layer.cornerRadius != radius {
-            glassView.layer.cornerRadius = radius
-        }
-    }
-
-    private func applyStyle(isProminent: Bool, isBottomBar: Bool = false) {
-        if isProminent {
-            tintColor = .white
-            backgroundColor = .systemBlue
-            glassView.alpha = 0
-            glassView.isHidden = isBottomBar
-        } else if isBottomBar {
-            tintColor = .label
-            backgroundColor = .clear
-            glassView.alpha = 0
-            glassView.isHidden = true
-        } else {
-            tintColor = .label
-            backgroundColor = .clear
-            glassView.alpha = 1
-            glassView.isHidden = false
-        }
-    }
-
-    private func setupGlass() {
-        glassView.isUserInteractionEnabled = false
-        glassView.translatesAutoresizingMaskIntoConstraints = false
-        glassView.layer.zPosition = -1
-        let radius = SideRailView.buttonDiameter / 2
-        layer.cornerRadius = radius
-        glassView.layer.cornerRadius = radius
-        glassView.clipsToBounds = true
-        if #available(iOS 26.0, *) {
-            glassView.cornerConfiguration = .capsule()
-        }
-        insertSubview(glassView, at: 0)
-        let widthConstraint = widthAnchor.constraint(equalToConstant: SideRailView.buttonDiameter)
-        let heightConstraint = heightAnchor.constraint(equalToConstant: SideRailView.buttonDiameter)
-        widthConstraint.priority = UILayoutPriority(999)
-        heightConstraint.priority = UILayoutPriority(999)
-        NSLayoutConstraint.activate([
-            glassView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            glassView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            glassView.topAnchor.constraint(equalTo: topAnchor),
-            glassView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            widthConstraint,
-            heightConstraint
-        ])
-        clipsToBounds = true
-    }
-}
-
-/// Single owner for rail-button stack rebuilds. Both `SideRailView` and
-/// `TopBarView` compose the same `RailAction` arrays, so they share this
-/// helper instead of triplicating the remove-and-rebuild loop.
-@MainActor
-extension UIStackView {
-    func rebuild(with items: [RailAction]) {
-        if isMode3BottomBar {
-            rebuildBottomBar(with: items)
-            return
-        }
-        for arranged in arrangedSubviews {
-            removeArrangedSubview(arranged)
-            arranged.removeFromSuperview()
-        }
-        for item in items {
-            addArrangedSubview(RailButton(action: item))
-        }
-    }
-
-    /// Toolbar-grade capsule for Mode 3 bottom stacks: one shared glass
-    /// capsule per side holding 44 pt targets with 22 pt symbols at 4 pt spacing.
-    func rebuildBottomBar(with items: [RailAction]) {
-        for arranged in arrangedSubviews {
-            removeArrangedSubview(arranged)
-            arranged.removeFromSuperview()
-        }
-        axis = .horizontal
-        alignment = .center
-        spacing = SideRailView.bottomBarSpacing
-        ensureBottomBarCapsule()
-        for item in items {
-            addArrangedSubview(RailButton(action: item, isBottomBar: true))
-        }
-        layoutIfNeeded()
-    }
-
-    /// Bottom bars are the only stacks pinned to the 50 pt capsule height.
-    private var isMode3BottomBar: Bool {
-        constraints.contains {
-            $0.firstAttribute == .height
-                && abs($0.constant - SideRailView.bottomBarHeight) < 0.5
-        }
-    }
-
-    /// Shared capsule glass behind the buttons. Reused across rebuilds
-    /// so stale backgrounds never stack above the buttons.
-    private func ensureBottomBarCapsule() {
-        backgroundColor = .clear
-        isOpaque = false
-        layer.cornerRadius = SideRailView.bottomBarCornerRadius
-        clipsToBounds = true
-        let existing = subviews.first {
-            $0 is UIVisualEffectView && !arrangedSubviews.contains($0)
-        } as? UIVisualEffectView
-        let capsule: UIVisualEffectView
-        if let existing {
-            capsule = existing
-            if capsule.effect == nil {
-                capsule.effect = GlassEffect.make()
-            }
-        } else {
-            capsule = UIVisualEffectView(effect: GlassEffect.make())
-            capsule.isUserInteractionEnabled = false
-            capsule.translatesAutoresizingMaskIntoConstraints = false
-            capsule.layer.cornerRadius = SideRailView.bottomBarCornerRadius
-            capsule.clipsToBounds = true
-            if #available(iOS 26.0, *) {
-                capsule.cornerConfiguration = .capsule()
-            }
-            insertSubview(capsule, at: 0)
-            NSLayoutConstraint.activate([
-                capsule.leadingAnchor.constraint(equalTo: leadingAnchor),
-                capsule.trailingAnchor.constraint(equalTo: trailingAnchor),
-                capsule.topAnchor.constraint(equalTo: topAnchor),
-                capsule.bottomAnchor.constraint(equalTo: bottomAnchor)
-            ])
-        }
-        capsule.isHidden = false
-        capsule.alpha = 1
-        capsule.layer.cornerRadius = SideRailView.bottomBarCornerRadius
-        capsule.clipsToBounds = true
-    }
-}
-
-/// Vertical rail overlay. The view itself is pinned full-bleed by its owner so
-/// its safe area always matches the window; the two button stacks render as a
-/// 60 pt column centered in the right system column (the reported right
-/// safe-area inset, 84 pt on the Duo outer display). Only the stacks
-/// participate in hit testing so web content stays tappable everywhere else.
+/// Vertical rail overlay pinned full-bleed so safe area matches the window.
+/// Stacks render as a 60 pt column centered in the right system column.
+/// Only stacks hit-test so web content stays tappable elsewhere.
 @MainActor
 final class SideRailView: UIView {
-    nonisolated static let buttonDiameter: CGFloat = 44
     nonisolated static let spacing: CGFloat = 8
     nonisolated static let columnWidth: CGFloat = 60
     nonisolated static let safeColumnWidth: CGFloat = 84
     nonisolated static let topPadding: CGFloat = 12
     nonisolated static let bottomPadding: CGFloat = 4
     nonisolated static let reservedOcclusionHeight: CGFloat = 174
-    nonisolated static let bottomBarHeight: CGFloat = 50
-    nonisolated static let bottomBarCornerRadius: CGFloat = 25
-    nonisolated static let bottomBarSymbolPointSize: CGFloat = 22
-    nonisolated static let bottomBarSpacing: CGFloat = 4
-    nonisolated static let railSymbolPointSize: CGFloat = 18
+    /// Bottom-bar metrics are owned by the mapper; this view only forwards
+    /// so rail and bottom hosts can never drift apart.
+    nonisolated static var bottomBarHeight: CGFloat {
+        SystemToolbarMapper.bottomBarHeight
+    }
+
+    nonisolated static var bottomBarCornerRadius: CGFloat {
+        SystemToolbarMapper.bottomBarCornerRadius
+    }
+
+    nonisolated static var bottomBarSymbolPointSize: CGFloat {
+        SystemToolbarMapper.bottomBarSymbolPointSize
+    }
+
+    nonisolated static var bottomBarSpacing: CGFloat {
+        SystemToolbarMapper.bottomBarSpacing
+    }
 
     /// Width of the system column the rail lives in: the live right inset
     /// when the system reports one, otherwise the measured Duo column.
@@ -433,7 +247,7 @@ final class SideRailView: UIView {
 
     nonisolated static func expectedStackHeight(itemCount: Int) -> CGFloat {
         guard itemCount > 0 else { return 0 }
-        return CGFloat(itemCount) * buttonDiameter + CGFloat(itemCount - 1) * spacing
+        return CGFloat(itemCount) * SystemToolbarMapper.hitTarget + CGFloat(itemCount - 1) * spacing
     }
 
     private func updateStack(_ stack: UIStackView, with items: [RailAction]) {
@@ -441,7 +255,13 @@ final class SideRailView: UIView {
         if targetHeight > stack.bounds.height {
             stack.frame.size = CGSize(width: Self.columnWidth, height: targetHeight)
         }
-        stack.rebuild(with: items)
+        // Full remove plus rebuild through the mapper: stale items never persist.
+        // Vertical rail keeps one toolbar per action; construction lives in
+        // the mapper so the exception can never drift from shared glass.
+        SystemToolbarMapper.clearStack(stack)
+        for toolbar in SystemToolbarMapper.railToolbars(for: items) {
+            stack.addArrangedSubview(toolbar)
+        }
         if targetHeight < stack.bounds.height {
             stack.frame.size = CGSize(width: Self.columnWidth, height: targetHeight)
         }

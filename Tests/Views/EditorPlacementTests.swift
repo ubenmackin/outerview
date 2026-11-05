@@ -60,7 +60,7 @@ final class EditorPlacementTests: XCTestCase {
         let editor = makeEditor(placement: .compact)
         XCTAssertEqual(editor.chromePlacement, .compact)
         XCTAssertFalse(editor.isDimVisible)
-        XCTAssertFalse(editor.isDoneVisible)
+        XCTAssertFalse(editor.isDismissVisible)
         XCTAssertFalse(editor.isOutsideDismissEnabled)
         XCTAssertFalse(editor.areFavoritesVisible)
         XCTAssertTrue(editor.isCompactLayoutActive)
@@ -75,7 +75,7 @@ final class EditorPlacementTests: XCTestCase {
         XCTAssertTrue(editor.isRegularLayoutActive)
         XCTAssertFalse(editor.isCompactLayoutActive)
         XCTAssertFalse(editor.isDimVisible)
-        XCTAssertFalse(editor.isDoneVisible)
+        XCTAssertFalse(editor.isDismissVisible)
         XCTAssertTrue(editor.isOutsideDismissEnabled)
     }
 
@@ -212,10 +212,12 @@ final class EditorPlacementTests: XCTestCase {
         XCTAssertFalse(root.topBarView.isHidden)
         XCTAssertFalse(root.topBarView.leadingStack.isHidden)
         XCTAssertFalse(root.topBarView.trailingStack.isHidden)
-        XCTAssertEqual(root.topBarView.leadingStack.arrangedSubviews.count, 2)
-        XCTAssertEqual(root.topBarView.trailingStack.arrangedSubviews.count, 2)
-        let trailingLabels = root.topBarView.trailingStack.arrangedSubviews.compactMap(\.accessibilityLabel)
-        XCTAssertFalse(trailingLabels.contains("Done"))
+        // Each cluster hosts one glass toolbar; items live on the toolbars.
+        XCTAssertEqual(root.topBarView.leadingToolbar.items?.count, 2)
+        XCTAssertEqual(root.topBarView.trailingToolbar.items?.count, 2)
+        let barLabels = ((root.topBarView.leadingToolbar.items ?? []) + (root.topBarView.trailingToolbar.items ?? []))
+            .compactMap(\.accessibilityLabel)
+        XCTAssertFalse(barLabels.contains("Done"))
 
         // Floating editor popover sits above TopBarView in z-order.
         let topBarIndex = try XCTUnwrap(root.view.subviews.firstIndex(of: root.topBarView))
@@ -249,19 +251,19 @@ final class EditorPlacementTests: XCTestCase {
         editor.isEditing = true
         editor.layoutIfNeeded()
 
-        XCTAssertTrue(editor.isDoneVisible)
+        XCTAssertTrue(editor.isDismissVisible)
         XCTAssertEqual(AddressEditorView.fieldHeight, 44)
-        XCTAssertEqual(AddressEditorView.doneDiameter, 44)
-        guard let done = findDoneButton(in: editor) else {
-            XCTFail("Expected inline Done button")
+        XCTAssertEqual(AddressEditorView.dismissDiameter, 44)
+        guard let dismiss = findDismissButton(in: editor) else {
+            XCTFail("Expected inline dismiss control")
             return
         }
-        XCTAssertEqual(done.accessibilityLabel, "Done")
-        XCTAssertEqual(done.backgroundColor, .systemBlue)
-        XCTAssertEqual(done.tintColor, .white)
-        XCTAssertEqual(done.bounds.width, AddressEditorView.doneDiameter, accuracy: 0.5)
-        XCTAssertEqual(done.bounds.height, AddressEditorView.doneDiameter, accuracy: 0.5)
-        let frameInEditor = done.convert(done.bounds, to: editor)
+        // Inline control uses system glass, never a custom filled circle.
+        XCTAssertEqual(dismiss.accessibilityLabel, "Dismiss")
+        XCTAssertNotNil(dismiss.configuration)
+        XCTAssertEqual(dismiss.bounds.width, AddressEditorView.dismissDiameter, accuracy: 0.5)
+        XCTAssertEqual(dismiss.bounds.height, AddressEditorView.dismissDiameter, accuracy: 0.5)
+        let frameInEditor = dismiss.convert(dismiss.bounds, to: editor)
         let keyboardTop = editor.keyboardLayoutGuide.layoutFrame.minY
         XCTAssertLessThanOrEqual(frameInEditor.maxY, keyboardTop)
     }
@@ -271,19 +273,19 @@ final class EditorPlacementTests: XCTestCase {
         idle.isNonDuoPhone = true
         idle.isEditing = false
         idle.layoutIfNeeded()
-        XCTAssertFalse(idle.isDoneVisible)
+        XCTAssertFalse(idle.isDismissVisible)
 
         let duoEditing = makeEditor(placement: .compact)
         duoEditing.isNonDuoPhone = false
         duoEditing.isEditing = true
         duoEditing.layoutIfNeeded()
-        XCTAssertFalse(duoEditing.isDoneVisible)
+        XCTAssertFalse(duoEditing.isDismissVisible)
 
         let regularEditing = makeEditor(placement: .regular)
         regularEditing.isNonDuoPhone = true
         regularEditing.isEditing = true
         regularEditing.layoutIfNeeded()
-        XCTAssertFalse(regularEditing.isDoneVisible)
+        XCTAssertFalse(regularEditing.isDismissVisible)
         XCTAssertTrue(regularEditing.isOutsideDismissEnabled)
     }
 
@@ -306,7 +308,7 @@ final class EditorPlacementTests: XCTestCase {
         root.view.layoutIfNeeded()
 
         XCTAssertTrue(root.isEditingAddress)
-        XCTAssertTrue(root.editorView.isDoneVisible)
+        XCTAssertTrue(root.editorView.isDismissVisible)
         XCTAssertTrue(root.bottomLeadingStack.isHidden)
         XCTAssertTrue(root.bottomTrailingStack.isHidden)
         XCTAssertTrue(root.bottomLeadingStack.arrangedSubviews.isEmpty)
@@ -316,7 +318,7 @@ final class EditorPlacementTests: XCTestCase {
         root.view.layoutIfNeeded()
 
         XCTAssertFalse(root.isEditingAddress)
-        XCTAssertFalse(root.editorView.isDoneVisible)
+        XCTAssertFalse(root.editorView.isDismissVisible)
         XCTAssertFalse(root.bottomLeadingStack.isHidden)
         XCTAssertFalse(root.bottomTrailingStack.isHidden)
         let leading = root.bottomLeadingStack.arrangedSubviews.compactMap(\.accessibilityLabel)
@@ -325,12 +327,12 @@ final class EditorPlacementTests: XCTestCase {
         XCTAssertEqual(trailing, ["Bookmarks", "Tabs"])
     }
 
-    private func findDoneButton(in view: UIView) -> UIButton? {
-        if let button = view as? UIButton, button.accessibilityLabel == "Done" {
+    private func findDismissButton(in view: UIView) -> UIButton? {
+        if let button = view as? UIButton, button.accessibilityLabel == "Dismiss" {
             return button
         }
         for subview in view.subviews {
-            if let found = findDoneButton(in: subview) {
+            if let found = findDismissButton(in: subview) {
                 return found
             }
         }

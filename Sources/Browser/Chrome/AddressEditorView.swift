@@ -1,10 +1,10 @@
-// Chrome — Address editing surface with compact inline Done and regular popover.
+// Chrome — Address editing surface with compact inline dismiss and regular popover.
 import os
 import UIKit
 
 /// Editing surface docked above the keyboard on compact
 /// and floating as a blurred popover on regular.
-/// Mode 3 shows one inline Done check trailing the capsule.
+/// Mode 3 shows one inline dismiss trailing the capsule.
 @MainActor
 final class AddressEditorView: UIView, ChromePlacementDriven {
     nonisolated static let fieldHeight: CGFloat = 44
@@ -19,7 +19,7 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         SheetDim.alpha
     }
 
-    nonisolated static let doneDiameter: CGFloat = 44
+    nonisolated static let dismissDiameter: CGFloat = 44
 
     var chromePlacement: ChromePlacement = .compact {
         didSet {
@@ -65,7 +65,7 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     private let capsuleView = UIView()
     private let capsuleBackground = UIVisualEffectView(effect: GlassEffect.make())
     private let textField = UITextField()
-    private let inlineDoneButton = UIButton(type: .system)
+    private let inlineDismissButton = UIButton(type: .system)
     private let inputErrorLabel = UILabel()
 
     // MARK: - Regular Floating Popover Hierarchy
@@ -117,10 +117,7 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         favoritesFlowLayout.minimumInteritemSpacing = 16
         favoritesFlowLayout.minimumLineSpacing = 16
         favoritesFlowLayout.sectionInset = UIEdgeInsets(top: 12, left: 24, bottom: 20, right: 24)
-        favoritesFlowLayout.itemSize = CGSize(
-            width: FavoriteTileCell.tileLength,
-            height: FavoriteTileCell.cellHeight
-        )
+        favoritesFlowLayout.itemSize = CGSize(width: FavoriteTileCell.tileLength, height: FavoriteTileCell.cellHeight)
         favoritesCollectionView = UICollectionView(frame: .zero, collectionViewLayout: favoritesFlowLayout)
         super.init(frame: frame)
         setup()
@@ -131,10 +128,7 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         favoritesFlowLayout.minimumInteritemSpacing = 16
         favoritesFlowLayout.minimumLineSpacing = 16
         favoritesFlowLayout.sectionInset = UIEdgeInsets(top: 12, left: 24, bottom: 20, right: 24)
-        favoritesFlowLayout.itemSize = CGSize(
-            width: FavoriteTileCell.tileLength,
-            height: FavoriteTileCell.cellHeight
-        )
+        favoritesFlowLayout.itemSize = CGSize(width: FavoriteTileCell.tileLength, height: FavoriteTileCell.cellHeight)
         favoritesCollectionView = UICollectionView(frame: .zero, collectionViewLayout: favoritesFlowLayout)
         super.init(coder: coder)
         setup()
@@ -172,6 +166,13 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        // Prioritize dismiss so taps never fall through to rows behind.
+        if chromePlacement == .compact, !inlineDismissButton.isHidden {
+            let buttonFrame = inlineDismissButton.convert(inlineDismissButton.bounds, to: self)
+            if buttonFrame.contains(point) {
+                return inlineDismissButton
+            }
+        }
         let hit = super.hitTest(point, with: event)
         if chromePlacement == .compact, hit === contentAreaContainer, suggestionsTableView.isHidden {
             return nil
@@ -292,10 +293,10 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         suggestionsMaxHeightConstraint?.constant ?? Self.suggestionsMaxHeight
     }
 
-    /// Compact nonDuoPhone editing shows one inline Done check
+    /// Compact nonDuoPhone editing shows one inline dismiss
     /// trailing the capsule; all other states hide it.
-    var isDoneVisible: Bool {
-        !inlineDoneButton.isHidden
+    var isDismissVisible: Bool {
+        !inlineDismissButton.isHidden
     }
 
     func performDone() {
@@ -402,21 +403,27 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         capsuleView.addGestureRecognizer(capsuleTap)
         fieldRowStack.addArrangedSubview(capsuleView)
 
-        inlineDoneButton.translatesAutoresizingMaskIntoConstraints = false
-        inlineDoneButton.backgroundColor = .systemBlue
-        inlineDoneButton.tintColor = .white
-        inlineDoneButton.layer.cornerRadius = Self.doneDiameter / 2
-        inlineDoneButton.clipsToBounds = true
-        inlineDoneButton.accessibilityLabel = "Done"
-        let doneConfig = UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
-        inlineDoneButton.setImage(UIImage(systemName: "checkmark", withConfiguration: doneConfig), for: .normal)
-        inlineDoneButton.isHidden = true
-        inlineDoneButton.addAction(UIAction { [weak self] _ in self?.handleDone() }, for: .touchUpInside)
+        inlineDismissButton.translatesAutoresizingMaskIntoConstraints = false
+        var dismissConfig = UIButton.Configuration.glass()
+        dismissConfig.title = ""
+        dismissConfig.cornerStyle = .capsule
+        let dismissSymbol = UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
+        dismissConfig.image = UIImage(systemName: "xmark", withConfiguration: dismissSymbol)
+        dismissConfig.baseForegroundColor = .label
+        dismissConfig.baseBackgroundColor = .clear
+        inlineDismissButton.configuration = dismissConfig
+        inlineDismissButton.accessibilityLabel = "Dismiss"
+        inlineDismissButton.isHidden = true
+        inlineDismissButton.isUserInteractionEnabled = true
+        if #available(iOS 26.0, *) {
+            inlineDismissButton.cornerConfiguration = .capsule()
+        }
+        inlineDismissButton.addAction(UIAction { [weak self] _ in self?.handleDone() }, for: .touchUpInside)
         NSLayoutConstraint.activate([
-            inlineDoneButton.widthAnchor.constraint(equalToConstant: Self.doneDiameter),
-            inlineDoneButton.heightAnchor.constraint(equalToConstant: Self.doneDiameter)
+            inlineDismissButton.widthAnchor.constraint(equalToConstant: Self.dismissDiameter),
+            inlineDismissButton.heightAnchor.constraint(equalToConstant: Self.dismissDiameter)
         ])
-        fieldRowStack.addArrangedSubview(inlineDoneButton)
+        fieldRowStack.addArrangedSubview(inlineDismissButton)
 
         inputErrorLabel.translatesAutoresizingMaskIntoConstraints = false
         inputErrorLabel.font = .preferredFont(forTextStyle: .footnote)
@@ -425,6 +432,13 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         inputErrorLabel.numberOfLines = 2
         inputErrorLabel.isHidden = true
         bottomBarContainer.addSubview(inputErrorLabel)
+
+        // Keep the field row tappable above the keyboard.
+        contentAreaContainer.isUserInteractionEnabled = true
+        bottomBarContainer.isUserInteractionEnabled = true
+        fieldRowStack.isUserInteractionEnabled = true
+        capsuleView.isUserInteractionEnabled = true
+        bottomBarContainer.bringSubviewToFront(fieldRowStack)
     }
 
     private func setupSharedInputs() {
@@ -655,21 +669,11 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
             suggestionsMaxHeightConstraint
         ]
 
-        let compactContentTop = contentAreaContainer.topAnchor.constraint(
-            equalTo: safeAreaLayoutGuide.topAnchor, constant: 8
-        )
-        let compactContentBottom = contentAreaContainer.bottomAnchor.constraint(
-            equalTo: bottomBarContainer.topAnchor, constant: -8
-        )
-        let compactBarBottom = bottomBarContainer.bottomAnchor.constraint(
-            equalTo: keyboardLayoutGuide.topAnchor, constant: -8
-        )
-        let compactBarLeading = bottomBarContainer.leadingAnchor.constraint(
-            equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 8
-        )
-        let compactBarTrailing = bottomBarContainer.trailingAnchor.constraint(
-            equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -8
-        )
+        let compactContentTop = contentAreaContainer.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 8)
+        let compactContentBottom = contentAreaContainer.bottomAnchor.constraint(equalTo: bottomBarContainer.topAnchor, constant: -8)
+        let compactBarBottom = bottomBarContainer.bottomAnchor.constraint(equalTo: keyboardLayoutGuide.topAnchor, constant: -8)
+        let compactBarLeading = bottomBarContainer.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 8)
+        let compactBarTrailing = bottomBarContainer.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -8)
         compactConstraints = [
             compactContentTop, compactContentBottom, compactBarBottom,
             compactBarLeading, compactBarTrailing
@@ -758,8 +762,13 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     }
 
     private func updateVisibleContent() {
-        let shouldShowInlineDone = chromePlacement == .compact && isNonDuoPhone && isEditing
-        inlineDoneButton.isHidden = !shouldShowInlineDone
+        let shouldShowInlineDismiss = chromePlacement == .compact && isNonDuoPhone && isEditing
+        inlineDismissButton.isHidden = !shouldShowInlineDismiss
+
+        // Keep stale taps off rows behind the dismiss control.
+        if chromePlacement == .compact {
+            bottomBarContainer.bringSubviewToFront(fieldRowStack)
+        }
 
         let currentText = textField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let hasText = !currentText.isEmpty
@@ -839,9 +848,10 @@ extension AddressEditorView {
         regularCardView.addSubview(regularHeaderRow)
 
         leadingIconBadge.translatesAutoresizingMaskIntoConstraints = false
-        leadingIconBadge.backgroundColor = .tertiarySystemFill
-        leadingIconBadge.layer.cornerRadius = 14
-        leadingIconBadge.clipsToBounds = true
+        // Plain icon host; system glass owns chrome visuals.
+        leadingIconBadge.backgroundColor = .clear
+        leadingIconBadge.layer.cornerRadius = 0
+        leadingIconBadge.clipsToBounds = false
         leadingIconBadge.isUserInteractionEnabled = false
         regularHeaderRow.addSubview(leadingIconBadge)
 
