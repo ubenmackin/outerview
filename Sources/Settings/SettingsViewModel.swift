@@ -1,10 +1,8 @@
-//
-//  SettingsViewModel.swift
-//  OuterView
-//
+// Settings — Search engine plus data-clearance actions owner.
 
 import Foundation
 import Observation
+import WebKit
 
 @Observable
 @MainActor
@@ -41,6 +39,16 @@ final class SettingsViewModel {
 
     func clearHistory(historyStore: HistoryStore) throws {
         try historyStore.clear()
+    }
+
+    func clearWebsiteData(dataStore: WKWebsiteDataStore = .default()) async {
+        let types = WKWebsiteDataStore.allWebsiteDataTypes()
+        await dataStore.removeData(ofTypes: types, modifiedSince: .distantPast)
+    }
+
+    func clearHistoryAndWebsiteData(historyStore: HistoryStore, dataStore: WKWebsiteDataStore = .default()) async throws {
+        try clearHistory(historyStore: historyStore)
+        await clearWebsiteData(dataStore: dataStore)
     }
 
     func clearAllTabs(tabStore: TabStore) throws {

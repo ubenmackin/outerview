@@ -51,12 +51,51 @@ struct WebPageSnapshot: Sendable, Equatable {
     }
 }
 
+/// Delegate handling UI-level WebKit interactions: multi-window popups,
+/// programmatic window closing, and JavaScript alert/confirm/prompt panels.
+@MainActor
+protocol WebPageUIDelegateHandler: AnyObject {
+    func webPageController(
+        _ controller: WebPageController,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for action: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView?
+
+    func webPageControllerDidClose(_ controller: WebPageController)
+
+    func webPageController(
+        _ controller: WebPageController,
+        runJavaScriptAlertPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo
+    ) async
+
+    func webPageController(
+        _ controller: WebPageController,
+        runJavaScriptConfirmPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo
+    ) async -> Bool
+
+    func webPageController(
+        _ controller: WebPageController,
+        runJavaScriptTextInputPanelWithPrompt prompt: String,
+        defaultText: String?,
+        initiatedByFrame frame: WKFrameInfo
+    ) async -> String?
+}
+
 /// Wraps a single WKWebView with navigation actions, snapshot publication, and
 /// pull-to-refresh. A lifecycle layer only: chrome logic lives in
 /// BrowserRootViewController, which embeds `webView` full-bleed.
 @MainActor
 final class WebPageController: NSObject {
     let webView: WKWebView
+
+    /// Delegate handling UI events (popups, dialogs, closing).
+    weak var uiDelegateHandler: WebPageUIDelegateHandler?
+
+    /// Whether desktop website mode is currently forced on this page.
+    private(set) var isDesktopMode = false
 
     /// Shared download pipeline; nil in unit tests without a pipeline.
     weak var downloadsManager: DownloadsManager?
@@ -127,6 +166,7 @@ final class WebPageController: NSObject {
     init(configuration: WKWebViewConfiguration) {
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
+        webView.isInspectable = true
         // Full-bleed content: no automatic insets; Mode 3 parks below
         // the cluster via manual safeAreaTop inset instead of shrinking
         // the web view.
@@ -810,9 +850,92 @@ extension WebPageController {
     }
 }
 
+// MARK: - Desktop Mode
+
+extension WebPageController {
+    static let desktopUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
+
+    func toggleDesktopMode() {
+        isDesktopMode.toggle()
+        if isDesktopMode {
+            webView.customUserAgent = Self.desktopUserAgent
+        } else {
+            webView.customUserAgent = nil
+        }
+        reload()
+    }
+}
+
 // MARK: - WKUIDelegate
 
 extension WebPageController: WKUIDelegate {
+    func webView(
+        _: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        uiDelegateHandler?.webPageController(
+            self,
+            createWebViewWith: configuration,
+            for: navigationAction,
+            windowFeatures: windowFeatures
+        )
+    }
+
+    func webViewDidClose(_: WKWebView) {
+        uiDelegateHandler?.webPageControllerDidClose(self)
+    }
+
+    func webView(
+        _: WKWebView,
+        runJavaScriptAlertPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping @MainActor @Sendable () -> Void
+    ) {
+        guard let handler = uiDelegateHandler else {
+            completionHandler()
+            return
+        }
+        Task { @MainActor in
+            await handler.webPageController(self, runJavaScriptAlertPanelWithMessage: message, initiatedByFrame: frame)
+            completionHandler()
+        }
+    }
+
+    func webView(
+        _: WKWebView,
+        runJavaScriptConfirmPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping @MainActor @Sendable (Bool) -> Void
+    ) {
+        guard let handler = uiDelegateHandler else {
+            completionHandler(false)
+            return
+        }
+        Task { @MainActor in
+            let result = await handler.webPageController(self, runJavaScriptConfirmPanelWithMessage: message, initiatedByFrame: frame)
+            completionHandler(result)
+        }
+    }
+
+    func webView(
+        _: WKWebView,
+        runJavaScriptTextInputPanelWithPrompt prompt: String,
+        defaultText: String?,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping @MainActor @Sendable (String?) -> Void
+    ) {
+        guard let handler = uiDelegateHandler else {
+            completionHandler(nil)
+            return
+        }
+        Task { @MainActor in
+            let result = await handler.webPageController(self, runJavaScriptTextInputPanelWithPrompt: prompt, defaultText: defaultText, initiatedByFrame: frame)
+            completionHandler(result)
+        }
+    }
+
     func webView(
         _: WKWebView,
         contextMenuConfigurationForElement elementInfo: WKContextMenuElementInfo,

@@ -1,7 +1,4 @@
-//
-//  SettingsView.swift
-//  OuterView
-//
+// Settings — Preferences plus clearance confirmation UI.
 
 import os
 import SwiftUI
@@ -95,7 +92,7 @@ struct SettingsView: View {
                 }
 
                 Section("Data") {
-                    Button("Clear History", role: .destructive) {
+                    Button("Clear History and Website Data", role: .destructive) {
                         showingClearHistoryConfirm = true
                     }
                     Button("Clear All Tabs", role: .destructive) {
@@ -135,18 +132,20 @@ struct SettingsView: View {
             } message: { summary in
                 Text(SettingsViewModel.formattedSummary(summary))
             }
-            .alert("Clear History?", isPresented: $showingClearHistoryConfirm) {
+            .alert("Clear History and Website Data?", isPresented: $showingClearHistoryConfirm) {
                 Button("Clear", role: .destructive) {
-                    do {
-                        try viewModel.clearHistory(historyStore: historyStore)
-                        onDidClearHistory?()
-                    } catch {
-                        actionError = error.localizedDescription
+                    Task {
+                        do {
+                            try await viewModel.clearHistoryAndWebsiteData(historyStore: historyStore)
+                            onDidClearHistory?()
+                        } catch {
+                            actionError = error.localizedDescription
+                        }
                     }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This removes all browsing history.")
+                Text("This removes all browsing history, cookies, and website data.")
             }
             .alert("Clear All Tabs?", isPresented: $showingClearTabsConfirm) {
                 Button("Clear", role: .destructive) {

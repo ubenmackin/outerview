@@ -15,6 +15,7 @@ extension BrowserRootViewController {
         page.downloadsManager = downloadsManager
         page.isPrivateTab = tabs.first(where: { $0.id == id })?.isPrivate ?? true
         page.backgroundService = BackgroundDownloadService.shared
+        page.uiDelegateHandler = self
     }
 
     func ensureSnapshotListener(for id: UUID, page: WebPageController) {

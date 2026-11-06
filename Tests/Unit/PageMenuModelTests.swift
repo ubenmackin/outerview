@@ -1,7 +1,4 @@
-//
-//  PageMenuModelTests.swift
-//  OuterView
-//
+// ChromeTests — Page-menu ordering plus desktop/accessibility contract tests.
 
 @testable import OuterView
 import UIKit
@@ -69,6 +66,8 @@ final class PageMenuModelTests: XCTestCase {
         XCTAssertFalse(model.isReaderAvailable)
         XCTAssertEqual(model.textZoom, 1.0, accuracy: 0.001)
         XCTAssertFalse(model.canOpenDownloads)
+        XCTAssertFalse(model.isDesktopMode)
+        XCTAssertFalse(model.canToggleDesktopMode)
     }
 
     func testConstructionWithNewFields() throws {
@@ -79,7 +78,9 @@ final class PageMenuModelTests: XCTestCase {
             isReaderActive: true,
             isReaderAvailable: true,
             textZoom: 1.5,
-            canOpenDownloads: true
+            canOpenDownloads: true,
+            isDesktopMode: true,
+            canToggleDesktopMode: true
         )
         XCTAssertTrue(model.canAddToReadingList)
         XCTAssertTrue(model.isInReadingList)
@@ -87,6 +88,8 @@ final class PageMenuModelTests: XCTestCase {
         XCTAssertTrue(model.isReaderAvailable)
         XCTAssertEqual(model.textZoom, 1.5, accuracy: 0.001)
         XCTAssertTrue(model.canOpenDownloads)
+        XCTAssertTrue(model.isDesktopMode)
+        XCTAssertTrue(model.canToggleDesktopMode)
     }
 
     func testReadingListLabelFlip() {
@@ -94,6 +97,14 @@ final class PageMenuModelTests: XCTestCase {
         XCTAssertEqual(
             PageMenuModel(url: nil, isInReadingList: true).readingListTitle,
             "Remove from Reading List"
+        )
+    }
+
+    func testDesktopModeLabelFlip() {
+        XCTAssertEqual(PageMenuModel(url: nil).desktopModeTitle, "Request Desktop Website")
+        XCTAssertEqual(
+            PageMenuModel(url: nil, isDesktopMode: true).desktopModeTitle,
+            "Request Mobile Website"
         )
     }
 
@@ -125,7 +136,7 @@ final class PageMenuModelTests: XCTestCase {
         XCTAssertEqual(titles, [
             "Back", "Forward", "Reload", "Share",
             "Add Bookmark", "Add to Favorites", "Add to Reading List", "Show Reader",
-            "Find on Page", "Text Zoom", "Zoom In", "Zoom Out", "Reset", "Downloads",
+            "Find on Page", "Text Zoom", "Zoom In", "Zoom Out", "Reset", "Request Desktop Website", "Downloads",
             "Open Start Page", "Settings…"
         ])
     }
@@ -145,7 +156,7 @@ final class PageMenuModelTests: XCTestCase {
         XCTAssertEqual(titles, [
             "Back", "Forward", "Reload", "Share",
             "Add Bookmark", "Add to Favorites", "Add to Reading List",
-            "Find on Page", "Text Zoom", "Zoom In", "Zoom Out", "Reset", "Downloads",
+            "Find on Page", "Text Zoom", "Zoom In", "Zoom Out", "Reset", "Request Desktop Website", "Downloads",
             "Open Start Page", "Settings…"
         ])
     }
@@ -159,15 +170,18 @@ final class PageMenuModelTests: XCTestCase {
             isInReadingList: true,
             isReaderActive: true,
             isReaderAvailable: true,
-            canOpenDownloads: true
+            canOpenDownloads: true,
+            isDesktopMode: true
         )
         let titles = flattenedTitles(root.makePageMenu(model: model))
         XCTAssertTrue(titles.contains("Remove from Favorites"))
         XCTAssertTrue(titles.contains("Remove from Reading List"))
         XCTAssertTrue(titles.contains("Hide Reader"))
+        XCTAssertTrue(titles.contains("Request Mobile Website"))
         XCTAssertFalse(titles.contains("Add to Favorites"))
         XCTAssertFalse(titles.contains("Add to Reading List"))
         XCTAssertFalse(titles.contains("Show Reader"))
+        XCTAssertFalse(titles.contains("Request Desktop Website"))
     }
 
     func testZoomDisabledWithoutPage() throws {
@@ -199,7 +213,7 @@ final class PageMenuModelTests: XCTestCase {
         let actions = Dictionary(
             uniqueKeysWithValues: allActions(menu).map { ($0.title, $0) }
         )
-        for title in ["Add to Reading List", "Show Reader", "Zoom In", "Zoom Out", "Reset", "Downloads"] {
+        for title in ["Add to Reading List", "Show Reader", "Zoom In", "Zoom Out", "Reset", "Request Desktop Website", "Downloads"] {
             let action = try XCTUnwrap(actions[title], title)
             XCTAssertFalse(action.accessibilityLabel?.isEmpty ?? true, title)
         }

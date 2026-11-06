@@ -1,7 +1,4 @@
-//
-//  BrowserRootViewController+PageMenu.swift
-//  OuterView
-//
+// RootView — Page-menu composition plus desktop toggle dispatch.
 
 import os
 import SwiftUI
@@ -23,6 +20,7 @@ extension BrowserRootViewController {
         }
         let readerActive = page?.isReaderActive ?? false
         let readerBlocked = page?.isReaderUnavailable ?? false
+        let isDesktop = page?.isDesktopMode ?? false
         return PageMenuModel(
             url: url,
             canGoBack: snapshot?.canGoBack ?? false,
@@ -33,7 +31,9 @@ extension BrowserRootViewController {
             isReaderActive: readerActive,
             isReaderAvailable: readerActive || (hasPage && !readerBlocked),
             textZoom: page?.currentTextZoom() ?? SiteZoomStore.defaultZoom,
-            canOpenDownloads: true
+            canOpenDownloads: true,
+            isDesktopMode: isDesktop,
+            canToggleDesktopMode: hasPage
         )
     }
 
@@ -198,11 +198,24 @@ extension BrowserRootViewController {
             self?.presentDownloadsFromMenu()
         }
         downloadsAction.accessibilityLabel = "Downloads"
+        let desktopAction = UIAction(
+            title: model.desktopModeTitle,
+            image: UIImage(systemName: model.isDesktopMode ? "iphone" : "desktopcomputer"),
+            attributes: model.canToggleDesktopMode ? [] : .disabled
+        ) { [weak self] _ in
+            self?.toggleDesktopModeFromMenu()
+        }
+        desktopAction.accessibilityLabel = model.desktopModeTitle
         return UIMenu(options: .displayInline, children: [
             findAction,
             zoomMenu,
+            desktopAction,
             downloadsAction
         ])
+    }
+
+    func toggleDesktopModeFromMenu() {
+        activePage()?.toggleDesktopMode()
     }
 
     private func makeNavMenu() -> UIMenu {
