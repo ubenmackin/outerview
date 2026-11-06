@@ -1,7 +1,4 @@
-//
-//  BookmarkEditorView.swift
-//  OuterView
-//
+// Bookmarks — Editor surface for title/URL/location.
 
 import Observation
 import SwiftUI
@@ -32,10 +29,10 @@ final class BookmarkEditorModel {
         case let .editBookmark(bookmark):
             self.title = bookmark.title
             self.urlString = bookmark.url.absoluteString
-            if bookmark.isFavorite {
-                self.selectedLocation = .favorites
-            } else if let fid = bookmark.folderId {
+            if let fid = bookmark.folderId {
                 self.selectedLocation = .folder(fid)
+            } else if bookmark.isFavorite {
+                self.selectedLocation = .favorites
             } else {
                 self.selectedLocation = .root
             }
@@ -45,6 +42,8 @@ final class BookmarkEditorModel {
             self.urlString = ""
             if let pid = folder.parentId {
                 self.selectedLocation = .folder(pid)
+            } else if folder.isFavorite {
+                self.selectedLocation = .favorites
             } else {
                 self.selectedLocation = .root
             }
@@ -86,6 +85,7 @@ final class BookmarkEditorModel {
             case .root:
                 try bookmarkStore.add(title: trimmedTitle, url: url, isFavorite: false, folderId: nil)
             case let .folder(folderId):
+                // Store resolves the flag from the folder.
                 try bookmarkStore.add(title: trimmedTitle, url: url, isFavorite: false, folderId: folderId)
             }
 
@@ -99,13 +99,14 @@ final class BookmarkEditorModel {
             )
 
         case let .editFolder(folder):
-            let parentId: UUID? = switch selectedLocation {
-            case let .folder(id):
-                id
-            default:
-                nil
+            switch selectedLocation {
+            case .favorites:
+                try bookmarkStore.updateFolder(id: folder.id, title: trimmedTitle, parentId: nil, isFavorite: true)
+            case .root:
+                try bookmarkStore.updateFolder(id: folder.id, title: trimmedTitle, parentId: nil, isFavorite: false)
+            case let .folder(parentId):
+                try bookmarkStore.updateFolder(id: folder.id, title: trimmedTitle, parentId: parentId)
             }
-            try bookmarkStore.updateFolder(id: folder.id, title: trimmedTitle, parentId: parentId)
         }
     }
 }
@@ -248,8 +249,7 @@ struct BookmarkEditorView: View {
     }
 
     private func loadLocationOptions() {
-        let allFolders = bookmarkStore.fetchFolders(parentId: nil) + allDescendantFolders()
-        let uniqueFolders = Dictionary(grouping: allFolders, by: \.id).compactMap(\.value.first)
+        let uniqueFolders = bookmarkStore.fetchAllFolders()
 
         if case let .editFolder(folder) = model.target {
             locationOptions = BookmarkLocationTree.optionsForFolder(
@@ -259,22 +259,5 @@ struct BookmarkEditorView: View {
         } else {
             locationOptions = BookmarkLocationTree.optionsForBookmark(folders: uniqueFolders)
         }
-    }
-
-    private func allDescendantFolders() -> [BookmarkFolder] {
-        var results: [BookmarkFolder] = []
-        var queue = bookmarkStore.fetchFolders(parentId: nil)
-        var visited = Set<UUID>()
-        while !queue.isEmpty {
-            let next = queue.removeFirst()
-            if visited.contains(next.id) {
-                continue
-            }
-            visited.insert(next.id)
-            results.append(next)
-            let children = bookmarkStore.fetchFolders(parentId: next.id)
-            queue.append(contentsOf: children)
-        }
-        return results
     }
 }

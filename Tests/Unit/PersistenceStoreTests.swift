@@ -1,7 +1,4 @@
-//
-//  PersistenceStoreTests.swift
-//  OuterView
-//
+// Persistence — Bookmark store contract tests.
 
 @testable import OuterView
 import SwiftData
@@ -368,6 +365,42 @@ final class PersistenceStoreTests: XCTestCase {
         XCTAssertEqual(store.fetchBookmarks(folderId: rootFolder.id).count, 0)
         // Root bookmark remains
         XCTAssertEqual(store.fetchBookmarks(folderId: nil).count, 1)
+    }
+
+    func testFavoriteFoldersAndRecursiveFetch() throws {
+        let database = try makeDatabase()
+        let store = BookmarkStore(database: database)
+
+        let favFolder = try store.createFolder(title: "Work Favs", parentId: nil, isFavorite: true)
+        let subFavFolder = try store.createFolder(title: "Projects", parentId: favFolder.id)
+        XCTAssertTrue(favFolder.isFavorite)
+        XCTAssertTrue(subFavFolder.isFavorite)
+
+        let bmFolder = try store.createFolder(title: "Reading", parentId: nil, isFavorite: false)
+        XCTAssertFalse(bmFolder.isFavorite)
+
+        // Filter root folders by favorite
+        XCTAssertEqual(store.fetchFolders(parentId: nil, isFavorite: true).map(\.title), ["Work Favs"])
+        XCTAssertEqual(store.fetchFolders(parentId: nil, isFavorite: false).map(\.title), ["Reading"])
+
+        try store.add(title: "Work Site", url: url("work"), isFavorite: true, folderId: favFolder.id)
+        try store.add(title: "Project Alpha", url: url("project"), isFavorite: true, folderId: subFavFolder.id)
+        try store.add(title: "Top Favorite", url: url("topfav"), isFavorite: true, folderId: nil)
+
+        // fetchFavorites(rootOnly: true) returns only top-level
+        XCTAssertEqual(store.fetchFavorites(rootOnly: true).map(\.title), ["Top Favorite"])
+        // fetchFavorites(rootOnly: false) returns all favorites
+        XCTAssertEqual(store.fetchFavorites(rootOnly: false).count, 3)
+
+        // fetchAllBookmarks collects all descendants
+        let allFavBookmarks = store.fetchAllBookmarks(inFolderId: favFolder.id)
+        XCTAssertEqual(Set(allFavBookmarks.map(\.title)), ["Work Site", "Project Alpha"])
+
+        // Moving folder to Bookmarks root updates descendants
+        try store.updateFolder(id: favFolder.id, title: "Work Moved", parentId: nil, isFavorite: false)
+        XCTAssertFalse(store.fetchFolder(id: favFolder.id)?.isFavorite ?? true)
+        XCTAssertFalse(store.fetchFolder(id: subFavFolder.id)?.isFavorite ?? true)
+        XCTAssertFalse(store.fetchAll().first { $0.title == "Work Site" }?.isFavorite ?? true)
     }
 
     // MARK: - Recent Searches

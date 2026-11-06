@@ -1,7 +1,4 @@
-//
-//  BookmarksBrowserView+Options.swift
-//  OuterView
-//
+// Bookmarks — Display/sort/menu options for browser.
 
 import os
 import UIKit
@@ -247,9 +244,9 @@ extension BookmarksBrowserView {
         var displayMode: BookmarksDisplayMode
         var sortMode: BookmarksSortMode
         var showsFoldersOnTop: Bool
-        var isViewingFavorites: Bool
         var hasSelectableItems: Bool
         var canCreateFolder: Bool
+        var isSearching: Bool = false
         var onSelectDisplayMode: (BookmarksDisplayMode) -> Void
         var onSelectSortMode: (BookmarksSortMode) -> Void
         var onToggleFoldersOnTop: () -> Void
@@ -287,7 +284,7 @@ extension BookmarksBrowserView {
         let foldersOnTopAction = UIAction(
             title: "Show Folders on Top",
             image: UIImage(systemName: "folder"),
-            attributes: config.isViewingFavorites ? [.disabled] : [],
+            attributes: config.isSearching ? [.disabled] : [],
             state: config.showsFoldersOnTop ? .on : .off
         ) { _ in config.onToggleFoldersOnTop() }
 

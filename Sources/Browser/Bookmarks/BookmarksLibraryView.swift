@@ -29,6 +29,29 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     var onInlineDelete: (() -> Void)?
     var inlineMenu: UIMenu?
     var onInlineDone: (() -> Void)?
+    var tabGroupsProvider: (() -> [TabGroup])? {
+        didSet {
+            bookmarksBrowserView?.tabGroupsProvider = tabGroupsProvider
+        }
+    }
+
+    var onOpenURLsInBackground: (([URL]) -> Void)? {
+        didSet {
+            bookmarksBrowserView?.onOpenURLsInBackground = onOpenURLsInBackground
+        }
+    }
+
+    var onOpenURLsInTabGroup: (([URL], TabGroup) -> Void)? {
+        didSet {
+            bookmarksBrowserView?.onOpenURLsInTabGroup = onOpenURLsInTabGroup
+        }
+    }
+
+    var onOpenURLsInNewTabGroup: (([URL], String) -> Void)? {
+        didSet {
+            bookmarksBrowserView?.onOpenURLsInNewTabGroup = onOpenURLsInNewTabGroup
+        }
+    }
 
     var chromePlacement: ChromePlacement = .compact {
         didSet {
@@ -236,6 +259,16 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         bookView.onDidMutateBookmarks = { [weak self] in
             self?.startPageView?.reload()
             self?.onDidMutateLibraryData?()
+        }
+        bookView.tabGroupsProvider = tabGroupsProvider
+        bookView.onOpenURLsInBackground = { [weak self] urls in
+            self?.onOpenURLsInBackground?(urls)
+        }
+        bookView.onOpenURLsInTabGroup = { [weak self] urls, group in
+            self?.onOpenURLsInTabGroup?(urls, group)
+        }
+        bookView.onOpenURLsInNewTabGroup = { [weak self] urls, name in
+            self?.onOpenURLsInNewTabGroup?(urls, name)
         }
         self.bookmarksBrowserView = bookView
 

@@ -1,7 +1,4 @@
-//
-//  BookmarkImporterTests.swift
-//  OuterView
-//
+// Import — Importer routing plus dedupe tests.
 
 @testable import OuterView
 import XCTest
@@ -27,6 +24,31 @@ final class BookmarkImporterTests: XCTestCase {
         XCTAssertEqual(Set(stored.filter(\.isFavorite).map(\.title)), ["News & Notes"])
         let article = try XCTUnwrap(stored.first { $0.title == "Long Article" })
         XCTAssertFalse(article.isFavorite)
+    }
+
+    func testImportCreatesFoldersAndNestsBookmarks() async throws {
+        let store = try makeStore()
+        _ = try await BookmarkImporter().importFromData(ImportFixtures.safariExport(), bookmarkStore: store)
+
+        let rootFolders = store.fetchFolders(parentId: nil, isFavorite: false)
+        XCTAssertEqual(rootFolders.map(\.title), ["Reading"])
+        let readingFolder = try XCTUnwrap(rootFolders.first)
+
+        let readingBookmarks = store.fetchBookmarks(folderId: readingFolder.id)
+        XCTAssertEqual(Set(readingBookmarks.map(\.title)), ["Long Article", "Nested Docs"])
+
+        let subfolders = store.fetchFolders(parentId: readingFolder.id)
+        XCTAssertEqual(subfolders.map(\.title), ["Inner"])
+        let innerFolder = try XCTUnwrap(subfolders.first)
+
+        let innerBookmarks = store.fetchBookmarks(folderId: innerFolder.id)
+        XCTAssertEqual(innerBookmarks.map(\.title), ["Deep Page"])
+
+        // Favorites Bar is recognized as Favorites container, so no regular folder is created
+        let favFolders = store.fetchFolders(parentId: nil, isFavorite: true)
+        XCTAssertTrue(favFolders.isEmpty)
+        let favBookmarks = store.fetchFavorites()
+        XCTAssertEqual(favBookmarks.map(\.title), ["News & Notes"])
     }
 
     func testRepeatedImportDeduplicatesAgainstStore() async throws {

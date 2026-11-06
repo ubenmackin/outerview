@@ -1,7 +1,4 @@
-//
-//  BookmarkHTMLParser.swift
-//  OuterView
-//
+// Import — Netscape HTML parser for Safari exports.
 
 import Foundation
 
@@ -12,10 +9,29 @@ struct ParsedBookmark: Equatable, Sendable {
     let addedDate: Date?
 }
 
+struct ParsedFolder: Equatable, Sendable {
+    let title: String
+    let parentPath: [String]
+    let addedDate: Date?
+}
+
 struct BookmarkParseResult: Equatable, Sendable {
     let bookmarks: [ParsedBookmark]
+    let folders: [ParsedFolder]
     let skippedInvalid: Int
     let truncated: Int
+
+    init(
+        bookmarks: [ParsedBookmark],
+        folders: [ParsedFolder] = [],
+        skippedInvalid: Int = 0,
+        truncated: Int = 0
+    ) {
+        self.bookmarks = bookmarks
+        self.folders = folders
+        self.skippedInvalid = skippedInvalid
+        self.truncated = truncated
+    }
 }
 
 enum BookmarkParseError: Error, Equatable {
@@ -31,7 +47,7 @@ enum BookmarkHTMLParser {
     }
 
     private enum LineEvent {
-        case folderHeader(String)
+        case folderHeader(name: String, addDate: String?)
         case bookmark(href: String, title: String, addDate: String?)
         case listOpen
         case listClose
@@ -85,20 +101,58 @@ enum BookmarkHTMLParser {
 
         var folderStack: [String] = []
         var pendingFolderName: String?
+        var pendingFolderAddDate: String?
+        var folders: [ParsedFolder] = []
         var bookmarks: [ParsedBookmark] = []
         var skippedInvalid = 0
         var truncated = 0
         let regex = try RegexKit()
 
+        func flushPendingFolder() {
+            // Dangling H3 without a list is valid empty-folder encoding.
+            guard let name = pendingFolderName else { return }
+            let parentPath = folderStack.filter { !$0.isEmpty }
+            if folders.count + bookmarks.count < BookmarkLimits.maxEntries {
+                folders.append(ParsedFolder(
+                    title: name,
+                    parentPath: parentPath,
+                    addedDate: date(fromEpoch: pendingFolderAddDate)
+                ))
+            } else {
+                truncated += 1
+            }
+            pendingFolderName = nil
+            pendingFolderAddDate = nil
+        }
+
         for line in text.components(separatedBy: .newlines) {
             for event in events(in: line, regex: regex) {
                 switch event {
-                case let .folderHeader(name):
+                case let .folderHeader(name, addDate):
+                    flushPendingFolder()
                     pendingFolderName = name
+                    pendingFolderAddDate = addDate
                 case .listOpen:
-                    folderStack.append(pendingFolderName ?? "")
-                    pendingFolderName = nil
+                    if let name = pendingFolderName {
+                        let parentPath = folderStack.filter { !$0.isEmpty }
+                        // Folders and bookmarks share the entry cap so huge files stay bounded.
+                        if folders.count + bookmarks.count < BookmarkLimits.maxEntries {
+                            folders.append(ParsedFolder(
+                                title: name,
+                                parentPath: parentPath,
+                                addedDate: date(fromEpoch: pendingFolderAddDate)
+                            ))
+                        } else {
+                            truncated += 1
+                        }
+                        folderStack.append(name)
+                        pendingFolderName = nil
+                        pendingFolderAddDate = nil
+                    } else {
+                        folderStack.append("")
+                    }
                 case .listClose:
+                    flushPendingFolder()
                     if !folderStack.isEmpty {
                         folderStack.removeLast()
                     }
@@ -116,7 +170,7 @@ enum BookmarkHTMLParser {
                         folderPath: folderStack.filter { !$0.isEmpty },
                         addedDate: date(fromEpoch: addDate)
                     )
-                    if bookmarks.count < BookmarkLimits.maxEntries {
+                    if folders.count + bookmarks.count < BookmarkLimits.maxEntries {
                         bookmarks.append(entry)
                     } else {
                         truncated += 1
@@ -125,8 +179,10 @@ enum BookmarkHTMLParser {
             }
         }
 
+        flushPendingFolder()
         return BookmarkParseResult(
             bookmarks: bookmarks,
+            folders: folders,
             skippedInvalid: skippedInvalid,
             truncated: truncated
         )
@@ -146,8 +202,11 @@ enum BookmarkHTMLParser {
         }
 
         for match in regex.folderHeader.matches(in: line, range: wholeLine) {
+            guard let tagRange = Range(match.range, in: line) else { continue }
+            let tag = String(line[tagRange])
+            let addDate = firstCapture(of: regex.addDate, in: tag)
             let name = decodeEntities(capture(match, 1) ?? "")
-            timed.append((match.range.location, .folderHeader(name)))
+            timed.append((match.range.location, .folderHeader(name: name, addDate: addDate)))
         }
         for match in regex.anchorTag.matches(in: line, range: wholeLine) {
             guard let tagRange = Range(match.range, in: line) else { continue }
