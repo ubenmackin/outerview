@@ -107,8 +107,8 @@ final class OverviewInlineTests: XCTestCase {
         XCTAssertEqual(TabStripView.stripHeight, 44)
         XCTAssertEqual(TopBarView.remnantHeight, 48)
         XCTAssertEqual(BrowserRootViewController.regularRemnantHeight, TopBarView.remnantHeight)
-        XCTAssertEqual(TopBarView.trailingStatusInset, 164)
-        XCTAssertEqual(BrowserRootViewController.regularTrailingClearance, 164)
+        XCTAssertEqual(TopBarView.trailingStatusInset, 84)
+        XCTAssertEqual(BrowserRootViewController.regularTrailingClearance, 84)
     }
 
     func testInlineBarVisibilityPerPlacement() {
@@ -134,17 +134,59 @@ final class OverviewInlineTests: XCTestCase {
         let root = fixture.root
         root.applyStructuralLayout()
         XCTAssertEqual(root.chromePlacement, .regular)
-        XCTAssertTrue(root.overviewController.showsInlineCommands)
-        XCTAssertTrue(root.overviewController.isInlineBarVisible)
+        XCTAssertTrue(root.overviewController.isRegular)
+        XCTAssertFalse(root.overviewController.showsInlineCommands)
+        XCTAssertFalse(root.overviewController.isInlineBarVisible)
         XCTAssertTrue(root.railView.isHidden)
         root.traitOverrides.horizontalSizeClass = .compact
         fixture.parent.view.layoutIfNeeded()
         root.view.layoutIfNeeded()
         root.applyStructuralLayout()
         XCTAssertEqual(root.chromePlacement, .compact)
+        XCTAssertFalse(root.overviewController.isRegular)
         XCTAssertFalse(root.overviewController.showsInlineCommands)
         XCTAssertFalse(root.overviewController.isInlineBarVisible)
         XCTAssertFalse(root.railView.isHidden)
+    }
+
+    func testRegularOverviewShowsTopBarButtonsAndHidesAddressBar() throws {
+        let fixture = try makeRegularRoot()
+        let root = fixture.root
+        root.applyStructuralLayout()
+        XCTAssertEqual(root.chromePlacement, .regular)
+        XCTAssertFalse(root.topBarView.isHidden)
+        XCTAssertFalse(root.pillView.isHidden)
+
+        root.setOverviewVisible(true)
+        root.view.layoutIfNeeded()
+
+        XCTAssertTrue(root.isOverviewVisible)
+        XCTAssertFalse(root.topBarView.isHidden)
+        XCTAssertTrue(root.pillView.isHidden)
+        XCTAssertFalse(root.overviewController.showsInlineCommands)
+        XCTAssertFalse(root.overviewController.isInlineBarVisible)
+        XCTAssertTrue(root.overviewController.isRegular)
+
+        root.setOverviewVisible(false)
+        root.view.layoutIfNeeded()
+
+        XCTAssertFalse(root.isOverviewVisible)
+        XCTAssertFalse(root.topBarView.isHidden)
+        XCTAssertFalse(root.pillView.isHidden)
+    }
+
+    func testRegularTabOverviewUsesLandscapeCardAspectRatio() {
+        let overview = makeOverview()
+        overview.isRegular = false
+        overview.view.bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+        overview.view.layoutIfNeeded()
+        let portraitItemSize = (overview.collectionView.collectionViewLayout as? UICollectionViewFlowLayout)?.itemSize ?? .zero
+        XCTAssertGreaterThan(portraitItemSize.height, portraitItemSize.width)
+
+        overview.isRegular = true
+        overview.view.layoutIfNeeded()
+        let landscapeItemSize = (overview.collectionView.collectionViewLayout as? UICollectionViewFlowLayout)?.itemSize ?? .zero
+        XCTAssertLessThan(landscapeItemSize.height, landscapeItemSize.width)
     }
 
     func testMode3OverviewShowsTopToolbar() throws {
@@ -256,6 +298,30 @@ final class OverviewInlineTests: XCTestCase {
 
         overview.setItems([item1, item2], selectedID: UUID())
         XCTAssertNil(overview.selectedCardFrame(in: overview.view))
+    }
+
+    func testRegularOverviewBringsTopBarToFrontAndHidesPill() throws {
+        let (_, root) = try makeRegularRoot()
+        root.applyChromePlacement(for: .regular)
+        root.view.layoutIfNeeded()
+
+        root.setOverviewVisible(true)
+        root.view.layoutIfNeeded()
+
+        XCTAssertFalse(root.topBarView.isHidden)
+        XCTAssertTrue(root.pillView.isHidden)
+        XCTAssertTrue(root.tabStripView.isHidden)
+
+        guard let overviewIndex = root.view.subviews.firstIndex(of: root.overviewView),
+              let topBarIndex = root.view.subviews.firstIndex(of: root.topBarView)
+        else {
+            XCTFail("overviewView and topBarView must be subviews")
+            return
+        }
+        XCTAssertGreaterThan(topBarIndex, overviewIndex, "topBarView must be in front of overviewView in regular mode")
+
+        let labels = (root.topBarView.leadingButtons + root.topBarView.trailingButtons).compactMap(\.accessibilityLabel)
+        XCTAssertTrue(labels.contains("Search") || labels.contains("Overview Menu") || labels.contains("New Tab") || labels.contains("Done"))
     }
 }
 

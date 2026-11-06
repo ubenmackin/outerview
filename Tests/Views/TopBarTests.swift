@@ -9,14 +9,11 @@ import XCTest
 @MainActor
 final class TopBarTests: XCTestCase {
     private func railLabels(in root: BrowserRootViewController) -> [String] {
-        let stacks = root.railView.subviews.compactMap { $0 as? UIStackView }
-        let toolbars = stacks.flatMap(\.arrangedSubviews).compactMap { $0 as? UIToolbar }
-        return toolbars.compactMap(\.items).flatMap(\.self).compactMap(\.accessibilityLabel)
+        root.railView.buttons.compactMap(\.accessibilityLabel)
     }
 
     private func toolbarLabels(in root: BrowserRootViewController) -> [String] {
-        let items = (root.topBarView.leadingToolbar.items ?? []) + (root.topBarView.trailingToolbar.items ?? [])
-        return items.compactMap(\.accessibilityLabel)
+        (root.topBarView.leadingButtons + root.topBarView.trailingButtons).compactMap(\.accessibilityLabel)
     }
 
     func testPlacementResolution() {
@@ -31,7 +28,7 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(TopBarView.barHeight, 84)
         XCTAssertEqual(TopBarView.remnantHeight, 48)
         XCTAssertEqual(TopBarView.horizontalInset, 28)
-        XCTAssertEqual(TopBarView.trailingStatusInset, 164)
+        XCTAssertEqual(TopBarView.trailingStatusInset, 84)
         XCTAssertEqual(TopBarView.clusterSpacing, 12)
         XCTAssertEqual(TopBarView.expandedPillMaxWidth, 380)
         let bar = TopBarView()
@@ -54,7 +51,7 @@ final class TopBarTests: XCTestCase {
             $0.firstItem as? UIStackView === bar.trailingStack
                 && $0.firstAttribute == .trailing
         }
-        XCTAssertEqual(trailingInset?.constant, -164)
+        XCTAssertEqual(trailingInset?.constant, -84)
         bar.setCollapsed(true)
         XCTAssertTrue(bar.isCollapsed)
         XCTAssertEqual(bar.currentHeightConstant, 48)
@@ -70,16 +67,16 @@ final class TopBarTests: XCTestCase {
             prefix: [.back(handler: {}), .bookmarks(handler: {})],
             suffix: [.newTab(handler: {}), .tabs(handler: {})]
         )
-        XCTAssertEqual(bar.leadingToolbar.items?.count, 2)
-        XCTAssertEqual(bar.trailingToolbar.items?.count, 2)
-        XCTAssertEqual(bar.leadingToolbar.items?.compactMap(\.accessibilityLabel), ["Back", "Bookmarks"])
-        XCTAssertEqual(bar.trailingToolbar.items?.compactMap(\.accessibilityLabel), ["New Tab", "Tabs"])
-        // System toolbar hosts bar items with glass background; no custom circles remain.
-        XCTAssertTrue(bar.leadingToolbar.items?.allSatisfy { $0.image != nil } ?? false)
+        XCTAssertEqual(bar.leadingButtons.count, 2)
+        XCTAssertEqual(bar.trailingButtons.count, 2)
+        XCTAssertEqual(bar.leadingButtons.compactMap(\.accessibilityLabel), ["Back", "Bookmarks"])
+        XCTAssertEqual(bar.trailingButtons.compactMap(\.accessibilityLabel), ["New Tab", "Tabs"])
+        // Stacks host native glass buttons with images.
+        XCTAssertTrue(bar.leadingButtons.allSatisfy { $0.configuration?.image != nil })
         bar.setItems(prefix: [], suffix: [.done(handler: {})])
-        XCTAssertEqual(bar.leadingToolbar.items?.count, 0)
-        XCTAssertEqual(bar.trailingToolbar.items?.count, 1)
-        XCTAssertEqual(bar.trailingToolbar.items?.first?.tintColor, .systemBlue)
+        XCTAssertEqual(bar.leadingButtons.count, 0)
+        XCTAssertEqual(bar.trailingButtons.count, 1)
+        XCTAssertEqual(bar.trailingButtons.first?.configuration?.baseBackgroundColor, .systemBlue)
     }
 
     func testPillSlotParentingPerPlacement() throws {
@@ -362,5 +359,37 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(SystemToolbarMapper.symbolPointSize, 18)
         XCTAssertEqual(TopBarView.barHeight, 84)
         XCTAssertEqual(TopBarView.remnantHeight, 48)
+    }
+
+    func testTopBarRetainsBrowsingButtonsDuringDownloadsAndSettings() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let root = BrowserRootViewController(database: database)
+        let parent = UIViewController()
+        TestWindow.attach(parent, frame: CGRect(x: 0, y: 0, width: 951, height: 669))
+        parent.addChild(root)
+        root.traitOverrides.horizontalSizeClass = .regular
+        parent.view.addSubview(root.view)
+        root.didMove(toParent: parent)
+        root.applyChromePlacement(for: .regular)
+        root.updateRailItems()
+        root.view.layoutIfNeeded()
+
+        let initialLabels = toolbarLabels(in: root)
+        XCTAssertEqual(initialLabels, ["Back", "Bookmarks", "New Tab", "Tabs"])
+
+        // Present downloads sheet
+        root.isDownloadsVisible = true
+        root.updateRailItems()
+        root.view.layoutIfNeeded()
+
+        XCTAssertEqual(toolbarLabels(in: root), ["Back", "Bookmarks", "New Tab", "Tabs"], "TopBarView must retain browsing buttons during downloads sheet")
+
+        // Reset downloads and present settings sheet
+        root.isDownloadsVisible = false
+        root.isSettingsVisible = true
+        root.updateRailItems()
+        root.view.layoutIfNeeded()
+
+        XCTAssertEqual(toolbarLabels(in: root), ["Back", "Bookmarks", "New Tab", "Tabs"], "TopBarView must retain browsing buttons during settings sheet")
     }
 }

@@ -390,7 +390,8 @@ final class BrowserRootViewController: UIViewController {
                 pillWidthConstraint.constant = AddressBarView.widthForBounds(pillReferenceWidth)
             }
         }
-        overviewController.showsInlineCommands = (placement == .regular || interfaceMode == .nonDuoPhone)
+        overviewController.isRegular = (placement == .regular)
+        overviewController.showsInlineCommands = (interfaceMode == .nonDuoPhone)
         editorView.applyPlacement(for: placement)
         if !isOverviewVisible {
             updateRailItems()
@@ -484,10 +485,10 @@ final class BrowserRootViewController: UIViewController {
     }
 
     /// Inline `OverlayCardView` sheets hide `TopBarView`'s button stacks on
-    /// `.regular`. Modal `LibrarySheetViewController` and `.regular` address
-    /// editing keep `TopBarView`'s browsing buttons visible underneath.
+    /// `.regular`. Modal sheets (Settings, Downloads, Library) keep
+    /// `TopBarView`'s browsing buttons and tab strip visible underneath.
     var suppressesRegularToolbarButtons: Bool {
-        isSettingsVisible || isDownloadsVisible || (isBookmarkEditorVisible && !isBookmarkEditorPresentedModally)
+        isBookmarkEditorVisible && !isBookmarkEditorPresentedModally
     }
 
     var isEditingAddress = false
@@ -793,7 +794,8 @@ extension BrowserRootViewController {
         }
         applyChromePlacement(for: placement)
         editorView.chromePlacement = placement
-        overviewController.showsInlineCommands = (placement == .regular || interfaceMode == .nonDuoPhone)
+        overviewController.isRegular = (placement == .regular)
+        overviewController.showsInlineCommands = (interfaceMode == .nonDuoPhone)
         bookmarksLibraryView.isNonDuoPhone = (interfaceMode == .nonDuoPhone)
         for overlay in [libraryOverlay, settingsOverlay, downloadsOverlay, bookmarkEditorOverlay]
             where overlay.isHidden

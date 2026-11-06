@@ -68,7 +68,7 @@ enum RegularHeaderBackground {
 }
 
 /// Regular-width toolbar flanking the shared pill slot; blurred behind.
-/// Leading inset 28, trailing inset 164, pill gaps plus stack spacing 12.
+/// Leading inset 28, trailing inset 84, pill gaps plus stack spacing 12.
 /// Expanded 84 pt collapses to 48 pt; pill caps at 380 centered.
 @MainActor
 final class TopBarView: UIView {
@@ -77,7 +77,7 @@ final class TopBarView: UIView {
     nonisolated static let mode3BarHeight: CGFloat = 44
     nonisolated static let horizontalInset: CGFloat = 28
     nonisolated static let nonDuoHorizontalInset: CGFloat = 16
-    nonisolated static let trailingStatusInset: CGFloat = 164
+    nonisolated static let trailingStatusInset: CGFloat = 84
     nonisolated static let clusterSpacing: CGFloat = 12
     nonisolated static let expandedPillMaxWidth: CGFloat = 380
     nonisolated static var minifiedPillMinWidth: CGFloat {
@@ -90,11 +90,17 @@ final class TopBarView: UIView {
 
     let leadingStack = UIStackView()
     let trailingStack = UIStackView()
-    let leadingToolbar = SystemToolbarMapper.toolbar(items: [])
-    let trailingToolbar = SystemToolbarMapper.toolbar(items: [])
     let pillSlotView = UIView()
     var onSlotWidthChanged: (() -> Void)?
     private let blurView = UIVisualEffectView(effect: RegularHeaderBackground.makeBlurEffect())
+
+    var leadingButtons: [UIButton] {
+        leadingStack.arrangedSubviews.compactMap { $0 as? UIButton }
+    }
+
+    var trailingButtons: [UIButton] {
+        trailingStack.arrangedSubviews.compactMap { $0 as? UIButton }
+    }
 
     var isNonDuoPhone: Bool = false {
         didSet {
@@ -209,10 +215,9 @@ final class TopBarView: UIView {
 
     func setItems(prefix: [RailAction], suffix: [RailAction]) {
         // Full reset through the mapper: stale items never survive a reload.
-        // Intra-toolbar gaps stay system default; clusterSpacing owns the
-        // stack spacing plus the pill gaps pinned in setup.
-        leadingToolbar.items = SystemToolbarMapper.makeItems(prefix)
-        trailingToolbar.items = SystemToolbarMapper.makeItems(suffix)
+        // Stack arranges native glass buttons directly.
+        SystemToolbarMapper.populateStack(leadingStack, with: prefix, axis: .horizontal, spacing: Self.clusterSpacing)
+        SystemToolbarMapper.populateStack(trailingStack, with: suffix, axis: .horizontal, spacing: Self.clusterSpacing)
         setNeedsUpdateConstraints()
         setNeedsLayout()
     }
@@ -260,8 +265,6 @@ final class TopBarView: UIView {
             stack.translatesAutoresizingMaskIntoConstraints = false
             addSubview(stack)
         }
-        leadingStack.addArrangedSubview(leadingToolbar)
-        trailingStack.addArrangedSubview(trailingToolbar)
         pillSlotView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(pillSlotView)
 

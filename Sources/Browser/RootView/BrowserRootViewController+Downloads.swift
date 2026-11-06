@@ -41,10 +41,10 @@ extension BrowserRootViewController {
     }
 
     func presentDownloadsSheet() {
-        let isPhone = interfaceMode == .nonDuoPhone
+        let isModalSheet = interfaceMode != .duoOuter
         let sheet = DownloadsSheetView(
             manager: downloadsManager,
-            inlineCommands: chromePlacement == .regular || isPhone,
+            inlineCommands: isModalSheet,
             onOpenFiles: { [weak self] in self?.presentDownloadsFilesPicker() },
             onClearAll: { [weak self] in self?.downloadsManager.deleteAll() },
             onDone: { [weak self] in self?.dismissDownloadsSheet() }
@@ -52,7 +52,7 @@ extension BrowserRootViewController {
         let hosting = UIHostingController(rootView: sheet)
         downloadsHosting = hosting
         isDownloadsVisible = true
-        if isPhone {
+        if isModalSheet {
             hosting.modalPresentationStyle = .pageSheet
             hosting.presentationController?.delegate = self
             if let sheetController = hosting.sheetPresentationController {

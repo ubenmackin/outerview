@@ -7,16 +7,14 @@ import XCTest
 final class ChromeGeometryTests: XCTestCase {
     func testRailColumnOriginCalculation() {
         // iPhone Duo outer display bounds width is 466 pt.
-        // Reserved system column is 84 pt.
-        // Rail column width is 60 pt.
-        // Rail column should be centered within the 84 pt system column:
-        // boundsMaxX - (84 / 2) - (60 / 2) = 466 - 42 - 30 = 394.
+        // Rail column width is 44 pt (matching hitTarget).
+        // Button centers align with the hardware Control Center icon at 47 pt from trailing edge:
+        // boundsMaxX - 47 - (44 / 2) = 466 - 47 - 22 = 397.
         let originXWithSafeArea = SideRailView.columnOriginX(boundsMaxX: 466, safeAreaRight: 84)
-        XCTAssertEqual(originXWithSafeArea, 394)
+        XCTAssertEqual(originXWithSafeArea, 397)
 
-        // When safeAreaRight is 0, it falls back to SideRailView.safeColumnWidth (84 pt).
         let originXFallback = SideRailView.columnOriginX(boundsMaxX: 466, safeAreaRight: 0)
-        XCTAssertEqual(originXFallback, 394)
+        XCTAssertEqual(originXFallback, 397)
     }
 
     @MainActor

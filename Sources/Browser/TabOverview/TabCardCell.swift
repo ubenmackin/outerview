@@ -37,6 +37,7 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     static let reuseIdentifier = "TabCardCell"
     static let cornerRadius: CGFloat = 16
     static let previewAspectHeightOverWidth: CGFloat = 4.0 / 3.0
+    static let landscapeAspectHeightOverWidth: CGFloat = 3.0 / 4.0
 
     nonisolated static let swipeDismissDistance: CGFloat = 120
     nonisolated static let swipeDismissVelocity: CGFloat = 800

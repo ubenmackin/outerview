@@ -73,6 +73,11 @@ extension BrowserRootViewController {
         }
         topBarView.leadingStack.alpha = topBarView.leadingStack.isHidden ? 0 : 1
         topBarView.trailingStack.alpha = topBarView.trailingStack.isHidden ? 0 : 1
+        if isOverviewVisible {
+            pillView.isHidden = true
+        } else if chromePlacement == .regular {
+            pillView.isHidden = state.pill == .editing
+        }
         updateTabStrip()
         updateRegularPillGeometry()
     }
@@ -372,7 +377,7 @@ extension BrowserRootViewController {
                 guard let self else { return }
                 self.pillHeightConstraint.constant = AddressBarView.heightForState(state.pill)
                 self.updateRegularPillGeometry()
-                self.pillView.isHidden = state.pill == .editing
+                self.pillView.isHidden = self.isOverviewVisible || state.pill == .editing
                 self.editorView.isHidden = state.pill != .editing
                 self.view.layoutIfNeeded()
             }
@@ -424,7 +429,7 @@ extension BrowserRootViewController {
                     self.bottomTrailingStack.isHidden = true
                 }
             } else {
-                self.pillView.isHidden = state.pill == .editing
+                self.pillView.isHidden = self.isOverviewVisible || state.pill == .editing
             }
             self.editorView.isHidden = state.pill != .editing
             self.view.layoutIfNeeded()
@@ -639,7 +644,7 @@ extension BrowserRootViewController {
         if isRegularApplied, !isOverviewVisible {
             if suppressesRegularToolbarButtons {
                 topBarView.setItems(prefix: [], suffix: [])
-            } else if isEditingAddress || isLibraryVisible {
+            } else if isEditingAddress || isLibraryVisible || isSettingsVisible || isDownloadsVisible {
                 let browsing = makeBrowsingChromeItems()
                 topBarView.setItems(prefix: browsing.prefix, suffix: browsing.suffix)
             } else {
@@ -693,13 +698,18 @@ extension BrowserRootViewController {
         case let .library(tab):
             updateLibraryRailItems(for: tab)
         case .startPage:
-            setChromeItems(
-                prefix: [],
-                suffix: [
+            let suffixActions: [RailAction] = if isEditingAddress {
+                []
+            } else {
+                [
                     .done { [weak self] in
                         self?.dismissStartPageOrEditing()
                     }
                 ]
+            }
+            setChromeItems(
+                prefix: [],
+                suffix: suffixActions
             )
         case .browsing:
             let browsing = makeBrowsingChromeItems()

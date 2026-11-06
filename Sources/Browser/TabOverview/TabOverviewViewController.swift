@@ -95,9 +95,12 @@ final class TabOverviewViewController: UIViewController {
     nonisolated static let horizontalInset: CGFloat = 16
     nonisolated static let stripHeight: CGFloat = 52
 
-    /// Grid density: two columns minimum, one more per 180 pt of width.
-    nonisolated static func columnCount(forWidth width: CGFloat) -> Int {
-        max(2, Int(floor(width / 180)))
+    /// Grid density: two columns minimum, one more per 180 pt of width (260 pt on regular).
+    nonisolated static func columnCount(forWidth width: CGFloat, isRegular: Bool = false) -> Int {
+        if isRegular {
+            return max(2, Int(floor(width / 260)))
+        }
+        return max(2, Int(floor(width / 180)))
     }
 
     /// Live filter predicate: empty query matches everything, otherwise the
@@ -330,6 +333,25 @@ final class TabOverviewViewController: UIViewController {
         }
     }
 
+    var isRegular = false {
+        didSet {
+            guard oldValue != isRegular else { return }
+            externalHeaderHeight = isRegular ? TopBarView.barHeight : 0
+            if isViewLoaded {
+                updateItemSize()
+                applyInlineCommandsVisibility()
+            }
+        }
+    }
+
+    var externalHeaderHeight: CGFloat = 0 {
+        didSet {
+            guard oldValue != externalHeaderHeight else { return }
+            inlineBarTopConstraint?.constant = externalHeaderHeight + 8
+            viewIfLoaded?.setNeedsLayout()
+        }
+    }
+
     var visibleItems: [TabOverviewItem] {
         Self.visibleTabs(allTabs, mode: mode, query: filterQuery, groupId: selectedGroupID)
     }
@@ -343,6 +365,7 @@ final class TabOverviewViewController: UIViewController {
     private var filterHeightConstraint: NSLayoutConstraint!
     private let inlineBar = UIToolbar()
     private var inlineBarHeightConstraint: NSLayoutConstraint!
+    private var inlineBarTopConstraint: NSLayoutConstraint?
     let pickerBar = TabGroupPickerBar()
     private let emptyLabel = UILabel()
 
@@ -615,10 +638,12 @@ final class TabOverviewViewController: UIViewController {
     private func activateHierarchyConstraints() {
         filterHeightConstraint = filterRow.heightAnchor.constraint(equalToConstant: 0)
         inlineBarHeightConstraint = inlineBar.heightAnchor.constraint(equalToConstant: 0)
+        let barTop = inlineBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: externalHeaderHeight + 8)
+        inlineBarTopConstraint = barTop
         NSLayoutConstraint.activate([
             inlineBar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             inlineBar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
-            inlineBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            barTop,
             inlineBarHeightConstraint,
 
             filterRow.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
@@ -753,11 +778,12 @@ final class TabOverviewViewController: UIViewController {
     private func updateItemSize() {
         let collectionWidth = collectionView.bounds.width > 0 ? collectionView.bounds.width : view.bounds.width
         let available = max(0, collectionWidth - flowLayout.sectionInset.left - flowLayout.sectionInset.right)
-        let columns = Self.columnCount(forWidth: max(available, 1))
+        let columns = Self.columnCount(forWidth: max(available, 1), isRegular: isRegular)
         let totalSpacing = CGFloat(max(columns - 1, 0)) * flowLayout.minimumInteritemSpacing
         let itemWidth = max(0, (available - totalSpacing) / CGFloat(columns))
         guard itemWidth > 0 else { return }
-        let previewHeight = itemWidth * TabCardCell.previewAspectHeightOverWidth
+        let aspect = isRegular ? TabCardCell.landscapeAspectHeightOverWidth : TabCardCell.previewAspectHeightOverWidth
+        let previewHeight = itemWidth * aspect
         let itemHeight = previewHeight + Self.stripHeight
         let size = CGSize(width: itemWidth, height: itemHeight)
         if flowLayout.itemSize != size {

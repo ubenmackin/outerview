@@ -25,25 +25,18 @@ final class DownloadsSheetTests: XCTestCase {
         return root
     }
 
-    private func railItems(in rail: SideRailView) -> [UIBarButtonItem] {
-        rail.subviews
-            .compactMap { $0 as? UIStackView }
-            .flatMap { $0.arrangedSubviews.compactMap { $0 as? UIToolbar } }
-            .compactMap(\.items)
-            .flatMap(\.self)
+    private func railItems(in rail: SideRailView) -> [UIButton] {
+        rail.buttons
     }
 
-    private func railItem(labeled label: String, in rail: SideRailView) -> UIBarButtonItem? {
-        railItems(in: rail).first(where: { $0.accessibilityLabel == label })
+    private func railItem(labeled label: String, in rail: SideRailView) -> UIButton? {
+        rail.button(labeled: label)
     }
 
-    /// Fires the mapped bar action through a control so the UIAction
+    /// Fires the mapped button action so the UIAction
     /// handler path runs instead of calling the root directly.
-    private func fire(_ item: UIBarButtonItem) async {
-        guard let action = item.primaryAction else { return }
-        let control = UIControl()
-        control.addAction(action, for: .touchUpInside)
-        control.sendActions(for: .touchUpInside)
+    private func fire(_ button: UIButton) async {
+        button.sendActions(for: .touchUpInside)
         await Task.yield()
         await Task.yield()
     }
@@ -163,7 +156,7 @@ final class DownloadsSheetTests: XCTestCase {
 
         // System owns tap elasticity; firing the mapped Done closes the sheet.
         let done = try XCTUnwrap(railItem(labeled: "Done", in: root.railView))
-        XCTAssertNotNil(done.primaryAction)
+        XCTAssertTrue(done.isEnabled)
         await fire(done)
 
         XCTAssertFalse(root.isDownloadsVisible)
@@ -277,7 +270,7 @@ final class DownloadsSheetTests: XCTestCase {
 
         // Mapped Files opener records the picker for the test host.
         let files = try XCTUnwrap(railItem(labeled: "Files", in: root.railView))
-        XCTAssertNotNil(files.primaryAction)
+        XCTAssertTrue(files.isEnabled)
         await fire(files)
 
         let picker = try XCTUnwrap(root.presentedDownloadsPicker)

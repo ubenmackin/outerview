@@ -212,10 +212,10 @@ final class EditorPlacementTests: XCTestCase {
         XCTAssertFalse(root.topBarView.isHidden)
         XCTAssertFalse(root.topBarView.leadingStack.isHidden)
         XCTAssertFalse(root.topBarView.trailingStack.isHidden)
-        // Each cluster hosts one glass toolbar; items live on the toolbars.
-        XCTAssertEqual(root.topBarView.leadingToolbar.items?.count, 2)
-        XCTAssertEqual(root.topBarView.trailingToolbar.items?.count, 2)
-        let barLabels = ((root.topBarView.leadingToolbar.items ?? []) + (root.topBarView.trailingToolbar.items ?? []))
+        // Each cluster hosts native glass buttons.
+        XCTAssertEqual(root.topBarView.leadingButtons.count, 2)
+        XCTAssertEqual(root.topBarView.trailingButtons.count, 2)
+        let barLabels = (root.topBarView.leadingButtons + root.topBarView.trailingButtons)
             .compactMap(\.accessibilityLabel)
         XCTAssertFalse(barLabels.contains("Done"))
 
@@ -266,20 +266,27 @@ final class EditorPlacementTests: XCTestCase {
         let frameInEditor = dismiss.convert(dismiss.bounds, to: editor)
         let keyboardTop = editor.keyboardLayoutGuide.layoutFrame.minY
         XCTAssertLessThanOrEqual(frameInEditor.maxY, keyboardTop)
+        XCTAssertEqual(editor.bounds.width - frameInEditor.maxX, 16, accuracy: 1.0)
     }
 
-    func testCompactInlineDoneHiddenOutsideMode3Editing() {
+    func testCompactInlineDoneHiddenOutsideEditing() {
         let idle = makeEditor(placement: .compact)
         idle.isNonDuoPhone = true
         idle.isEditing = false
         idle.layoutIfNeeded()
         XCTAssertFalse(idle.isDismissVisible)
 
+        let duoIdle = makeEditor(placement: .compact)
+        duoIdle.isNonDuoPhone = false
+        duoIdle.isEditing = false
+        duoIdle.layoutIfNeeded()
+        XCTAssertFalse(duoIdle.isDismissVisible)
+
         let duoEditing = makeEditor(placement: .compact)
         duoEditing.isNonDuoPhone = false
         duoEditing.isEditing = true
         duoEditing.layoutIfNeeded()
-        XCTAssertFalse(duoEditing.isDismissVisible)
+        XCTAssertTrue(duoEditing.isDismissVisible)
 
         let regularEditing = makeEditor(placement: .regular)
         regularEditing.isNonDuoPhone = true
