@@ -343,7 +343,7 @@ extension BrowserRootViewController {
             overviewView.isHidden = true
             return
         }
-        let commit = translation < 0 && AddressBarView.shouldCommitVertical(translationY: translation, height: height)
+        let commit = AddressBarView.shouldCommitVertical(translationY: translation, height: height, velocityY: velocity)
         if commit {
             let progress = min(1, -translation / height)
             let remaining = (1 - progress) * height * 0.20

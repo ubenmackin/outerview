@@ -88,6 +88,11 @@ final class PillTapTests: XCTestCase {
         root.handleVerticalPan(.changed(translation: -300, velocity: -500))
         XCTAssertEqual(root.contentContainer.transform, .identity)
         XCTAssertTrue(root.overviewView.isHidden)
+        root.handleVerticalPan(.changed(translation: -300, velocity: -1200))
+        root.handleVerticalPan(.ended(translation: -300, velocity: -1200))
+        XCTAssertFalse(root.isOverviewVisible)
+        XCTAssertEqual(root.contentContainer.transform, .identity)
+        XCTAssertTrue(root.overviewView.isHidden)
     }
 
     func testVerticalPanIgnoredWhileFindActive() throws {
@@ -97,6 +102,11 @@ final class PillTapTests: XCTestCase {
         XCTAssertFalse(root.isOverviewVisible)
         XCTAssertTrue(root.overviewView.isHidden)
         root.handleVerticalPan(.changed(translation: -300, velocity: -500))
+        XCTAssertEqual(root.contentContainer.transform, .identity)
+        XCTAssertTrue(root.overviewView.isHidden)
+        root.handleVerticalPan(.changed(translation: -300, velocity: -1200))
+        root.handleVerticalPan(.ended(translation: -300, velocity: -1200))
+        XCTAssertFalse(root.isOverviewVisible)
         XCTAssertEqual(root.contentContainer.transform, .identity)
         XCTAssertTrue(root.overviewView.isHidden)
     }
@@ -109,13 +119,17 @@ final class PillTapTests: XCTestCase {
         XCTAssertEqual(root.contentContainer.transform, .identity)
         root.handleVerticalPan(.changed(translation: -300, velocity: -500))
         XCTAssertEqual(root.contentContainer.transform, .identity)
+        root.handleVerticalPan(.changed(translation: -300, velocity: -1200))
+        root.handleVerticalPan(.ended(translation: -300, velocity: -1200))
+        XCTAssertEqual(root.contentContainer.transform, .identity)
+        XCTAssertTrue(root.overviewView.isHidden)
     }
 
     func testDownwardTranslationNeverCommitsOverview() throws {
-        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: 100, height: 678))
-        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: 0, height: 678))
-        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: -100, height: 678))
-        XCTAssertTrue(AddressBarView.shouldCommitVertical(translationY: -300, height: 678))
+        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: 100, height: 678, velocityY: -1000))
+        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: 0, height: 678, velocityY: -1000))
+        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: -100, height: 678, velocityY: 0))
+        XCTAssertTrue(AddressBarView.shouldCommitVertical(translationY: -300, height: 678, velocityY: 0))
         let root = try makeVerticalRoot()
         root.handleVerticalPan(.began)
         XCTAssertFalse(root.overviewView.isHidden)
@@ -124,6 +138,21 @@ final class PillTapTests: XCTestCase {
         XCTAssertEqual(root.overviewView.alpha, 0)
         root.handleVerticalPan(.ended(translation: 80, velocity: 300))
         XCTAssertFalse(root.isOverviewVisible)
+    }
+
+    func testUpwardFlickBelowThresholdCommitsOverview() throws {
+        let root = try makeVerticalRoot()
+        root.handleVerticalPan(.began)
+        let translation = -root.view.bounds.height * 0.10
+        root.handleVerticalPan(.changed(translation: translation, velocity: -1200))
+        root.handleVerticalPan(.ended(translation: translation, velocity: -1200))
+        let deadline = Date(timeIntervalSinceNow: 1.0)
+        while !root.isOverviewVisible, Date() < deadline {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        }
+        XCTAssertTrue(root.isOverviewVisible)
+        XCTAssertEqual(root.contentContainer.transform, .identity)
+        XCTAssertFalse(root.contentContainer.clipsToBounds)
     }
 
     func testPillKeepsSinglePanRecognizerTapRequiresFail() throws {

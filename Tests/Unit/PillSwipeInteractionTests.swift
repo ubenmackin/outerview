@@ -70,11 +70,21 @@ final class PillSwipeInteractionTests: XCTestCase {
 
     func testShouldCommitVerticalBoundaries() {
         let height: CGFloat = 500
-        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: -height * 0.29, height: height))
-        XCTAssertTrue(AddressBarView.shouldCommitVertical(translationY: -height * 0.30, height: height))
-        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: 0, height: height))
-        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: height * 0.30, height: height))
-        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: height, height: height))
+        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: -height * 0.29, height: height, velocityY: 0))
+        XCTAssertTrue(AddressBarView.shouldCommitVertical(translationY: -height * 0.30, height: height, velocityY: 0))
+        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: 0, height: height, velocityY: 0))
+        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: height * 0.30, height: height, velocityY: 0))
+        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: height, height: height, velocityY: 0))
+    }
+
+    func testShouldCommitVerticalFlick() {
+        let height: CGFloat = 500
+        XCTAssertTrue(AddressBarView.shouldCommitVertical(translationY: -100, height: height, velocityY: -800))
+        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: -100, height: height, velocityY: -799))
+        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: -100, height: height, velocityY: 0))
+        XCTAssertTrue(AddressBarView.shouldCommitVertical(translationY: -height * 0.60, height: height, velocityY: 900))
+        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: 100, height: height, velocityY: -1000))
+        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: 0, height: height, velocityY: -800))
     }
 
     func testLockedAxis() {
@@ -91,13 +101,19 @@ final class PillSwipeInteractionTests: XCTestCase {
         XCTAssertEqual(AddressBarView.elasticFactor, 0.35)
     }
 
+    func testFlingVelocityConstants() {
+        XCTAssertEqual(AddressBarView.horizontalFlingVelocity, 800)
+        XCTAssertEqual(AddressBarView.verticalFlingVelocity, 800)
+    }
+
     func testCommitGuardsRejectDegenerateMetrics() {
         XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: 0, width: 0, velocityX: 0, direction: .right))
         XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: 100, width: 0, velocityX: 800, direction: .right))
         XCTAssertFalse(AddressBarView.shouldCommitHorizontal(translationX: 100, width: -300, velocityX: 800, direction: .right))
-        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: 0, height: 0))
-        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: -100, height: 0))
-        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: -100, height: -500))
+        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: 0, height: 0, velocityY: -800))
+        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: -100, height: 0, velocityY: -800))
+        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: -100, height: -500, velocityY: -800))
+        XCTAssertFalse(AddressBarView.shouldCommitVertical(translationY: -100, height: 500, velocityY: 800))
     }
 
     func testSettleDurationClamps() {
