@@ -1,7 +1,4 @@
-//
-//  TabPool.swift
-//  OuterView
-//
+// WebPage — Pooled tab controllers plus shared configurations.
 
 import WebKit
 
@@ -42,6 +39,8 @@ final class TabPool {
         configuration.websiteDataStore = isPrivate
             ? sharedPrivateStore
             : WKWebsiteDataStore.default()
+        configuration.allowsInlineMediaPlayback = true
+        configuration.allowsPictureInPictureMediaPlayback = true
         return configuration
     }
 
@@ -55,20 +54,11 @@ final class TabPool {
     }
 
     func create(id: UUID, isPrivate: Bool) {
-        if let index = entries.firstIndex(where: { $0.id == id }) {
-            // Re-creating an existing tab keeps its page and order.
-            entries[index].lastActiveAt = Date()
-            return
-        }
-        entries.append(
-            Entry(
-                id: id,
-                isPrivate: isPrivate,
-                page: WebPageController(configuration: configuration(isPrivate: isPrivate)),
-                lastActiveAt: Date()
-            )
-        )
-        evictIfNeeded(excluding: nil)
+        upsert(id: id, isPrivate: isPrivate, page: nil)
+    }
+
+    func create(id: UUID, isPrivate: Bool, page: WebPageController) {
+        upsert(id: id, isPrivate: isPrivate, page: page)
     }
 
     func delete(id: UUID) {
@@ -123,6 +113,27 @@ final class TabPool {
     }
 
     // MARK: - Private
+
+    private func upsert(id: UUID, isPrivate: Bool, page: WebPageController?) {
+        if let index = entries.firstIndex(where: { $0.id == id }) {
+            // Re-creating an existing tab keeps its page and order.
+            if let page {
+                entries[index].page = page
+            }
+            entries[index].lastActiveAt = Date()
+            return
+        }
+        let resolved = page ?? WebPageController(configuration: configuration(isPrivate: isPrivate))
+        entries.append(
+            Entry(
+                id: id,
+                isPrivate: isPrivate,
+                page: resolved,
+                lastActiveAt: Date()
+            )
+        )
+        evictIfNeeded(excluding: nil)
+    }
 
     private func evictIfNeeded(excluding excludedID: UUID?) {
         while entries.filter({ $0.page != nil }).count > Self.livePageLimit {

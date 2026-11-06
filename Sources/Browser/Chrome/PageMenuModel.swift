@@ -1,7 +1,4 @@
-//
-//  PageMenuModel.swift
-//  OuterView
-//
+// Chrome — Safari page-menu state plus toggle labels.
 
 import Foundation
 
@@ -20,6 +17,8 @@ struct PageMenuModel: Equatable, Sendable {
     let isReaderAvailable: Bool
     let textZoom: Double
     let canOpenDownloads: Bool
+    let isDesktopMode: Bool
+    let canToggleDesktopMode: Bool
 
     init(
         url: URL?,
@@ -31,7 +30,9 @@ struct PageMenuModel: Equatable, Sendable {
         isReaderActive: Bool = false,
         isReaderAvailable: Bool = false,
         textZoom: Double = 1.0,
-        canOpenDownloads: Bool = false
+        canOpenDownloads: Bool = false,
+        isDesktopMode: Bool = false,
+        canToggleDesktopMode: Bool = false
     ) {
         let hasLoadableURL: Bool = if let url {
             URLNormalizer.isLoadable(url)
@@ -51,11 +52,18 @@ struct PageMenuModel: Equatable, Sendable {
         self.isReaderAvailable = isReaderAvailable
         self.textZoom = textZoom
         self.canOpenDownloads = canOpenDownloads
+        self.isDesktopMode = isDesktopMode
+        self.canToggleDesktopMode = canToggleDesktopMode || hasLoadableURL
     }
 
     /// Toggle label for the reading-list row, flipping with membership.
     var readingListTitle: String {
         isInReadingList ? "Remove from Reading List" : "Add to Reading List"
+    }
+
+    /// Toggle label for the desktop mode row, flipping with active mode.
+    var desktopModeTitle: String {
+        isDesktopMode ? "Request Mobile Website" : "Request Desktop Website"
     }
 
     /// Toggle label for the reader row, flipping with reader state.
