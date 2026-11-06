@@ -1,7 +1,4 @@
-//
-//  Models.swift
-//  OuterView
-//
+// Persistence — SwiftData models for bookmarks/folders/history/tabs.
 
 import Foundation
 import SwiftData
@@ -44,19 +41,22 @@ final class BookmarkFolder {
     var parentId: UUID?
     var createdAt: Date
     var sortOrder: Int
+    var isFavorite: Bool = false
 
     init(
         id: UUID = UUID(),
         title: String,
         parentId: UUID? = nil,
         createdAt: Date = Date(),
-        sortOrder: Int = 0
+        sortOrder: Int = 0,
+        isFavorite: Bool = false
     ) {
         self.id = id
         self.title = title
         self.parentId = parentId
         self.createdAt = createdAt
         self.sortOrder = sortOrder
+        self.isFavorite = isFavorite
     }
 }
 
@@ -121,7 +121,7 @@ final class TabRecord {
     }
 }
 
-/// Schema foundation for named tab groups; no store reads or writes it yet.
+/// Schema for named tab groups; TabStore owns CRUD with 32-char clamp.
 @Model
 final class TabGroup {
     static let maxNameLength = 32

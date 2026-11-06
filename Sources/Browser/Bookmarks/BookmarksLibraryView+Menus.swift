@@ -1,7 +1,4 @@
-//
-//  BookmarksLibraryView+Menus.swift
-//  OuterView
-//
+// Bookmarks — Library menus plus selection helpers.
 
 import UIKit
 
@@ -160,9 +157,9 @@ extension BookmarksLibraryView {
             displayMode: bookmarksDisplayMode,
             sortMode: bookmarksSortMode,
             showsFoldersOnTop: bookmarksShowsFoldersOnTop,
-            isViewingFavorites: bookmarksBrowserView?.isViewingFavorites ?? false,
             hasSelectableItems: bookmarksBrowserView?.hasSelectableItems ?? false,
             canCreateFolder: bookmarksBrowserView?.canCreateFolder ?? true,
+            isSearching: bookmarksBrowserView?.isSearching ?? false,
             onSelectDisplayMode: { [weak self] mode in
                 self?.setBookmarksDisplayMode(mode)
             },

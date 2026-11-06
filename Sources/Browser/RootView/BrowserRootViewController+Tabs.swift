@@ -1,7 +1,4 @@
-//
-//  BrowserRootViewController+Tabs.swift
-//  OuterView
-//
+// RootView — Tab lifecycle plus bulk open seams.
 
 import UIKit
 
@@ -94,10 +91,8 @@ extension BrowserRootViewController {
         loadActivePage(url)
     }
 
-    /// Opens `url` on a fresh non-private tab inserted directly after the
-    /// selected one, without disturbing tabs further down the strip. When
-    /// `background` is false the new tab becomes selected and chrome resumes
-    /// through the browsing-resumed override.
+    /// Opens `url` on a fresh tab after the selected one.
+    /// Background keeps selection; foreground selects and resumes browsing.
     func openInNewTab(url: URL, background: Bool = false) {
         let record = TabRecord(url: url, isPrivate: false)
         let insertIndex: Int =
@@ -121,6 +116,79 @@ extension BrowserRootViewController {
         }
         selectTab(id: record.id)
         applyBrowsingResumed(animated: true)
+    }
+
+    func openURLsInBackground(_ urls: [URL]) {
+        // Rejected schemes never enter tabs; truncated to the live-page cap.
+        let loadable = Array(urls.filter { URLNormalizer.isLoadable($0) }.prefix(TabPool.livePageLimit))
+        guard !loadable.isEmpty else { return }
+        let currentGroupId = overviewMode.isPrivate ? nil : overviewController.selectedGroupID
+        let isPrivate = overviewMode.isPrivate
+        for url in loadable {
+            let record = TabRecord(url: url, isPrivate: isPrivate, groupId: currentGroupId)
+            tabs.append(record)
+            tabPool.create(record)
+        }
+        do {
+            try tabStore?.saveSession(tabs: tabs, selected: selectedTabID)
+        } catch {
+            logPersistenceError(error, operation: "saveSession")
+        }
+        if isOverviewVisible {
+            overviewController.setItems(overviewItems(), selectedID: selectedTabID)
+        }
+        updateTabStrip()
+    }
+
+    func openURLsInGroup(_ urls: [URL], groupId: UUID) {
+        // Truncated to the live-page cap so folder bulk open stays bounded.
+        let loadable = Array(urls.filter { URLNormalizer.isLoadable($0) }.prefix(TabPool.livePageLimit))
+        guard !loadable.isEmpty else { return }
+        guard let tabStore, tabStore.fetchGroups().contains(where: { $0.id == groupId }) else {
+            logPersistenceError(TabStoreError.groupNotFound, operation: "openURLsInGroup")
+            return
+        }
+        closeBookmarksLibrary()
+        setOverviewMode(.standard)
+        overviewController.setGroupFilter(groupId)
+        var firstRecordID: UUID?
+        for url in loadable {
+            let record = TabRecord(url: url, isPrivate: false, groupId: groupId)
+            tabs.append(record)
+            tabPool.create(record)
+            if firstRecordID == nil {
+                firstRecordID = record.id
+            }
+        }
+        if let firstRecordID {
+            selectTab(id: firstRecordID)
+        }
+        do {
+            try tabStore.saveSession(tabs: tabs, selected: selectedTabID)
+        } catch {
+            logPersistenceError(error, operation: "saveSession")
+        }
+        if isOverviewVisible {
+            overviewController.setItems(overviewItems(), selectedID: selectedTabID)
+        }
+        applyBrowsingResumed(animated: true)
+        updateTabStrip()
+        updateRailItems()
+    }
+
+    func openURLsInNewGroup(_ urls: [URL], name: String) {
+        guard let tabStore else { return }
+        // Truncated to the live-page cap so folder bulk open stays bounded.
+        let loadable = Array(urls.filter { URLNormalizer.isLoadable($0) }.prefix(TabPool.livePageLimit))
+        guard !loadable.isEmpty else { return }
+        do {
+            let clamped = String(name.prefix(TabGroup.maxNameLength))
+            let group = try tabStore.createGroup(name: clamped)
+            refreshOverview(groups: tabStore.fetchGroups(), selectedGroupID: group.id)
+            openURLsInGroup(loadable, groupId: group.id)
+        } catch {
+            logPersistenceError(error, operation: "createGroup")
+        }
     }
 
     func displaySelectedTab() {

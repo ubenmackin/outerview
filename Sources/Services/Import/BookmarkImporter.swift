@@ -1,7 +1,4 @@
-//
-//  BookmarkImporter.swift
-//  OuterView
-//
+// Import — Folder routing plus dedupe for Safari imports.
 
 import Foundation
 import os
@@ -45,6 +42,59 @@ struct BookmarkImporter {
             return ImportSummary(added: 0, skippedDuplicates: 0, skippedInvalid: 0, truncated: 0)
         }
 
+        var folderMap: [[String]: UUID] = [:]
+        var existingFolders = bookmarkStore.fetchAllFolders()
+
+        func resolveOrCreateFolder(path: [String]) throws -> UUID? {
+            guard !path.isEmpty else { return nil }
+            // Trim once so spaced H3 text hits the same cache and stored rows.
+            let normalizedPath = path.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            guard let folderTitle = normalizedPath.last, !folderTitle.isEmpty else {
+                throw BookmarkStoreError.invalidTitle
+            }
+            if normalizedPath.count == 1, let first = normalizedPath.first, Self.isTopLevelFavoriteContainer(parentPath: [], title: first) {
+                return nil
+            }
+            if let cached = folderMap[normalizedPath] {
+                return cached
+            }
+
+            let parentPath = Array(normalizedPath.dropLast())
+            let parentId = try resolveOrCreateFolder(path: parentPath)
+            let isFav = Self.isFavorite(folderPath: normalizedPath)
+
+            let existing = existingFolders.first {
+                $0.title == folderTitle &&
+                    $0.parentId == parentId &&
+                    (parentId != nil || $0.isFavorite == isFav)
+            }
+            if let existing {
+                folderMap[normalizedPath] = existing.id
+                return existing.id
+            }
+
+            let created = try bookmarkStore.createFolder(
+                title: folderTitle,
+                parentId: parentId,
+                isFavorite: isFav
+            )
+            existingFolders.append(created)
+            folderMap[normalizedPath] = created.id
+            return created.id
+        }
+
+        // Create folders first (including empty folders)
+        for folder in parseResult.folders {
+            // Empty titles never persist as untitled folders.
+            guard !folder.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            do {
+                _ = try resolveOrCreateFolder(path: folder.parentPath + [folder.title])
+            } catch {
+                // Unresolvable branches stay absent; bookmarks beneath skip as invalid below.
+                continue
+            }
+        }
+
         var seen = Set<URL>(bookmarkStore.fetchAll().map(\.url))
         var added = 0
         var skippedDuplicates = 0
@@ -55,12 +105,23 @@ struct BookmarkImporter {
                 skippedDuplicates += 1
                 continue
             }
+            let folderId: UUID?
+            do {
+                folderId = try resolveOrCreateFolder(path: bookmark.folderPath)
+            } catch {
+                // Storage failure never falls back to root; the row skips as invalid.
+                skippedInvalid += 1
+                continue
+            }
+            // Store owns flag truth; heuristic only covers root-level rows.
+            let isFav = Self.isFavorite(folderPath: bookmark.folderPath)
             do {
                 try bookmarkStore.add(
                     title: bookmark.title,
                     url: bookmark.url,
-                    isFavorite: Self.isFavorite(folderPath: bookmark.folderPath),
-                    addedDate: bookmark.addedDate
+                    isFavorite: isFav,
+                    addedDate: bookmark.addedDate,
+                    folderId: folderId
                 )
             } catch {
                 skippedInvalid += 1
@@ -78,10 +139,13 @@ struct BookmarkImporter {
         )
     }
 
-    /// A bar/toolbar/favorites folder name marks its entries for the favorites
-    /// grid. Matches whole folder names and whole words so "Sidebar" or
-    /// "Barbecue" never match; the spaceless "BookmarksBar" needs its own
-    /// entry since it contains no word boundary.
+    static func isTopLevelFavoriteContainer(parentPath: [String], title: String) -> Bool {
+        parentPath.isEmpty && isFavorite(folderPath: [title])
+    }
+
+    /// Favorites-folder names route to the favorites grid. Whole-name plus
+    /// whole-word match avoids "Sidebar"/"Barbecue" hits; "BookmarksBar"
+    /// needs its own entry since it has no word boundary.
     private static let favoriteFolderNames: Set<String> = [
         "bar", "bookmarks bar", "bookmarksbar", "toolbar", "favorites", "favourites"
     ]

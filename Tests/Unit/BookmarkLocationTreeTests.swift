@@ -1,7 +1,4 @@
-//
-//  BookmarkLocationTreeTests.swift
-//  OuterView
-//
+// Bookmarks — Location tree option tests.
 
 @testable import OuterView
 import XCTest
@@ -34,7 +31,7 @@ final class BookmarkLocationTreeTests: XCTestCase {
         XCTAssertEqual(options[4].depth, 1)
     }
 
-    func testLocationTreeForFolderExcludesFavoritesAndDescendants() {
+    func testLocationTreeForFolderIncludesFavoritesAndExcludesDescendants() {
         let root = BookmarkFolder(title: "Root", parentId: nil, sortOrder: 0)
         let child = BookmarkFolder(title: "Child", parentId: root.id, sortOrder: 0)
         let grandchild = BookmarkFolder(title: "Grandchild", parentId: child.id, sortOrder: 0)
@@ -45,10 +42,27 @@ final class BookmarkLocationTreeTests: XCTestCase {
             folders: [root, child, grandchild, sibling]
         )
 
-        // No favorites option; root Bookmarks and sibling only
-        XCTAssertEqual(options.count, 2)
-        XCTAssertEqual(options[0].location, .root)
-        XCTAssertEqual(options[1].location, .folder(sibling.id))
+        // Favorites and root Bookmarks available; descendants excluded
+        XCTAssertEqual(options.count, 3)
+        XCTAssertEqual(options[0].location, .favorites)
+        XCTAssertEqual(options[1].location, .root)
+        XCTAssertEqual(options[2].location, .folder(sibling.id))
+    }
+
+    func testLocationTreeForFolderWithFavoriteFolders() {
+        let favFolder = BookmarkFolder(title: "Work", parentId: nil, sortOrder: 0, isFavorite: true)
+        let bmFolder = BookmarkFolder(title: "Reading", parentId: nil, sortOrder: 0, isFavorite: false)
+
+        let options = BookmarkLocationTree.optionsForFolder(
+            folderId: nil,
+            folders: [favFolder, bmFolder]
+        )
+
+        XCTAssertEqual(options.map(\.title), ["Favorites", "Work", "Bookmarks", "Reading"])
+        XCTAssertEqual(options[0].location, .favorites)
+        XCTAssertEqual(options[1].location, .folder(favFolder.id))
+        XCTAssertEqual(options[2].location, .root)
+        XCTAssertEqual(options[3].location, .folder(bmFolder.id))
     }
 
     @MainActor

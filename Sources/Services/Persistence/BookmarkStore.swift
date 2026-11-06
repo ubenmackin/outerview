@@ -1,7 +1,4 @@
-//
-//  BookmarkStore.swift
-//  OuterView
-//
+// Persistence — Bookmark/folder CRUD plus favorites flags.
 
 import Foundation
 import os
@@ -24,6 +21,7 @@ enum BookmarkStoreError: Error, LocalizedError, Equatable {
     case cyclicFolderHierarchy
     case folderNotFound
     case bookmarkNotFound
+    case invalidTitle
 
     var errorDescription: String? {
         switch self {
@@ -33,6 +31,8 @@ enum BookmarkStoreError: Error, LocalizedError, Equatable {
             "The requested bookmark folder could not be found."
         case .bookmarkNotFound:
             "The requested bookmark could not be found."
+        case .invalidTitle:
+            "The title cannot be empty."
         }
     }
 }
@@ -53,7 +53,7 @@ final class BookmarkStore {
         database.context
     }
 
-    /// Inserts a new row as-is; callers dedupe when URL uniqueness matters.
+    /// Inserts a new row with folder inheritance as truth; callers dedupe when URL uniqueness matters.
     @discardableResult
     func add(
         title: String,
@@ -65,12 +65,20 @@ final class BookmarkStore {
     ) throws -> Bookmark? {
         // Rejected schemes never enter bookmarks or favorites.
         guard URLNormalizer.isLoadable(url) else { return nil }
+        // Folder inheritance is the single truth for the flag.
+        var resolvedIsFavorite = isFavorite
+        if let folderId {
+            guard let folder = fetchFolder(id: folderId) else {
+                throw BookmarkStoreError.folderNotFound
+            }
+            resolvedIsFavorite = folder.isFavorite
+        }
         let bookmark = Bookmark(
             id: UUID(),
             title: title,
             url: url,
             addedAt: addedDate ?? Date(),
-            isFavorite: isFavorite,
+            isFavorite: resolvedIsFavorite,
             folderId: folderId,
             sortOrder: sortOrder
         )
@@ -82,15 +90,29 @@ final class BookmarkStore {
     // MARK: - Folders
 
     @discardableResult
-    func createFolder(title: String, parentId: UUID? = nil) throws -> BookmarkFolder {
-        let existing = fetchFolders(parentId: parentId)
+    func createFolder(title: String, parentId: UUID? = nil, isFavorite: Bool = false) throws -> BookmarkFolder {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Empty titles stay rejected so untitled rows never persist.
+        guard !trimmed.isEmpty else {
+            throw BookmarkStoreError.invalidTitle
+        }
+        // Missing parents fail closed instead of orphaning the folder.
+        if let parentId, fetchFolder(id: parentId) == nil {
+            throw BookmarkStoreError.folderNotFound
+        }
+        var effectiveIsFavorite = isFavorite
+        if let parentId, let parent = fetchFolder(id: parentId) {
+            effectiveIsFavorite = parent.isFavorite
+        }
+        let existing = fetchFolders(parentId: parentId, isFavorite: parentId == nil ? effectiveIsFavorite : nil)
         let nextOrder = (existing.map(\.sortOrder).max() ?? -1) + 1
         let folder = BookmarkFolder(
             id: UUID(),
-            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+            title: trimmed,
             parentId: parentId,
             createdAt: Date(),
-            sortOrder: nextOrder
+            sortOrder: nextOrder,
+            isFavorite: effectiveIsFavorite
         )
         context.insert(folder)
         try context.save()
@@ -111,19 +133,61 @@ final class BookmarkStore {
         }
     }
 
-    func fetchFolders(parentId: UUID? = nil) -> [BookmarkFolder] {
+    func fetchFolders(parentId: UUID? = nil, isFavorite: Bool? = nil) -> [BookmarkFolder] {
         var descriptor = FetchDescriptor<BookmarkFolder>(
             sortBy: [SortDescriptor(\.sortOrder, order: .forward), SortDescriptor(\.title, order: .forward)]
         )
         descriptor.fetchLimit = BookmarkLimits.maxEntries
         do {
             let all = try context.fetch(descriptor)
-            return all.filter { $0.parentId == parentId }
+            return all.filter { folder in
+                guard folder.parentId == parentId else { return false }
+                // Root listing filters by flag; nested listing ignores it.
+                if parentId == nil, let isFavorite {
+                    return folder.isFavorite == isFavorite
+                }
+                return true
+            }
         } catch {
             Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
                 .error("fetchFolders failed: \(error.localizedDescription, privacy: .public)")
             return []
         }
+    }
+
+    func fetchAllFolders() -> [BookmarkFolder] {
+        var descriptor = FetchDescriptor<BookmarkFolder>(
+            sortBy: [SortDescriptor(\.sortOrder, order: .forward), SortDescriptor(\.title, order: .forward)]
+        )
+        descriptor.fetchLimit = BookmarkLimits.maxEntries
+        do {
+            return try context.fetch(descriptor)
+        } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
+                .error("fetchAllFolders failed: \(error.localizedDescription, privacy: .public)")
+            return []
+        }
+    }
+
+    func fetchAllBookmarks(inFolderId folderId: UUID) -> [Bookmark] {
+        var visited = Set<UUID>()
+        return fetchAllBookmarks(inFolderId: folderId, visited: &visited)
+    }
+
+    private func fetchAllBookmarks(inFolderId folderId: UUID, visited: inout Set<UUID>) -> [Bookmark] {
+        // Visited guard keeps cyclic legacy data from recursing forever.
+        guard visited.insert(folderId).inserted else { return [] }
+        var results = fetchBookmarks(folderId: folderId)
+        if results.count >= BookmarkLimits.maxEntries {
+            return Array(results.prefix(BookmarkLimits.maxEntries))
+        }
+        let subfolders = fetchFolders(parentId: folderId)
+        for sub in subfolders {
+            guard results.count < BookmarkLimits.maxEntries else { break }
+            let nested = fetchAllBookmarks(inFolderId: sub.id, visited: &visited)
+            results.append(contentsOf: nested.prefix(BookmarkLimits.maxEntries - results.count))
+        }
+        return results
     }
 
     func fetchBookmarks(folderId: UUID? = nil) -> [Bookmark] {
@@ -148,27 +212,66 @@ final class BookmarkStore {
     }
 
     func renameFolder(id: UUID, newTitle: String) throws {
-        if let folder = fetchFolder(id: id) {
-            folder.title = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-            try context.save()
-        }
-    }
-
-    func updateFolder(id: UUID, title: String, parentId: UUID?) throws {
         guard let folder = fetchFolder(id: id) else {
             throw BookmarkStoreError.folderNotFound
         }
+        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Empty titles stay rejected so untitled rows never persist.
+        guard !trimmed.isEmpty else {
+            throw BookmarkStoreError.invalidTitle
+        }
+        folder.title = trimmed
+        try context.save()
+    }
+
+    func updateFolder(id: UUID, title: String, parentId: UUID?, isFavorite: Bool? = nil) throws {
+        guard let folder = fetchFolder(id: id) else {
+            throw BookmarkStoreError.folderNotFound
+        }
+        var effectiveIsFavorite = isFavorite ?? folder.isFavorite
         if let parentId {
-            guard fetchFolder(id: parentId) != nil else {
+            guard let parent = fetchFolder(id: parentId) else {
                 throw BookmarkStoreError.folderNotFound
             }
             if parentId == id || isFolder(parentId, descendantOf: id) {
                 throw BookmarkStoreError.cyclicFolderHierarchy
             }
+            effectiveIsFavorite = parent.isFavorite
         }
-        folder.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Empty titles stay rejected so untitled rows never persist.
+        guard !trimmedTitle.isEmpty else {
+            throw BookmarkStoreError.invalidTitle
+        }
+        folder.title = trimmedTitle
+        let favoriteChanged = (folder.isFavorite != effectiveIsFavorite)
+        // New parent or root favorite flip needs a fresh tail order
+        // so the row never collides with the destination siblings.
+        if folder.parentId != parentId || (parentId == nil && favoriteChanged) {
+            let siblings = fetchFolders(parentId: parentId, isFavorite: parentId == nil ? effectiveIsFavorite : nil)
+            folder.sortOrder = (siblings.map(\.sortOrder).max() ?? -1) + 1
+        }
         folder.parentId = parentId
+        folder.isFavorite = effectiveIsFavorite
+        if favoriteChanged {
+            propagateFavorite(effectiveIsFavorite, toFolderId: id)
+        }
         try context.save()
+    }
+
+    private func propagateFavorite(_ isFavorite: Bool, toFolderId folderId: UUID, visited: Set<UUID> = []) {
+        // Visited guard keeps cyclic legacy data from recursing forever.
+        var visited = visited
+        guard visited.insert(folderId).inserted else { return }
+        let childBookmarks = fetchBookmarks(folderId: folderId)
+        for bm in childBookmarks {
+            bm.isFavorite = isFavorite
+        }
+        let subfolders = fetchFolders(parentId: folderId)
+        for sub in subfolders {
+            sub.isFavorite = isFavorite
+            propagateFavorite(isFavorite, toFolderId: sub.id, visited: visited)
+        }
     }
 
     private func isFolder(_ candidateId: UUID, descendantOf ancestorId: UUID) -> Bool {
@@ -189,12 +292,18 @@ final class BookmarkStore {
 
     /// Recursively deletes the folder, child subfolders, and all contained bookmarks.
     func deleteFolder(id: UUID) throws {
-        guard let folder = fetchFolder(id: id) else { return }
+        var visited = Set<UUID>()
+        try deleteFolder(id: id, visited: &visited)
+    }
+
+    private func deleteFolder(id: UUID, visited: inout Set<UUID>) throws {
+        // Visited guard keeps cyclic legacy data from recursing forever.
+        guard visited.insert(id).inserted, let folder = fetchFolder(id: id) else { return }
 
         // Find and delete subfolders recursively
         let subfolders = fetchFolders(parentId: id)
         for sub in subfolders {
-            try deleteFolder(id: sub.id)
+            try deleteFolder(id: sub.id, visited: &visited)
         }
 
         // Delete contained bookmarks
@@ -208,10 +317,20 @@ final class BookmarkStore {
     }
 
     func moveBookmark(id: UUID, toFolderId: UUID?) throws {
-        if let found = try bookmark(id: id) {
-            found.folderId = toFolderId
-            try context.save()
+        guard let found = try bookmark(id: id) else {
+            throw BookmarkStoreError.bookmarkNotFound
         }
+        if let toFolderId {
+            guard let folder = fetchFolder(id: toFolderId) else {
+                throw BookmarkStoreError.folderNotFound
+            }
+            found.folderId = toFolderId
+            found.isFavorite = folder.isFavorite
+        } else {
+            found.folderId = nil
+            found.isFavorite = false
+        }
+        try context.save()
     }
 
     func updateBookmark(id: UUID, title: String, url: URL, location: BookmarkLocation) throws {
@@ -229,10 +348,10 @@ final class BookmarkStore {
             found.isFavorite = false
             found.folderId = nil
         case let .folder(folderId):
-            guard fetchFolder(id: folderId) != nil else {
+            guard let folder = fetchFolder(id: folderId) else {
                 throw BookmarkStoreError.folderNotFound
             }
-            found.isFavorite = false
+            found.isFavorite = folder.isFavorite
             found.folderId = folderId
         }
         try context.save()
@@ -256,14 +375,18 @@ final class BookmarkStore {
         try context.save()
     }
 
-    func fetchFavorites() -> [Bookmark] {
+    func fetchFavorites(rootOnly: Bool = false) -> [Bookmark] {
         var descriptor = FetchDescriptor<Bookmark>(
             predicate: #Predicate { $0.isFavorite },
             sortBy: [SortDescriptor(\.sortOrder, order: .forward), SortDescriptor(\.addedAt, order: .forward)]
         )
         descriptor.fetchLimit = BookmarkLimits.maxEntries
         do {
-            return try context.fetch(descriptor)
+            let all = try context.fetch(descriptor)
+            if rootOnly {
+                return all.filter { $0.folderId == nil }
+            }
+            return all
         } catch {
             Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
                 .error("fetchFavorites failed: \(error.localizedDescription, privacy: .public)")
@@ -320,6 +443,8 @@ final class BookmarkStore {
     func removeFavorite(url: URL) throws {
         if let existing = try earliestBookmark(at: url) {
             existing.isFavorite = false
+            // Clearing the folder keeps a non-fav row out of a fav hierarchy.
+            existing.folderId = nil
             try context.save()
         }
     }

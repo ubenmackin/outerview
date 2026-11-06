@@ -1,7 +1,4 @@
-//
-//  BookmarkHTMLParserTests.swift
-//  OuterView
-//
+// Import — Parser tests for Netscape bookmark exports.
 
 @testable import OuterView
 import XCTest
@@ -10,8 +7,16 @@ final class BookmarkHTMLParserTests: XCTestCase {
     func testFixtureParsesExpectedCounts() throws {
         let result = try BookmarkHTMLParser.parse(ImportFixtures.safariExport())
         XCTAssertEqual(result.bookmarks.count, 6)
+        XCTAssertEqual(result.folders.count, 3)
         XCTAssertEqual(result.skippedInvalid, 1)
         XCTAssertEqual(result.truncated, 0)
+    }
+
+    func testFixtureParsesFolders() throws {
+        let result = try BookmarkHTMLParser.parse(ImportFixtures.safariExport())
+        XCTAssertEqual(result.folders.map(\.title), ["Reading", "Inner", "Bookmarks Bar"])
+        XCTAssertEqual(result.folders.map(\.parentPath), [[], ["Reading"], []])
+        XCTAssertEqual(result.folders[0].addedDate, Date(timeIntervalSince1970: 1_699_990_000))
     }
 
     func testFixtureTitlesUrlsAndOrder() throws {

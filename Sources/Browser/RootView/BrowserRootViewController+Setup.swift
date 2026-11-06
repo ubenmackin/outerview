@@ -359,6 +359,23 @@ extension BrowserRootViewController {
         bookmarksLibraryView.onDidMutateLibraryData = { [weak self] in
             self?.updateStartPageContent()
         }
+        bookmarksLibraryView.tabGroupsProvider = { [weak self] in
+            guard let self else { return [] }
+            let groups = self.tabStore?.fetchGroups() ?? []
+            // Zero-member groups stay hidden from the folder submenu.
+            return groups.filter { group in
+                self.tabs.contains { $0.groupId == group.id && !$0.isPrivate }
+            }
+        }
+        bookmarksLibraryView.onOpenURLsInBackground = { [weak self] urls in
+            self?.openURLsInBackground(urls)
+        }
+        bookmarksLibraryView.onOpenURLsInTabGroup = { [weak self] urls, group in
+            self?.openURLsInGroup(urls, groupId: group.id)
+        }
+        bookmarksLibraryView.onOpenURLsInNewTabGroup = { [weak self] urls, name in
+            self?.openURLsInNewGroup(urls, name: name)
+        }
     }
 
     func setupSettings() {

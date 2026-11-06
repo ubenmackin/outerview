@@ -1,7 +1,4 @@
-//
-//  BookmarksBrowserView.swift
-//  OuterView
-//
+// Bookmarks — Hierarchical browser plus folder menus.
 
 import os
 import SwiftUI
@@ -29,6 +26,10 @@ final class BookmarksBrowserView: UIView {
     var onRequestEdit: ((BookmarkEditorTarget) -> Void)?
     var onNavigationStateChanged: (() -> Void)?
     var onDidMutateBookmarks: (() -> Void)?
+    var tabGroupsProvider: (() -> [TabGroup])?
+    var onOpenURLsInBackground: (([URL]) -> Void)?
+    var onOpenURLsInTabGroup: (([URL], TabGroup) -> Void)?
+    var onOpenURLsInNewTabGroup: (([URL], String) -> Void)?
 
     let bookmarkStore: BookmarkStore
     let defaults: UserDefaults
@@ -89,7 +90,11 @@ final class BookmarksBrowserView: UIView {
     }
 
     var canCreateFolder: Bool {
-        !isViewingFavorites && searchQuery.isEmpty
+        searchQuery.isEmpty
+    }
+
+    var isSearching: Bool {
+        !searchQuery.isEmpty
     }
 
     var isAtRoot: Bool {
@@ -98,7 +103,7 @@ final class BookmarksBrowserView: UIView {
 
     var currentNavigationTitle: String {
         if isViewingFavorites {
-            return "Favorites"
+            return folderStack.last?.title ?? "Favorites"
         }
         return folderStack.last?.title ?? "Bookmarks"
     }
@@ -158,24 +163,37 @@ final class BookmarksBrowserView: UIView {
         let activeSort = effectiveSortMode
 
         if isViewingFavorites {
-            currentFolders = []
-            currentBookmarks = Self.sortedBookmarks(bookmarkStore.fetchFavorites(), by: activeSort)
-            combinedEntries = []
-            folderItemCounts = [:]
+            let currentParentID = folderStack.last?.id
+            let rawFolders = bookmarkStore.fetchFolders(parentId: currentParentID, isFavorite: currentParentID == nil ? true : nil)
+            let rawBookmarks = currentParentID == nil
+                ? bookmarkStore.fetchFavorites(rootOnly: true)
+                : bookmarkStore.fetchBookmarks(folderId: currentParentID)
+            folderItemCounts = itemCounts(for: rawFolders)
+            currentFolders = Self.sortedFolders(rawFolders, by: activeSort)
+            currentBookmarks = Self.sortedBookmarks(rawBookmarks, by: activeSort)
+            combinedEntries = effectiveShowsFoldersOnTop
+                ? []
+                : Self.mergedEntries(folders: currentFolders, bookmarks: currentBookmarks, sortMode: activeSort)
+
             backButton.isHidden = false
-            backButton.setTitle(" Bookmarks", for: .normal)
-            backButton.accessibilityLabel = "Back to Bookmarks"
-            titleLabel.text = "Favorites"
+            if folderStack.isEmpty {
+                backButton.setTitle(" Bookmarks", for: .normal)
+                backButton.accessibilityLabel = "Back to Bookmarks"
+                titleLabel.text = "Favorites"
+            } else if let parent = folderStack.dropLast().last {
+                backButton.setTitle(" \(parent.title)", for: .normal)
+                backButton.accessibilityLabel = "Back to \(parent.title)"
+                titleLabel.text = folderStack.last?.title ?? "Favorites"
+            } else {
+                backButton.setTitle(" Favorites", for: .normal)
+                backButton.accessibilityLabel = "Back to Favorites"
+                titleLabel.text = folderStack.last?.title ?? "Favorites"
+            }
         } else {
             let currentParentID = folderStack.last?.id
-            let rawFolders = bookmarkStore.fetchFolders(parentId: currentParentID)
+            let rawFolders = bookmarkStore.fetchFolders(parentId: currentParentID, isFavorite: currentParentID == nil ? false : nil)
             let rawBookmarks = bookmarkStore.fetchBookmarks(folderId: currentParentID)
-            var counts: [UUID: Int] = [:]
-            for folder in rawFolders {
-                counts[folder.id] = bookmarkStore.fetchFolders(parentId: folder.id).count
-                    + bookmarkStore.fetchBookmarks(folderId: folder.id).count
-            }
-            folderItemCounts = counts
+            folderItemCounts = itemCounts(for: rawFolders)
             currentFolders = Self.sortedFolders(rawFolders, by: activeSort)
             currentBookmarks = Self.sortedBookmarks(rawBookmarks, by: activeSort)
             combinedEntries = effectiveShowsFoldersOnTop
@@ -225,7 +243,10 @@ final class BookmarksBrowserView: UIView {
             return .searchResults
         }
         if isViewingFavorites {
-            return .bookmarks
+            if !effectiveShowsFoldersOnTop {
+                return .combinedItems
+            }
+            return section == 0 ? .folders : .bookmarks
         }
         if !effectiveShowsFoldersOnTop {
             if folderStack.isEmpty {
@@ -258,6 +279,15 @@ final class BookmarksBrowserView: UIView {
     }
 
     // MARK: - Private
+
+    private func itemCounts(for folders: [BookmarkFolder]) -> [UUID: Int] {
+        var counts: [UUID: Int] = [:]
+        for folder in folders {
+            counts[folder.id] = bookmarkStore.fetchFolders(parentId: folder.id).count
+                + bookmarkStore.fetchBookmarks(folderId: folder.id).count
+        }
+        return counts
+    }
 
     private func setup() {
         backgroundColor = .clear
@@ -332,6 +362,11 @@ final class BookmarksBrowserView: UIView {
         selectedBookmarkIDs.removeAll()
         selectedFolderIDs.removeAll()
         if isViewingFavorites {
+            if !folderStack.isEmpty {
+                folderStack.removeLast()
+                reload()
+                return
+            }
             isViewingFavorites = false
             reload()
             return
@@ -354,8 +389,26 @@ final class BookmarksBrowserView: UIView {
     }
 
     func promptNewFolder() {
-        guard !isViewingFavorites,
-              let windowScene = window?.windowScene,
+        presentTextPrompt(title: "New Folder", message: "Enter a name for this folder.", placeholder: "Folder Name") { [weak self] name in
+            guard let self else { return }
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            let parentID = self.folderStack.last?.id
+            let isFav = self.isViewingFavorites
+            do {
+                try self.bookmarkStore.createFolder(title: trimmed, parentId: parentID, isFavorite: isFav)
+            } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
+                    .error("createFolder failed: \(error.localizedDescription, privacy: .public)")
+            }
+            self.reload()
+            self.onDidMutateBookmarks?()
+        }
+    }
+
+    /// Single alert seam for folder and tab-group prompts.
+    private func presentTextPrompt(title: String, message: String, placeholder: String, initialText: String? = nil, onSave: @escaping (String) -> Void) {
+        guard let windowScene = window?.windowScene,
               let rootVC = windowScene.windows.first(where: \.isKeyWindow)?.rootViewController
         else {
             return
@@ -364,23 +417,16 @@ final class BookmarksBrowserView: UIView {
         while let next = presenter.presentedViewController {
             presenter = next
         }
-
-        let alert = UIAlertController(title: "New Folder", message: "Enter a name for this folder.", preferredStyle: .alert)
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
         alert.addTextField { field in
-            field.placeholder = "Folder Name"
+            field.placeholder = placeholder
+            field.text = initialText
             field.autocapitalizationType = .words
         }
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Save", style: .default) { [weak self, weak alert] _ in
-            guard let self, let name = alert?.textFields?.first?.text, !name.isEmpty else { return }
-            let parentID = self.folderStack.last?.id
-            do {
-                try self.bookmarkStore.createFolder(title: name, parentId: parentID)
-            } catch {
-                Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
-                    .error("createFolder failed: \(error.localizedDescription, privacy: .public)")
-            }
-            self.reload()
+        alert.addAction(UIAlertAction(title: "Save", style: .default) { [weak alert] _ in
+            guard let raw = alert?.textFields?.first?.text, !raw.isEmpty else { return }
+            onSave(raw)
         })
         presenter.present(alert, animated: true)
     }
@@ -491,14 +537,33 @@ final class BookmarksBrowserView: UIView {
     func presentEditor(for target: BookmarkEditorTarget) {
         onRequestEdit?(target)
     }
+
+    private func promptNewTabGroup(for urls: [URL], defaultTitle: String) {
+        guard !urls.isEmpty else { return }
+        // Prefill truncates to the persisted group cap so the sheet never shows an overlong name.
+        let prefill = String(defaultTitle.prefix(TabGroup.maxNameLength))
+        presentTextPrompt(title: "New Tab Group", message: "Enter a name for this tab group.", placeholder: "Group Name", initialText: prefill) { [weak self] raw in
+            guard let self else { return }
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            let name = String(trimmed.prefix(TabGroup.maxNameLength))
+            self.onOpenURLsInNewTabGroup?(urls, name)
+        }
+    }
 }
 
 // MARK: - UITableViewDataSource, UITableViewDelegate
 
 extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
     func numberOfSections(in _: UITableView) -> Int {
-        if !searchQuery.isEmpty || isViewingFavorites {
+        if !searchQuery.isEmpty {
             return 1
+        }
+        if isViewingFavorites {
+            if !effectiveShowsFoldersOnTop {
+                return 1
+            }
+            return 2
         }
         if !effectiveShowsFoldersOnTop {
             return folderStack.isEmpty ? 2 : 1
@@ -530,9 +595,9 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
         case .folders:
             currentFolders.isEmpty ? nil : "Folders"
         case .bookmarks:
-            currentBookmarks.isEmpty ? nil : "Bookmarks"
+            currentBookmarks.isEmpty ? nil : (isViewingFavorites ? "Favorites" : "Bookmarks")
         case .combinedItems:
-            combinedEntries.isEmpty ? nil : "Bookmarks"
+            combinedEntries.isEmpty ? nil : (isViewingFavorites ? "Favorites" : "Bookmarks")
         }
     }
 
@@ -713,78 +778,146 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
         switch entry {
         case let .folder(folder):
             return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-                let editAction = UIAction(
-                    title: "Edit…",
-                    image: UIImage(systemName: "pencil")
-                ) { _ in
-                    self?.presentEditor(for: .editFolder(folder))
-                }
-                let deleteAction = UIAction(
-                    title: "Delete",
-                    image: UIImage(systemName: "trash"),
-                    attributes: .destructive
-                ) { _ in
-                    do {
-                        try self?.bookmarkStore.deleteFolder(id: folder.id)
-                        self?.reload()
-                        self?.onDidMutateBookmarks?()
-                    } catch {
-                        Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
-                            .error("deleteFolder failed: \(error.localizedDescription, privacy: .public)")
-                    }
-                }
-                return UIMenu(children: [editAction, deleteAction])
+                self?.folderContextMenu(for: folder)
             }
-
         case let .bookmark(bookmark):
             return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-                let openAction = UIAction(
-                    title: "Open",
-                    image: UIImage(systemName: "safari")
-                ) { _ in
-                    self?.onOpenURL?(bookmark.url)
-                }
-                let openNewTabAction = UIAction(
-                    title: "Open in New Tab",
-                    image: UIImage(systemName: "plus.square")
-                ) { _ in
-                    self?.onOpenInNewTab?(bookmark.url)
-                }
-                let copyAction = UIAction(
-                    title: "Copy Link",
-                    image: UIImage(systemName: "doc.on.doc")
-                ) { _ in
-                    UIPasteboard.general.url = bookmark.url
-                }
-                let editAction = UIAction(
-                    title: "Edit…",
-                    image: UIImage(systemName: "pencil")
-                ) { _ in
-                    self?.presentEditor(for: .editBookmark(bookmark))
-                }
-                let deleteAction = UIAction(
-                    title: "Delete",
-                    image: UIImage(systemName: "trash"),
-                    attributes: .destructive
-                ) { _ in
-                    do {
-                        try self?.bookmarkStore.delete(id: bookmark.id)
-                        self?.searchResults.removeAll { $0.id == bookmark.id }
-                        self?.reload()
-                        self?.onDidMutateBookmarks?()
-                    } catch {
-                        Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
-                            .error("deleteBookmark failed: \(error.localizedDescription, privacy: .public)")
-                    }
-                }
-                var actions = [openAction, openNewTabAction, copyAction]
-                if !isSearchResult {
-                    actions.append(editAction)
-                }
-                actions.append(deleteAction)
-                return UIMenu(children: actions)
+                self?.bookmarkContextMenu(for: bookmark, isSearchResult: isSearchResult)
             }
         }
+    }
+
+    private func folderContextMenu(for folder: BookmarkFolder) -> UIMenu? {
+        let allBookmarks = bookmarkStore.fetchAllBookmarks(inFolderId: folder.id)
+        // Rejected schemes never become tabs; truncated to the live-page cap.
+        let urls = Array(allBookmarks.map(\.url).filter { URLNormalizer.isLoadable($0) }.prefix(TabPool.livePageLimit))
+        let hasBookmarks = !urls.isEmpty
+        let openAction = UIAction(
+            title: "Open",
+            image: UIImage(systemName: "safari"),
+            attributes: hasBookmarks ? [] : [.disabled]
+        ) { [weak self] _ in
+            guard !urls.isEmpty else { return }
+            for url in urls {
+                self?.onOpenInNewTab?(url)
+            }
+        }
+        let openBackgroundAction = UIAction(
+            title: "Open in Background",
+            image: UIImage(systemName: "plus.square.on.square"),
+            attributes: hasBookmarks ? [] : [.disabled]
+        ) { [weak self] _ in
+            guard !urls.isEmpty else { return }
+            self?.onOpenURLsInBackground?(urls)
+        }
+        let tabGroupElement = folderTabGroupElement(for: folder, urls: urls)
+        let editAction = UIAction(
+            title: "Edit…",
+            image: UIImage(systemName: "pencil")
+        ) { [weak self] _ in
+            self?.presentEditor(for: .editFolder(folder))
+        }
+        let deleteAction = UIAction(
+            title: "Delete",
+            image: UIImage(systemName: "trash"),
+            attributes: .destructive
+        ) { [weak self] _ in
+            do {
+                try self?.bookmarkStore.deleteFolder(id: folder.id)
+                self?.reload()
+                self?.onDidMutateBookmarks?()
+            } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
+                    .error("deleteFolder failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        return UIMenu(children: [openAction, openBackgroundAction, tabGroupElement, editAction, deleteAction])
+    }
+
+    private func folderTabGroupElement(for folder: BookmarkFolder, urls: [URL]) -> UIMenuElement {
+        guard !urls.isEmpty else {
+            return UIAction(
+                title: "Open in Tab Group",
+                image: UIImage(systemName: "square.grid.2x2"),
+                attributes: [.disabled]
+            ) { _ in }
+        }
+        var groupElements: [UIMenuElement] = []
+        let newGroupAction = UIAction(
+            title: "New Tab Group…",
+            image: UIImage(systemName: "plus")
+        ) { [weak self] _ in
+            guard !urls.isEmpty else { return }
+            let prefill = String(folder.title.prefix(TabGroup.maxNameLength))
+            self?.promptNewTabGroup(for: urls, defaultTitle: prefill)
+        }
+        groupElements.append(newGroupAction)
+        let existingGroups = (tabGroupsProvider?() ?? []).sorted {
+            $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+        for group in existingGroups {
+            let groupAction = UIAction(
+                title: group.name,
+                image: UIImage(systemName: "square.on.square")
+            ) { [weak self] _ in
+                guard !urls.isEmpty else { return }
+                self?.onOpenURLsInTabGroup?(urls, group)
+            }
+            groupElements.append(groupAction)
+        }
+        return UIMenu(
+            title: "Open in Tab Group",
+            image: UIImage(systemName: "square.grid.2x2"),
+            children: groupElements
+        )
+    }
+
+    private func bookmarkContextMenu(for bookmark: Bookmark, isSearchResult: Bool) -> UIMenu? {
+        let openAction = UIAction(
+            title: "Open",
+            image: UIImage(systemName: "safari")
+        ) { [weak self] _ in
+            self?.onOpenURL?(bookmark.url)
+        }
+        let openNewTabAction = UIAction(
+            title: "Open in New Tab",
+            image: UIImage(systemName: "plus.square")
+        ) { [weak self] _ in
+            self?.onOpenInNewTab?(bookmark.url)
+        }
+        let copyAction = UIAction(
+            title: "Copy Link",
+            image: UIImage(systemName: "doc.on.doc")
+        ) { _ in
+            UIPasteboard.general.url = bookmark.url
+        }
+        let editAction = UIAction(
+            title: "Edit…",
+            image: UIImage(systemName: "pencil")
+        ) { [weak self] _ in
+            self?.presentEditor(for: .editBookmark(bookmark))
+        }
+        let deleteAction = UIAction(
+            title: "Delete",
+            image: UIImage(systemName: "trash"),
+            attributes: .destructive
+        ) { [weak self] _ in
+            do {
+                try self?.bookmarkStore.delete(id: bookmark.id)
+                self?.searchResults.removeAll { $0.id == bookmark.id }
+                self?.reload()
+                self?.onDidMutateBookmarks?()
+            } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
+                    .error("deleteBookmark failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        var actions = [openAction, openNewTabAction, copyAction]
+        if !isSearchResult {
+            actions.append(editAction)
+        }
+        actions.append(deleteAction)
+        return UIMenu(children: actions)
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
