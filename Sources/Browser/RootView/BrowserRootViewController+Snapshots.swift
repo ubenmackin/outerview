@@ -34,7 +34,7 @@ extension BrowserRootViewController {
         boundListenerPages[id] = ObjectIdentifier(page)
     }
 
-    private func handleSnapshot(_ snapshot: WebPageSnapshot, for id: UUID) {
+    func handleSnapshot(_ snapshot: WebPageSnapshot, for id: UUID) {
         var didChange = false
         var didCommitNewURL = false
         var didTitleChange = false
@@ -99,8 +99,11 @@ extension BrowserRootViewController {
                 logPersistenceError(error, operation: "refreshHistoryTitle")
             }
         }
-        if isOverviewVisible, didChange {
-            overviewController.setItems(overviewItems(), selectedID: selectedTabID)
+        if didChange {
+            if isOverviewVisible {
+                overviewController.setItems(overviewItems(), selectedID: selectedTabID)
+            }
+            updateTabStrip()
         }
         guard id == selectedTabID else { return }
         refreshForSnapshot(snapshot)

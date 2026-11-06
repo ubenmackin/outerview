@@ -207,18 +207,29 @@ enum SystemToolbarMapper {
         return button
     }
 
-    /// Bottom-stack host: full remove plus rebuild with native glass buttons,
-    /// so stale buttons never survive a state change.
-    static func populateBottomStack(_ stack: UIStackView, with actions: [RailAction]) {
+    /// Populates any UIStackView host with native Liquid Glass buttons.
+    /// Used by SideRailView (Mode 1), TopBarView (Mode 2), and bottom stacks (Mode 3).
+    static func populateStack(
+        _ stack: UIStackView,
+        with actions: [RailAction],
+        axis: NSLayoutConstraint.Axis,
+        spacing: CGFloat = bottomBarSpacing
+    ) {
         clearStack(stack)
-        stack.axis = .horizontal
+        stack.axis = axis
         stack.alignment = .center
-        stack.spacing = bottomBarSpacing
+        stack.spacing = spacing
         stack.backgroundColor = .clear
         stack.isOpaque = false
         for action in actions {
             stack.addArrangedSubview(makeButton(for: action))
         }
         stack.layoutIfNeeded()
+    }
+
+    /// Bottom-stack host: full remove plus rebuild with native glass buttons,
+    /// so stale buttons never survive a state change.
+    static func populateBottomStack(_ stack: UIStackView, with actions: [RailAction]) {
+        populateStack(stack, with: actions, axis: .horizontal, spacing: bottomBarSpacing)
     }
 }

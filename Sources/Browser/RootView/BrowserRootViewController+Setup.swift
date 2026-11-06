@@ -96,9 +96,11 @@ extension BrowserRootViewController {
         view.bringSubviewToFront(bookmarkEditorOverlay)
         view.bringSubviewToFront(overviewView)
         view.bringSubviewToFront(tabStripView)
-        view.bringSubviewToFront(topBarView)
         if chromePlacement == .regular {
+            view.bringSubviewToFront(topBarView)
             view.bringSubviewToFront(editorView)
+        } else if !isOverviewVisible {
+            view.bringSubviewToFront(topBarView)
         }
         view.bringSubviewToFront(railView)
     }
@@ -421,7 +423,8 @@ extension BrowserRootViewController {
         guard let hosting = makeSettingsController() else { return }
         settingsHosting = hosting
         isSettingsVisible = true
-        if interfaceMode == .nonDuoPhone {
+        let isModalSheet = interfaceMode != .duoOuter
+        if isModalSheet {
             hosting.modalPresentationStyle = .pageSheet
             hosting.presentationController?.delegate = self
             if let sheet = hosting.sheetPresentationController {
@@ -488,6 +491,24 @@ extension BrowserRootViewController {
             isBookmarkEditorPresentedModally = true
             isBookmarkEditorVisible = true
             librarySheet.present(hosting, animated: shouldAnimateModalSheets)
+            updateRailItems()
+            applyRailViews(animated: true)
+            return
+        }
+
+        if placement == .regular || interfaceMode == .nonDuoPhone {
+            hosting.modalPresentationStyle = .pageSheet
+            if let sheet = hosting.sheetPresentationController {
+                sheet.detents = [.medium(), .large()]
+                sheet.prefersGrabberVisible = false
+                sheet.preferredCornerRadius = 28
+            }
+            bookmarkEditorHosting = hosting
+            isBookmarkEditorPresentedModally = true
+            isBookmarkEditorVisible = true
+            if view.window != nil {
+                present(hosting, animated: shouldAnimateModalSheets)
+            }
             updateRailItems()
             applyRailViews(animated: true)
             return

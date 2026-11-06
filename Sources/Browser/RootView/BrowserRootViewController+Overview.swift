@@ -36,17 +36,21 @@ extension BrowserRootViewController {
                 topBarAnimator?.finishAnimation(at: .current)
                 topBarAnimator = nil
                 updateToolbarVisibility(for: chromeController.state)
-                topBarView.leadingStack.alpha = 1
-                topBarView.trailingStack.alpha = 1
                 refreshStatusBarAppearanceIfNeeded()
             }
-            overviewController.showsInlineCommands = (chromePlacement == .regular || interfaceMode == .nonDuoPhone)
+            overviewController.isRegular = (chromePlacement == .regular)
+            overviewController.showsInlineCommands = (interfaceMode == .nonDuoPhone)
             applyOverviewChromeItems()
             overviewController.applyInlineCommandsVisibility()
+            applyChromeViews(animated: false)
+            updateTabStrip()
             bringChromeToFront()
         } else {
             overviewView.isHidden = true
             overviewView.alpha = 1
+            if chromePlacement == .regular {
+                updateToolbarVisibility(for: chromeController.state)
+            }
             updateRailItems()
             applyChromeViews(animated: false)
         }
@@ -423,7 +427,7 @@ extension BrowserRootViewController {
             tabStripView.isHidden = true
             return
         }
-        if isOverviewVisible || isSheetOverlayVisible {
+        if isOverviewVisible || (isBookmarkEditorVisible && !isBookmarkEditorPresentedModally) {
             tabStripView.isHidden = true
             return
         }

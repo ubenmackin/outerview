@@ -195,7 +195,17 @@ final class WebPageController: NSObject {
 
     func takeSnapshot() async -> UIImage? {
         do {
-            return try await webView.takeSnapshot(configuration: nil)
+            let config = WKSnapshotConfiguration()
+            let topInset = webView.scrollView.adjustedContentInset.top
+            if topInset > 0, webView.bounds.width > 0, webView.bounds.height > topInset {
+                config.rect = CGRect(
+                    x: 0,
+                    y: topInset,
+                    width: webView.bounds.width,
+                    height: webView.bounds.height - topInset
+                )
+            }
+            return try await webView.takeSnapshot(configuration: config)
         } catch {
             return nil
         }

@@ -63,9 +63,9 @@ final class RegularHeaderTests: XCTestCase {
         XCTAssertEqual(TabStripView.stripHeight, 44)
         XCTAssertEqual(TopBarView.remnantHeight, 48)
         XCTAssertEqual(BrowserRootViewController.regularRemnantHeight, TopBarView.remnantHeight)
-        XCTAssertEqual(BrowserRootViewController.regularTrailingClearance, 164)
+        XCTAssertEqual(BrowserRootViewController.regularTrailingClearance, 84)
         XCTAssertEqual(TopBarView.horizontalInset, 28)
-        XCTAssertEqual(TopBarView.trailingStatusInset, 164)
+        XCTAssertEqual(TopBarView.trailingStatusInset, 84)
         XCTAssertEqual(TopBarView.clusterSpacing, 12)
         XCTAssertEqual(TopBarView.expandedPillMaxWidth, 380)
         XCTAssertEqual(AddressBarView.minifiedMaxWidth, 220)
@@ -227,7 +227,7 @@ final class RegularHeaderTests: XCTestCase {
 
     func testClusterInsetsAndSpacing() {
         XCTAssertEqual(TopBarView.horizontalInset, 28)
-        XCTAssertEqual(TopBarView.trailingStatusInset, 164)
+        XCTAssertEqual(TopBarView.trailingStatusInset, 84)
         XCTAssertEqual(TopBarView.clusterSpacing, 12)
         let bar = TopBarView()
         TestWindow.attach(bar)

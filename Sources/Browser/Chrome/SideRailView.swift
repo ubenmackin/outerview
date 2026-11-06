@@ -152,12 +152,13 @@ struct RailAction {
 }
 
 /// Vertical rail overlay pinned full-bleed so safe area matches the window.
-/// Stacks render as a 60 pt column centered in the right system column.
+/// Stacks render as a column aligned with the hardware Control Center icon.
 /// Only stacks hit-test so web content stays tappable elsewhere.
 @MainActor
 final class SideRailView: UIView {
+    nonisolated static let buttonCenterFromTrailingEdge: CGFloat = 47
     nonisolated static let spacing: CGFloat = 8
-    nonisolated static let columnWidth: CGFloat = 60
+    nonisolated static let columnWidth: CGFloat = 44
     nonisolated static let safeColumnWidth: CGFloat = 84
     nonisolated static let topPadding: CGFloat = 12
     nonisolated static let bottomPadding: CGFloat = 4
@@ -193,9 +194,9 @@ final class SideRailView: UIView {
         max(safeAreaTop, reservedMaxY, reservedOcclusionHeight) + topPadding
     }
 
-    /// X origin of the rail column centered in the right system column.
-    nonisolated static func columnOriginX(boundsMaxX: CGFloat, safeAreaRight: CGFloat = 0) -> CGFloat {
-        boundsMaxX - systemColumnWidth(safeAreaRight: safeAreaRight) / 2 - columnWidth / 2
+    /// X origin of the rail column so button centers align with the Control Center icon.
+    nonisolated static func columnOriginX(boundsMaxX: CGFloat, safeAreaRight _: CGFloat = 0) -> CGFloat {
+        boundsMaxX - buttonCenterFromTrailingEdge - columnWidth / 2
     }
 
     /// Y of the suffix group bottom edge.
@@ -203,7 +204,7 @@ final class SideRailView: UIView {
         boundsMaxY - safeAreaBottom - bottomPadding
     }
 
-    /// Full column frame inside `bounds`, centered in the right system column.
+    /// Full column frame inside `bounds`, centered under the Control Center icon.
     nonisolated static func columnFrame(
         bounds: CGRect,
         safeAreaTop: CGFloat,
@@ -235,6 +236,14 @@ final class SideRailView: UIView {
     private let topStack = UIStackView()
     private let bottomStack = UIStackView()
 
+    var buttons: [UIButton] {
+        (topStack.arrangedSubviews + bottomStack.arrangedSubviews).compactMap { $0 as? UIButton }
+    }
+
+    func button(labeled label: String) -> UIButton? {
+        buttons.first { $0.accessibilityLabel == label }
+    }
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         setup()
@@ -255,13 +264,7 @@ final class SideRailView: UIView {
         if targetHeight > stack.bounds.height {
             stack.frame.size = CGSize(width: Self.columnWidth, height: targetHeight)
         }
-        // Full remove plus rebuild through the mapper: stale items never persist.
-        // Vertical rail keeps one toolbar per action; construction lives in
-        // the mapper so the exception can never drift from shared glass.
-        SystemToolbarMapper.clearStack(stack)
-        for toolbar in SystemToolbarMapper.railToolbars(for: items) {
-            stack.addArrangedSubview(toolbar)
-        }
+        SystemToolbarMapper.populateStack(stack, with: items, axis: .vertical, spacing: Self.spacing)
         if targetHeight < stack.bounds.height {
             stack.frame.size = CGSize(width: Self.columnWidth, height: targetHeight)
         }

@@ -304,4 +304,28 @@ final class TabStripTests: XCTestCase {
         // Standard tabs reordered, private tab preserved in strip
         XCTAssertEqual(root.tabs.map(\.id), [tab2.id, tab1.id, privateTab.id])
     }
+
+    func testSnapshotDidChangeUpdatesTabStripTitleImmediately() throws {
+        let root = try makeRoot()
+        let tab1 = TabRecord(url: URL(string: "https://apple.com"), title: "Apple", isPrivate: false)
+        let tab2 = TabRecord(url: URL(string: "https://example.com"), title: "Example", isPrivate: false)
+        root.tabs = [tab1, tab2]
+        root.selectedTabID = tab1.id
+        root.applyChromePlacement(for: .regular)
+        root.updateTabStrip()
+        XCTAssertEqual(root.tabStripView.displayedTabs.first?.title, "Apple")
+
+        // Simulate snapshot update with new title and url (e.g. navigating to Google)
+        let newSnapshot = WebPageSnapshot.make(
+            url: URL(string: "https://google.com"),
+            title: "Google",
+            progress: 1.0,
+            canGoBack: true,
+            canGoForward: false,
+            lastError: nil,
+            hasFailedServerTrustChallenge: false
+        )
+        root.handleSnapshot(newSnapshot, for: tab1.id)
+        XCTAssertEqual(root.tabStripView.displayedTabs.first?.title, "Google")
+    }
 }

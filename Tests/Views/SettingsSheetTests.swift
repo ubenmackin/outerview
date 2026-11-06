@@ -14,22 +14,14 @@ final class SettingsSheetTests: XCTestCase {
         return root
     }
 
-    private func doneItem(in rail: SideRailView) -> UIBarButtonItem? {
-        let toolbars = rail.subviews
-            .compactMap { $0 as? UIStackView }
-            .flatMap { $0.arrangedSubviews.compactMap { $0 as? UIToolbar } }
-        return toolbars.compactMap(\.items).flatMap(\.self).first {
-            $0.accessibilityLabel == "Done"
-        }
+    private func doneItem(in rail: SideRailView) -> UIButton? {
+        rail.button(labeled: "Done")
     }
 
-    /// Fires the mapped bar action through a control so the UIAction
+    /// Fires the mapped button action so the UIAction
     /// handler path runs instead of calling the root directly.
-    private func fire(_ item: UIBarButtonItem) async {
-        guard let action = item.primaryAction else { return }
-        let control = UIControl()
-        control.addAction(action, for: .touchUpInside)
-        control.sendActions(for: .touchUpInside)
+    private func fire(_ button: UIButton) async {
+        button.sendActions(for: .touchUpInside)
         await Task.yield()
         await Task.yield()
     }
@@ -107,7 +99,7 @@ final class SettingsSheetTests: XCTestCase {
 
         // System owns tap elasticity; firing the mapped Done closes the sheet.
         let done = try XCTUnwrap(doneItem(in: root.railView))
-        XCTAssertNotNil(done.primaryAction)
+        XCTAssertTrue(done.isEnabled)
         await fire(done)
 
         XCTAssertFalse(root.isSettingsVisible)

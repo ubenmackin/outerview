@@ -69,7 +69,7 @@ final class LibrarySheetTests: XCTestCase {
         XCTAssertEqual(TopBarView.barHeight, 84)
         XCTAssertEqual(TabStripView.stripHeight, 44)
         XCTAssertEqual(TopBarView.remnantHeight, 48)
-        XCTAssertEqual(TopBarView.trailingStatusInset, 164)
+        XCTAssertEqual(TopBarView.trailingStatusInset, 84)
     }
 
     func testRegularCardContentPadded() {

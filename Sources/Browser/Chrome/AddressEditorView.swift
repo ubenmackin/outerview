@@ -718,8 +718,8 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         let compactContentTop = contentAreaContainer.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 8)
         let compactContentBottom = contentAreaContainer.bottomAnchor.constraint(equalTo: bottomBarContainer.topAnchor, constant: -8)
         let compactBarBottom = bottomBarContainer.bottomAnchor.constraint(equalTo: keyboardLayoutGuide.topAnchor, constant: -8)
-        let compactBarLeading = bottomBarContainer.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 8)
-        let compactBarTrailing = bottomBarContainer.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -8)
+        let compactBarLeading = bottomBarContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16)
+        let compactBarTrailing = bottomBarContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16)
         compactConstraints = [
             compactContentTop, compactContentBottom, compactBarBottom,
             compactBarLeading, compactBarTrailing
@@ -808,7 +808,7 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     }
 
     func updateVisibleContent() {
-        let shouldShowInlineDismiss = chromePlacement == .compact && isNonDuoPhone && isEditing
+        let shouldShowInlineDismiss = chromePlacement == .compact && isEditing
         inlineDismissButton.isHidden = !shouldShowInlineDismiss
 
         // Keep stale taps off rows behind the dismiss control.
