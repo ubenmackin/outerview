@@ -37,6 +37,7 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
     nonisolated static let downloadRingSize: CGFloat = 24
     nonisolated static let horizontalCommitFraction: CGFloat = 0.40
     nonisolated static let horizontalFlingVelocity: CGFloat = 800
+    nonisolated static let verticalFlingVelocity: CGFloat = 800
     nonisolated static let verticalCommitFraction: CGFloat = 0.30
     /// First excursion past this locks the pan to the larger-magnitude axis.
     nonisolated static let axisLockThreshold: CGFloat = 8
@@ -82,10 +83,13 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
         overviewCardRadius * progress
     }
 
-    /// Commits once the upward drag reaches 30% of view height.
-    nonisolated static func shouldCommitVertical(translationY: CGFloat, height: CGFloat) -> Bool {
-        guard height > 0 else { return false }
-        return -translationY >= height * verticalCommitFraction
+    /// Commits at 30% of view height, else on an upward 800 pt/s flick.
+    nonisolated static func shouldCommitVertical(translationY: CGFloat, height: CGFloat, velocityY: CGFloat) -> Bool {
+        guard height > 0, translationY < 0 else { return false }
+        if -translationY >= height * verticalCommitFraction {
+            return true
+        }
+        return velocityY <= -verticalFlingVelocity
     }
 
     /// Shared settle curve: faster flings settle sooner, clamped to 0.12–0.30 s.
