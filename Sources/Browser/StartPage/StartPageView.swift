@@ -23,6 +23,8 @@ final class StartPageView: UIView {
 
     private let scrollView = UIScrollView()
     private let contentStack = UIStackView()
+    private let favoritesHeaderStack = UIStackView()
+    private let folderBackButton = UIButton(type: .system)
     private let favoritesHeaderLabel = UILabel()
     private let collectionView: UICollectionView
     private let flowLayout: UICollectionViewFlowLayout
@@ -64,14 +66,21 @@ final class StartPageView: UIView {
 
     func reload() {
         viewModel.reload()
+        if viewModel.isAtRoot {
+            folderBackButton.isHidden = true
+            favoritesHeaderLabel.text = "Favorites"
+        } else {
+            folderBackButton.isHidden = false
+            favoritesHeaderLabel.text = viewModel.currentTitle
+        }
         let favoritesEmpty = viewModel.isFavoritesEmpty
         let recentsEmpty = viewModel.isRecentsEmpty
         collectionView.isHidden = favoritesEmpty
-        emptyStateStack.isHidden = !favoritesEmpty
+        emptyStateStack.isHidden = !favoritesEmpty || !viewModel.isAtRoot
         addCurrentPageTile.isEnabled = viewModel.canAddCurrentPage
         addCurrentPageTile.alpha = viewModel.canAddCurrentPage ? 1 : 0.5
-        recentsHeaderLabel.isHidden = recentsEmpty
-        recentsStack.isHidden = recentsEmpty
+        recentsHeaderLabel.isHidden = recentsEmpty || !viewModel.isAtRoot
+        recentsStack.isHidden = recentsEmpty || !viewModel.isAtRoot
         rebuildRecentRows()
         collectionView.reloadData()
         updateCollectionHeight()
@@ -176,11 +185,30 @@ final class StartPageView: UIView {
             )
         ])
 
+        favoritesHeaderStack.axis = .horizontal
+        favoritesHeaderStack.spacing = 8
+        favoritesHeaderStack.alignment = .center
+        favoritesHeaderStack.translatesAutoresizingMaskIntoConstraints = false
+
+        folderBackButton.setImage(UIImage(systemName: "chevron.backward"), for: .normal)
+        folderBackButton.setTitle(" Favorites", for: .normal)
+        folderBackButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
+        folderBackButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        folderBackButton.accessibilityLabel = "Back to Favorites"
+        folderBackButton.isHidden = true
+        folderBackButton.addAction(UIAction { [weak self] _ in
+            self?.viewModel.popFolder()
+            self?.reload()
+        }, for: .touchUpInside)
+        favoritesHeaderStack.addArrangedSubview(folderBackButton)
+
         favoritesHeaderLabel.text = "Favorites"
         favoritesHeaderLabel.font = .preferredFont(forTextStyle: .headline)
         favoritesHeaderLabel.adjustsFontForContentSizeCategory = true
         favoritesHeaderLabel.accessibilityIdentifier = "StartPage.FavoritesHeader"
-        contentStack.addArrangedSubview(favoritesHeaderLabel)
+        favoritesHeaderStack.addArrangedSubview(favoritesHeaderLabel)
+
+        contentStack.addArrangedSubview(favoritesHeaderStack)
 
         collectionView.backgroundColor = .clear
         collectionView.isScrollEnabled = false
@@ -261,7 +289,7 @@ final class StartPageView: UIView {
     }
 
     private func updateCollectionHeight() {
-        let count = viewModel.favorites.count
+        let count = viewModel.favoriteItems.count
         guard !collectionView.isHidden, count > 0 else { return }
         updateFlowItemSize()
         let columns = StartPageViewModel.columnCount(for: traitCollection)
@@ -340,7 +368,7 @@ final class StartPageView: UIView {
 
 extension StartPageView: UICollectionViewDataSource, UICollectionViewDelegate {
     func collectionView(_: UICollectionView, numberOfItemsInSection _: Int) -> Int {
-        viewModel.favorites.count
+        viewModel.favoriteItems.count
     }
 
     func collectionView(
@@ -354,20 +382,37 @@ extension StartPageView: UICollectionViewDataSource, UICollectionViewDelegate {
         else {
             return UICollectionViewCell()
         }
-        let bookmark = viewModel.favorites[indexPath.item]
-        cell.onCopyURL = {
-            UIPasteboard.general.url = bookmark.url
+        let item = viewModel.favoriteItems[indexPath.item]
+        switch item {
+        case let .bookmark(bookmark):
+            cell.onCopyURL = {
+                UIPasteboard.general.url = bookmark.url
+            }
+            cell.onDelete = { [weak self] in
+                self?.onDeleteFavorite?(bookmark.id)
+            }
+            cell.configure(with: bookmark)
+        case let .folder(folder):
+            cell.onCopyURL = nil
+            cell.onDelete = { [weak self] in
+                self?.onDeleteFavorite?(folder.id)
+            }
+            let previews = viewModel.previewBookmarks(for: folder)
+            cell.configure(with: folder, previewBookmarks: previews)
         }
-        cell.onDelete = { [weak self] in
-            self?.onDeleteFavorite?(bookmark.id)
-        }
-        cell.configure(with: bookmark)
         return cell
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: true)
-        delegate?.startPage(self, didOpenURL: viewModel.favorites[indexPath.item].url)
+        let item = viewModel.favoriteItems[indexPath.item]
+        switch item {
+        case let .bookmark(bookmark):
+            delegate?.startPage(self, didOpenURL: bookmark.url)
+        case let .folder(folder):
+            viewModel.openFolder(folder)
+            reload()
+        }
     }
 
     func collectionView(
@@ -375,20 +420,34 @@ extension StartPageView: UICollectionViewDataSource, UICollectionViewDelegate {
         contextMenuConfigurationForItemAt indexPath: IndexPath,
         point _: CGPoint
     ) -> UIContextMenuConfiguration? {
-        guard indexPath.item < viewModel.favorites.count else { return nil }
-        let bookmark = viewModel.favorites[indexPath.item]
-        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-            let copyAction = UIAction(title: "Copy Link", image: UIImage(systemName: "doc.on.doc")) { _ in
-                UIPasteboard.general.url = bookmark.url
+        guard indexPath.item < viewModel.favoriteItems.count else { return nil }
+        let item = viewModel.favoriteItems[indexPath.item]
+        switch item {
+        case let .bookmark(bookmark):
+            return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+                let copyAction = UIAction(title: "Copy Link", image: UIImage(systemName: "doc.on.doc")) { _ in
+                    UIPasteboard.general.url = bookmark.url
+                }
+                let deleteAction = UIAction(
+                    title: "Remove from Favorites",
+                    image: UIImage(systemName: "star.slash"),
+                    attributes: .destructive
+                ) { _ in
+                    self?.onDeleteFavorite?(bookmark.id)
+                }
+                return UIMenu(children: [copyAction, deleteAction])
             }
-            let deleteAction = UIAction(
-                title: "Remove from Favorites",
-                image: UIImage(systemName: "star.slash"),
-                attributes: .destructive
-            ) { _ in
-                self?.onDeleteFavorite?(bookmark.id)
+        case let .folder(folder):
+            return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+                let deleteAction = UIAction(
+                    title: "Delete Folder",
+                    image: UIImage(systemName: "trash"),
+                    attributes: .destructive
+                ) { _ in
+                    self?.onDeleteFavorite?(folder.id)
+                }
+                return UIMenu(children: [deleteAction])
             }
-            return UIMenu(children: [copyAction, deleteAction])
         }
     }
 }
@@ -401,9 +460,9 @@ extension StartPageView: UICollectionViewDragDelegate, UICollectionViewDropDeleg
         itemsForBeginning _: UIDragSession,
         at indexPath: IndexPath
     ) -> [UIDragItem] {
-        guard Self.canBeginDrag(itemCount: viewModel.favorites.count, index: indexPath.item) else { return [] }
+        guard Self.canBeginDrag(itemCount: viewModel.favoriteItems.count, index: indexPath.item) else { return [] }
         let dragItem = UIDragItem(itemProvider: NSItemProvider())
-        dragItem.localObject = viewModel.favorites[indexPath.item].id
+        dragItem.localObject = viewModel.favoriteItems[indexPath.item].id
         return [dragItem]
     }
 
@@ -425,7 +484,7 @@ extension StartPageView: UICollectionViewDragDelegate, UICollectionViewDropDeleg
         guard coordinator.proposal.operation == .move else { return }
         let localItems = coordinator.items.filter { $0.dragItem.localObject is UUID }
         guard !localItems.isEmpty else { return }
-        let currentIDs = viewModel.favorites.map(\.id)
+        let currentIDs = viewModel.favoriteItems.map(\.id)
         guard !currentIDs.isEmpty else { return }
         let draggedIDs = localItems.compactMap { $0.dragItem.localObject as? UUID }
         guard !draggedIDs.isEmpty else { return }

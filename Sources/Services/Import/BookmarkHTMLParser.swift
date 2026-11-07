@@ -15,18 +15,26 @@ struct ParsedFolder: Equatable, Sendable {
     let addedDate: Date?
 }
 
+enum ParsedItem: Equatable, Sendable {
+    case folder(ParsedFolder)
+    case bookmark(ParsedBookmark)
+}
+
 struct BookmarkParseResult: Equatable, Sendable {
+    let items: [ParsedItem]
     let bookmarks: [ParsedBookmark]
     let folders: [ParsedFolder]
     let skippedInvalid: Int
     let truncated: Int
 
     init(
+        items: [ParsedItem] = [],
         bookmarks: [ParsedBookmark],
         folders: [ParsedFolder] = [],
         skippedInvalid: Int = 0,
         truncated: Int = 0
     ) {
+        self.items = items.isEmpty ? (folders.map(ParsedItem.folder) + bookmarks.map(ParsedItem.bookmark)) : items
         self.bookmarks = bookmarks
         self.folders = folders
         self.skippedInvalid = skippedInvalid
@@ -104,6 +112,7 @@ enum BookmarkHTMLParser {
         var pendingFolderAddDate: String?
         var folders: [ParsedFolder] = []
         var bookmarks: [ParsedBookmark] = []
+        var items: [ParsedItem] = []
         var skippedInvalid = 0
         var truncated = 0
         let regex = try RegexKit()
@@ -113,11 +122,13 @@ enum BookmarkHTMLParser {
             guard let name = pendingFolderName else { return }
             let parentPath = folderStack.filter { !$0.isEmpty }
             if folders.count + bookmarks.count < BookmarkLimits.maxEntries {
-                folders.append(ParsedFolder(
+                let folder = ParsedFolder(
                     title: name,
                     parentPath: parentPath,
                     addedDate: date(fromEpoch: pendingFolderAddDate)
-                ))
+                )
+                folders.append(folder)
+                items.append(.folder(folder))
             } else {
                 truncated += 1
             }
@@ -137,11 +148,13 @@ enum BookmarkHTMLParser {
                         let parentPath = folderStack.filter { !$0.isEmpty }
                         // Folders and bookmarks share the entry cap so huge files stay bounded.
                         if folders.count + bookmarks.count < BookmarkLimits.maxEntries {
-                            folders.append(ParsedFolder(
+                            let folder = ParsedFolder(
                                 title: name,
                                 parentPath: parentPath,
                                 addedDate: date(fromEpoch: pendingFolderAddDate)
-                            ))
+                            )
+                            folders.append(folder)
+                            items.append(.folder(folder))
                         } else {
                             truncated += 1
                         }
@@ -172,6 +185,7 @@ enum BookmarkHTMLParser {
                     )
                     if folders.count + bookmarks.count < BookmarkLimits.maxEntries {
                         bookmarks.append(entry)
+                        items.append(.bookmark(entry))
                     } else {
                         truncated += 1
                     }
@@ -181,6 +195,7 @@ enum BookmarkHTMLParser {
 
         flushPendingFolder()
         return BookmarkParseResult(
+            items: items,
             bookmarks: bookmarks,
             folders: folders,
             skippedInvalid: skippedInvalid,

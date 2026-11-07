@@ -19,4 +19,12 @@ enum ImportFixtures {
         }
         return try Data(contentsOf: url)
     }
+
+    static func userSafariExport() throws -> Data {
+        let bundle = Bundle(for: FixtureAnchor.self)
+        guard let url = bundle.url(forResource: "user_safari_bookmarks", withExtension: "html") else {
+            throw FixtureError.missingResource("user_safari_bookmarks.html")
+        }
+        return try Data(contentsOf: url)
+    }
 }
