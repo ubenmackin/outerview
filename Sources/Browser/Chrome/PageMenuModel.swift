@@ -19,6 +19,7 @@ struct PageMenuModel: Equatable, Sendable {
     let canOpenDownloads: Bool
     let isDesktopMode: Bool
     let canToggleDesktopMode: Bool
+    let canPrint: Bool
 
     init(
         url: URL?,
@@ -32,7 +33,8 @@ struct PageMenuModel: Equatable, Sendable {
         textZoom: Double = 1.0,
         canOpenDownloads: Bool = false,
         isDesktopMode: Bool = false,
-        canToggleDesktopMode: Bool = false
+        canToggleDesktopMode: Bool = false,
+        canPrint: Bool = true
     ) {
         let hasLoadableURL: Bool = if let url {
             URLNormalizer.isLoadable(url)
@@ -54,6 +56,8 @@ struct PageMenuModel: Equatable, Sendable {
         self.canOpenDownloads = canOpenDownloads
         self.isDesktopMode = isDesktopMode
         self.canToggleDesktopMode = canToggleDesktopMode || hasLoadableURL
+        // Print stays disabled without a loadable URL even if requested.
+        self.canPrint = canPrint && hasLoadableURL
     }
 
     /// Toggle label for the reading-list row, flipping with membership.

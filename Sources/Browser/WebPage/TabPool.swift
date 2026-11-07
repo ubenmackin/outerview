@@ -1,5 +1,6 @@
 // WebPage — Pooled tab controllers plus shared configurations.
 
+import Foundation
 import WebKit
 
 /// Owns one WebPageController per tab, keyed by tab id, with a shared
@@ -28,10 +29,17 @@ final class TabPool {
     }
 
     private var entries: [Entry] = []
-    private let normalConfiguration = TabPool.makeConfiguration(isPrivate: false)
-    private let privateConfiguration = TabPool.makeConfiguration(isPrivate: true)
+    private let defaults: UserDefaults
+    private let normalConfiguration: WKWebViewConfiguration
+    private let privateConfiguration: WKWebViewConfiguration
 
-    static func makeConfiguration(isPrivate: Bool) -> WKWebViewConfiguration {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        self.normalConfiguration = Self.makeConfiguration(isPrivate: false, defaults: defaults)
+        self.privateConfiguration = Self.makeConfiguration(isPrivate: true, defaults: defaults)
+    }
+
+    static func makeConfiguration(isPrivate: Bool, defaults _: UserDefaults = .standard) -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
         // One data store per mode: normal tabs share the persistent default
         // store, private tabs share the static non-persistent store so nothing
@@ -41,6 +49,10 @@ final class TabPool {
             : WKWebsiteDataStore.default()
         configuration.allowsInlineMediaPlayback = true
         configuration.allowsPictureInPictureMediaPlayback = true
+
+        // WKWebView copies its configuration, so the prototype controller never
+        // drives a live view; each page installs rules into its own controller
+        // below, reading the persisted flag at creation time.
         return configuration
     }
 
@@ -104,6 +116,7 @@ final class TabPool {
         }
         let page = WebPageController(configuration: configuration(isPrivate: entries[index].isPrivate))
         entries[index].page = page
+        installBlocking(for: page)
         evictIfNeeded(excluding: id)
         return page
     }
@@ -124,6 +137,7 @@ final class TabPool {
             return
         }
         let resolved = page ?? WebPageController(configuration: configuration(isPrivate: isPrivate))
+        installBlocking(for: resolved)
         entries.append(
             Entry(
                 id: id,
@@ -133,6 +147,19 @@ final class TabPool {
             )
         )
         evictIfNeeded(excluding: nil)
+    }
+
+    /// Copies of the shared configuration miss later rule installs, so each
+    /// new page installs directly into its own controller. Install races the
+    /// first navigation by design; the list lands shortly after with no restart.
+    private func installBlocking(for page: WebPageController) {
+        let enabled = defaults.object(forKey: SettingsViewModel.blockTrackersDefaultsKey) as? Bool ?? true
+        guard enabled else { return }
+        let controller = page.webView.configuration.userContentController
+        ContentBlockerService.shared.track(controller)
+        Task { @MainActor in
+            await ContentBlockerService.shared.applyRules(to: controller, enabled: true)
+        }
     }
 
     private func evictIfNeeded(excluding excludedID: UUID?) {

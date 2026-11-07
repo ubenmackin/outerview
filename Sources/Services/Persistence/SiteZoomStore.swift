@@ -1,7 +1,4 @@
-//
-//  SiteZoomStore.swift
-//  OuterView
-//
+// Persistence — Per-host text-zoom store with default cleanup.
 
 import Foundation
 

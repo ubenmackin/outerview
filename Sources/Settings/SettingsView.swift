@@ -91,6 +91,19 @@ struct SettingsView: View {
                     Text(SettingsViewModel.safariExportInstructions)
                 }
 
+                Section("Privacy & Security") {
+                    Toggle("Face ID for Private Tabs", isOn: $viewModel.requireBiometricsForPrivateTabs)
+                    Toggle("Block Trackers & Ads", isOn: $viewModel.blockTrackersAndAds)
+                }
+                .onChange(of: viewModel.blockTrackersAndAds) { _, enabled in
+                    // Live toggle: root applies rules to shared plus live controllers with no restart.
+                    NotificationCenter.default.post(
+                        name: .outerViewContentBlockerChanged,
+                        object: nil,
+                        userInfo: ["enabled": enabled]
+                    )
+                }
+
                 Section("Data") {
                     Button("Clear History and Website Data", role: .destructive) {
                         showingClearHistoryConfirm = true
@@ -134,7 +147,7 @@ struct SettingsView: View {
             }
             .alert("Clear History and Website Data?", isPresented: $showingClearHistoryConfirm) {
                 Button("Clear", role: .destructive) {
-                    Task {
+                    Task { @MainActor in
                         do {
                             try await viewModel.clearHistoryAndWebsiteData(historyStore: historyStore)
                             onDidClearHistory?()
@@ -187,7 +200,7 @@ struct SettingsView: View {
 
     private func handlePickedURL(_ url: URL) {
         showingImporter = false
-        Task {
+        Task { @MainActor in
             guard let data = await BookmarkImportWorker.shared.readFile(at: url) else {
                 actionError = "Couldn’t read the exported bookmarks file."
                 return

@@ -1,4 +1,4 @@
-// Settings — Search engine plus data-clearance actions owner.
+// Settings — Search engine plus privacy toggles plus clearance actions owner.
 
 import Foundation
 import Observation
@@ -7,11 +7,13 @@ import WebKit
 @Observable
 @MainActor
 final class SettingsViewModel {
-    static let searchEngineDefaultsKey = "searchEngine"
-    static let appVersionLabel = "OuterView 0.1.0"
-    static let safariExportInstructions =
+    nonisolated static let searchEngineDefaultsKey = "searchEngine"
+    nonisolated static let requireBiometricsDefaultsKey = "requireBiometricsForPrivateTabs"
+    nonisolated static let blockTrackersDefaultsKey = "blockTrackersAndAds"
+    nonisolated static let appVersionLabel = "OuterView 0.1.0"
+    nonisolated static let safariExportInstructions =
         "Export from Safari: Settings → Apps → Safari → Export → Bookmarks, then open the ZIP in Files and pick Bookmarks.html."
-    static let resetAllTextZoomsConfirmationText = "This resets text zoom for all sites."
+    nonisolated static let resetAllTextZoomsConfirmationText = "This resets text zoom for all sites."
 
     @ObservationIgnored
     private let defaults: UserDefaults
@@ -22,11 +24,26 @@ final class SettingsViewModel {
         }
     }
 
+    var requireBiometricsForPrivateTabs: Bool {
+        didSet {
+            defaults.set(requireBiometricsForPrivateTabs, forKey: Self.requireBiometricsDefaultsKey)
+        }
+    }
+
+    var blockTrackersAndAds: Bool {
+        didSet {
+            defaults.set(blockTrackersAndAds, forKey: Self.blockTrackersDefaultsKey)
+            // Persist only; the notification-to-root path owns live rule apply.
+        }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         let stored = defaults.string(forKey: Self.searchEngineDefaultsKey)
         let engine = stored.flatMap(SearchEngine.init(rawValue:)) ?? .google
         self.searchEngine = engine
+        self.requireBiometricsForPrivateTabs = defaults.object(forKey: Self.requireBiometricsDefaultsKey) as? Bool ?? true
+        self.blockTrackersAndAds = defaults.object(forKey: Self.blockTrackersDefaultsKey) as? Bool ?? true
     }
 
     func searchURL(for query: String) -> URL {

@@ -1,7 +1,4 @@
-//
-//  FaviconService.swift
-//  OuterView
-//
+// URLHandling — Async favicon fetching with disk caching plus monogram fallback.
 
 import os
 import UIKit
@@ -13,6 +10,7 @@ final class FaviconService {
     static let shared = FaviconService()
 
     private let memoryCache = NSCache<NSURL, UIImage>()
+    private let privateMemoryCache = NSCache<NSURL, UIImage>()
     private let cacheDirectory: URL?
     private let session: URLSession
 
@@ -37,8 +35,26 @@ final class FaviconService {
 
     /// Fetches favicon asynchronously, returning cached or newly fetched image.
     /// Falls back to monogram on network failure.
-    func favicon(for url: URL, size: CGFloat = 88) async -> UIImage {
+    /// Private URLs stay in memory only, never touching disk or network.
+    func favicon(for url: URL, size: CGFloat = 88, isPrivate: Bool = false) async -> UIImage {
         let nsURL = url as NSURL
+        // Private tabs use an isolated in-memory cache so disk-derived
+        // entries never surface there and private monograms never poison
+        // later standard fetches sharing the same URL key.
+        if isPrivate {
+            if let cached = privateMemoryCache.object(forKey: nsURL) {
+                return resizedForDisplay(cached, size: size)
+            }
+            let host = HostFormatter.host(of: url)
+            if let brand = brandFavicon(for: host, size: size) {
+                privateMemoryCache.setObject(brand, forKey: nsURL)
+                return brand
+            }
+            let monogram = generateMonogram(for: host, size: size)
+            privateMemoryCache.setObject(monogram, forKey: nsURL)
+            return monogram
+        }
+
         if let cached = memoryCache.object(forKey: nsURL) {
             return resizedForDisplay(cached, size: size)
         }
@@ -69,8 +85,21 @@ final class FaviconService {
 
     /// Synchronous retrieval: memory cache, brand favicon, or instant monogram.
     /// Disk I/O stays in the async path so scrolling never blocks the main thread.
-    func cachedFaviconOrMonogram(for url: URL, size: CGFloat = 88) -> UIImage {
+    func cachedFaviconOrMonogram(for url: URL, size: CGFloat = 88, isPrivate: Bool = false) -> UIImage {
         let nsURL = url as NSURL
+        // Private sync reads stay in the isolated cache; shared disk-derived
+        // entries never surface in private tabs.
+        if isPrivate {
+            if let cached = privateMemoryCache.object(forKey: nsURL) {
+                return resizedForDisplay(cached, size: size)
+            }
+            let host = HostFormatter.host(of: url)
+            if let brand = brandFavicon(for: host, size: size) {
+                privateMemoryCache.setObject(brand, forKey: nsURL)
+                return brand
+            }
+            return generateMonogram(for: host, size: size)
+        }
         if let cached = memoryCache.object(forKey: nsURL) {
             return resizedForDisplay(cached, size: size)
         }
@@ -90,11 +119,12 @@ final class FaviconService {
         into view: UIImageView,
         identity: UUID,
         currentIdentity: @escaping @MainActor () -> UUID?,
-        size: CGFloat
+        size: CGFloat,
+        isPrivate: Bool = false
     ) -> Task<Void, Never> {
-        view.image = cachedFaviconOrMonogram(for: url, size: size)
+        view.image = cachedFaviconOrMonogram(for: url, size: size, isPrivate: isPrivate)
         return Task { [weak view] in
-            let image = await favicon(for: url, size: size)
+            let image = await favicon(for: url, size: size, isPrivate: isPrivate)
             guard let view, !Task.isCancelled, currentIdentity() == identity else { return }
             view.image = image
         }

@@ -36,6 +36,8 @@
 		<key>NSAllowsArbitraryLoadsInWebContent</key>
 		<true/>
 	</dict>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Unlock Private Browsing with Face ID</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Saves images from web pages to your photo library.</string>
 	<key>UIApplicationSceneManifest</key>

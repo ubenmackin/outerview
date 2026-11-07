@@ -91,10 +91,17 @@ extension BrowserRootViewController {
         loadActivePage(url)
     }
 
+    /// Same-scope privacy: selected tab wins, overview mode is the fallback.
+    private func resolvedScopeIsPrivate() -> Bool {
+        tabs.first(where: { $0.id == selectedTabID })?.isPrivate ?? overviewMode.isPrivate
+    }
+
     /// Opens `url` on a fresh tab after the selected one.
     /// Background keeps selection; foreground selects and resumes browsing.
-    func openInNewTab(url: URL, background: Bool = false) {
-        let record = TabRecord(url: url, isPrivate: false)
+    /// New tabs inherit the selected tab's privacy so private links stay private.
+    func openInNewTab(url: URL, background: Bool = false, isPrivate: Bool? = nil) {
+        let resolvedIsPrivate = isPrivate ?? resolvedScopeIsPrivate()
+        let record = TabRecord(url: url, isPrivate: resolvedIsPrivate)
         let insertIndex: Int =
             if let selected = selectedTabID, let index = tabs.firstIndex(where: { $0.id == selected }) {
                 index + 1
@@ -488,8 +495,9 @@ extension BrowserRootViewController {
     /// Single overflow creator: same-scope Start Page tab for left-past-last.
     private func makeOverflowTabInCurrentScope() -> TabRecord {
         // Private scope never inherits a group; standard scope stays grouped.
-        let groupId = overviewMode.isPrivate ? nil : overviewController.selectedGroupID
-        let record = TabRecord(isPrivate: overviewMode.isPrivate, groupId: groupId)
+        let isPrivate = resolvedScopeIsPrivate()
+        let groupId = isPrivate ? nil : overviewController.selectedGroupID
+        let record = TabRecord(isPrivate: isPrivate, groupId: groupId)
         tabs.append(record)
         tabPool.create(record)
         do {

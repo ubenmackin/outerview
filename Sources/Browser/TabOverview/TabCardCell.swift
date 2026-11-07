@@ -1,7 +1,4 @@
-//
-//  TabCardCell.swift
-//  OuterView
-//
+// TabOverview — Single tab card plus swipe-dismiss gesture.
 
 import UIKit
 
@@ -132,7 +129,8 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
                 into: faviconView,
                 identity: item.id,
                 currentIdentity: { [weak self] in self?.currentID },
-                size: 16
+                size: 16,
+                isPrivate: item.isPrivate
             )
         } else {
             faviconView.image = UIImage(systemName: "globe")

@@ -1,7 +1,4 @@
-//
-//  ReadingListView.swift
-//  OuterView
-//
+// Bookmarks — Saved-pages list with display modes plus filtering and batch delete.
 
 import os
 import UIKit
@@ -328,8 +325,9 @@ final class ReadingListView: UIView {
 
     func deleteSelectedItems() {
         guard !selectedItemIDs.isEmpty else { return }
+        let idsToDelete = selectedItemIDs
         do {
-            try store.delete(ids: selectedItemIDs)
+            try store.delete(ids: idsToDelete)
         } catch {
             Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
                 .error("delete selected reading list items failed: \(error.localizedDescription, privacy: .public)")

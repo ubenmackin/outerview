@@ -584,6 +584,22 @@ final class BrowserRootViewController: UIViewController {
     /// wiring site so navigation-driven downloads always land.
     let downloadsManager = DownloadsManager()
 
+    // MARK: - Privacy & Security (Phase 2)
+
+    var biometricAuthService: BiometricAuthenticating = BiometricAuthService.shared
+    var isPrivateSessionLocked = false
+    var recentlyClosedTabs: [TabRecord] = []
+    private var contentBlockerObserver: NSObjectProtocol?
+
+    var isBiometricAuthEnabled: Bool {
+        selectionDefaults.object(forKey: SettingsViewModel.requireBiometricsDefaultsKey) as? Bool ?? true
+    }
+
+    var shouldRequireBiometricsForPrivateMode: Bool {
+        guard isBiometricAuthEnabled else { return false }
+        return tabs.contains(where: \.isPrivate)
+    }
+
     private var database: OuterViewDatabase?
     var bookmarkStore: BookmarkStore?
     var historyStore: HistoryStore?
@@ -668,6 +684,7 @@ final class BrowserRootViewController: UIViewController {
         subscribeToDownloadProgress()
         updateDownloadProgress()
         observeHorizontalSizeClass()
+        observeContentBlockerChanges()
     }
 
     func wireLibraryInlineCommands() {
@@ -751,6 +768,23 @@ final class BrowserRootViewController: UIViewController {
 extension BrowserRootViewController {
     // MARK: - App lifecycle
 
+    /// Single gate for private entry; failure restores standard chrome.
+    func requestPrivateMode(authenticatedApply: @escaping @MainActor () -> Void) {
+        guard shouldRequireBiometricsForPrivateMode else {
+            authenticatedApply()
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if await self.biometricAuthService.authenticate(reason: "Unlock Private Browsing") {
+                authenticatedApply()
+            } else {
+                self.overviewController.applySelectionBatched(mode: .standard, groupID: nil, notify: false)
+                self.switchToStandardMode()
+            }
+        }
+    }
+
     /// Scene changes forwarded from the app entry. Persistence is owned by the
     /// restore coordinator; background fails foreground transfers, active only
     /// refreshes pool recency. Chrome state is intentionally untouched.
@@ -759,8 +793,33 @@ extension BrowserRootViewController {
         if phase == .background {
             // Suspend fail-closed: private work fails, daemon tasks survive.
             downloadsManager.suspendForegroundDownloads()
+            // Any private tab locks, even when standard is frontmost.
+            if isBiometricAuthEnabled, tabs.contains(where: \.isPrivate) {
+                isPrivateSessionLocked = true
+            }
         }
         if phase == .active {
+            let selectedIsPrivate = tabs.first(where: { $0.id == selectedTabID })?.isPrivate ?? false
+            let isPrivateVisible = overviewMode.isPrivate || selectedIsPrivate
+            if isPrivateSessionLocked, isPrivateVisible, shouldRequireBiometricsForPrivateMode {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    let authenticated = await self.biometricAuthService.authenticate(reason: "Unlock Private Browsing")
+                    if authenticated {
+                        self.isPrivateSessionLocked = false
+                        self.markActivePageActivated()
+                    } else {
+                        // Fail-closed to standard; clear lock so standard never re-prompts.
+                        self.isPrivateSessionLocked = false
+                        self.switchToStandardMode()
+                    }
+                }
+                return
+            }
+            // Standard browsing never re-prompts: stale lock clears outside private.
+            if !isPrivateVisible || !shouldRequireBiometricsForPrivateMode {
+                isPrivateSessionLocked = false
+            }
             markActivePageActivated()
         }
     }
@@ -770,11 +829,35 @@ extension BrowserRootViewController {
             .error("\(operation, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
     }
 
+    /// Single live owner for the tracker toggle: shared configs cover future
+    /// tabs while live web views update in place with no restart.
+    func applyContentBlockerEnabled(_ enabled: Bool) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let controllers = [self.tabPool.configuration(isPrivate: false).userContentController,
+                               self.tabPool.configuration(isPrivate: true).userContentController]
+                + self.tabPool.pages.compactMap { $0.page?.webView.configuration.userContentController }
+            await ContentBlockerService.shared.setEnabled(enabled, controllers: controllers)
+        }
+    }
+
+    func observeContentBlockerChanges() {
+        guard contentBlockerObserver == nil else { return }
+        contentBlockerObserver = NotificationCenter.default.addObserver(forName: .outerViewContentBlockerChanged, object: nil, queue: .main) { [weak self] note in
+            let posted = note.userInfo?["enabled"] as? Bool
+            Task { @MainActor [weak self, posted] in
+                guard let self else { return }
+                let enabled = posted ?? (self.selectionDefaults.object(forKey: SettingsViewModel.blockTrackersDefaultsKey) as? Bool ?? true)
+                self.applyContentBlockerEnabled(enabled)
+            }
+        }
+    }
+
     // MARK: - Fold handling
 
     func scheduleStructuralUpdate() {
         structuralTask?.cancel()
-        structuralTask = Task { [weak self] in
+        structuralTask = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(nanoseconds: UInt64(Self.structuralDebounceInterval * 1_000_000_000))
             } catch {
@@ -900,50 +983,8 @@ extension BrowserRootViewController {
         }
         present(controller, animated: true)
     }
+}
 
-    // MARK: - Element context actions
-
-    /// The only place action closures are constructed: each maps a URL back
-    /// to a root-level capability, so pages never reach into stores directly.
-    private func makeElementContextActions() -> ElementContextActions {
-        ElementContextActions(
-            openInNewTab: { [weak self] url in
-                self?.openInNewTab(url: url)
-            },
-            addToReadingList: { [weak self] url in
-                self?.addReadingListEntry(url: url)
-            },
-            copyLink: { [weak self] url in
-                self?.copyElementURLToPasteboard(url)
-            },
-            share: { [weak self] url in
-                self?.shareElementURL(url)
-            },
-            saveToPhotos: { [weak self] url in
-                self?.saveImageToPhotos(from: url)
-            },
-            copyImage: { [weak self] url in
-                self?.copyElementURLToPasteboard(url)
-            }
-        )
-    }
-
-    private func addReadingListEntry(url: URL) {
-        guard URLNormalizer.isLoadable(url) else { return }
-        let title = HostFormatter.displayTitle(url: url, title: nil)
-        do {
-            try readingListStore?.add(title: title, url: url)
-        } catch {
-            logPersistenceError(error, operation: "addToReadingList")
-        }
-    }
-
-    private func copyElementURLToPasteboard(_ url: URL) {
-        UIPasteboard.general.url = url
-    }
-
-    private func shareElementURL(_ url: URL) {
-        let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-        presentPopover(activity)
-    }
+extension Notification.Name {
+    static let outerViewContentBlockerChanged = Notification.Name("OuterViewContentBlockerChanged")
 }

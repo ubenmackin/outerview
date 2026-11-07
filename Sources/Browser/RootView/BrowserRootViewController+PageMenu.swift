@@ -1,4 +1,4 @@
-// RootView — Page-menu composition plus desktop toggle dispatch.
+// RootView — Page-menu composition plus print and PDF actions.
 
 import os
 import SwiftUI
@@ -33,7 +33,8 @@ extension BrowserRootViewController {
             textZoom: page?.currentTextZoom() ?? SiteZoomStore.defaultZoom,
             canOpenDownloads: true,
             isDesktopMode: isDesktop,
-            canToggleDesktopMode: hasPage
+            canToggleDesktopMode: hasPage,
+            canPrint: hasPage
         )
     }
 
@@ -206,10 +207,28 @@ extension BrowserRootViewController {
             self?.toggleDesktopModeFromMenu()
         }
         desktopAction.accessibilityLabel = model.desktopModeTitle
+        let printAction = UIAction(
+            title: "Print",
+            image: UIImage(systemName: "printer"),
+            attributes: model.canPrint ? [] : .disabled
+        ) { [weak self] _ in
+            self?.printActivePage()
+        }
+        printAction.accessibilityLabel = "Print"
+        let pdfAction = UIAction(
+            title: "Save as PDF",
+            image: UIImage(systemName: "doc.richtext"),
+            attributes: model.canPrint ? [] : .disabled
+        ) { [weak self] _ in
+            self?.saveActivePageAsPDF()
+        }
+        pdfAction.accessibilityLabel = "Save as PDF"
         return UIMenu(options: .displayInline, children: [
             findAction,
             zoomMenu,
             desktopAction,
+            printAction,
+            pdfAction,
             downloadsAction
         ])
     }
@@ -257,13 +276,64 @@ extension BrowserRootViewController {
     }
 
     func shareActivePage() {
-        guard let snapshot = activePage()?.snapshot, let url = snapshot.url else { return }
+        guard let page = activePage(), let url = page.snapshot.url else { return }
+        let title = page.snapshot.title
         var items: [Any] = [url]
-        if let title = snapshot.title, !title.isEmpty {
+        if let title, !title.isEmpty {
             items.append(title)
         }
         let activity = UIActivityViewController(activityItems: items, applicationActivities: nil)
         presentPopover(activity)
+    }
+
+    func printActivePage() {
+        guard let page = activePage(), let url = page.snapshot.url, URLNormalizer.isLoadable(url) else { return }
+        let printController = UIPrintInteractionController.shared
+        let printInfo = UIPrintInfo(dictionary: nil)
+        printInfo.outputType = .general
+        printInfo.jobName = page.snapshot.title ?? url.host ?? "Web Document"
+        printController.printInfo = printInfo
+        printController.printFormatter = page.webView.viewPrintFormatter()
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            printController.present(from: pillView.bounds, in: pillView, animated: true)
+        } else {
+            printController.present(animated: true)
+        }
+    }
+
+    func saveActivePageAsPDF() {
+        guard let page = activePage(), let url = page.snapshot.url, URLNormalizer.isLoadable(url) else { return }
+        Task { @MainActor [weak self] in
+            do {
+                let pdfData: Data = try await withCheckedThrowingContinuation { continuation in
+                    page.webView.createPDF { result in
+                        continuation.resume(with: result)
+                    }
+                }
+                let titlePrefix = page.snapshot.title.map { String($0.prefix(50)) }
+                let rawBase = titlePrefix ?? url.host ?? "Page"
+                // Percent-encode to strip separators and controls; truncate to keep filenames bounded.
+                let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._"))
+                let sanitized = rawBase.addingPercentEncoding(withAllowedCharacters: allowed) ?? "Page"
+                let truncated = String(sanitized.prefix(48))
+                let baseName = truncated.isEmpty ? "Page" : truncated
+                let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(baseName + "-" + UUID().uuidString + ".pdf")
+                try pdfData.write(to: tempURL, options: .atomic)
+                let activity = UIActivityViewController(activityItems: [tempURL], applicationActivities: nil)
+                // Temp PDF holds page content; remove after the share dismisses.
+                activity.completionWithItemsHandler = { _, _, _, _ in
+                    do {
+                        try FileManager.default.removeItem(at: tempURL)
+                    } catch {
+                        // Cleanup best-effort; stale temp file expires with the cache.
+                    }
+                }
+                self?.presentPopover(activity)
+            } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "PageMenu")
+                    .error("createPDF failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     func addActivePageToFavorites() {
@@ -309,7 +379,7 @@ extension BrowserRootViewController {
         } catch {
             logPersistenceError(error, operation: "addToReadingList")
         }
-        Task { [weak self, weak page] in
+        Task { @MainActor [weak self, weak page] in
             guard let self, let page else { return }
             let snippet = await page.extractPreviewSnippet()
             if let snippet, !snippet.isEmpty {
@@ -318,6 +388,21 @@ extension BrowserRootViewController {
                     self.bookmarksLibraryView.reload()
                 } catch {
                     self.logPersistenceError(error, operation: "updateReadingListSnippet")
+                }
+            }
+            if let item = self.readingListStore?.fetchAll().first(where: { $0.url == url }) {
+                // Private pages never persist archive data to disk.
+                guard !page.isPrivateTab, !self.overviewMode.isPrivate else { return }
+                do {
+                    let archiveData: Data = try await withCheckedThrowingContinuation { continuation in
+                        page.webView.createWebArchiveData { result in
+                            continuation.resume(with: result)
+                        }
+                    }
+                    ReadingListArchiveManager.shared.saveArchive(data: archiveData, for: item.id)
+                } catch {
+                    Logger(subsystem: "com.volcrypt.OuterView", category: "ReadingList")
+                        .error("createWebArchiveData failed: \(error.localizedDescription, privacy: .public)")
                 }
             }
         }
@@ -339,7 +424,7 @@ extension BrowserRootViewController {
     func toggleReaderFromMenu() {
         guard let page = activePage() else { return }
         let url = page.snapshot.url
-        Task { [weak self, weak page] in
+        Task { @MainActor [weak self, weak page] in
             guard let page else { return }
             let entered = await page.toggleReader()
             guard !Task.isCancelled else { return }
@@ -438,7 +523,7 @@ extension BrowserRootViewController {
             return
         }
         findQueryTask?.cancel()
-        findQueryTask = Task { [weak self, weak page] in
+        findQueryTask = Task { @MainActor [weak self, weak page] in
             guard let self, let page else { return }
             let total = await page.findText(text)
             guard !Task.isCancelled, self.isFindActive, self.findView.fieldText == text else { return }
@@ -450,7 +535,7 @@ extension BrowserRootViewController {
         guard let page = peekActivePage() else { return }
         let query = findView.fieldText
         findStepTask?.cancel()
-        findStepTask = Task { [weak self, weak page] in
+        findStepTask = Task { @MainActor [weak self, weak page] in
             guard let self, let page else { return }
             let index = await page.findStep(delta)
             guard !Task.isCancelled, self.isFindActive, self.findView.fieldText == query else { return }

@@ -98,7 +98,8 @@ extension BrowserRootViewController {
         ) { [weak self] _ in
             self?.createNewTab(isPrivate: false)
         }
-        let opsMenu = UIMenu(options: .displayInline, children: [closeAction, moveMenu, newPrivateAction, newTabAction])
+        let recentlyClosedMenu = makeRecentlyClosedMenu()
+        let opsMenu = UIMenu(options: .displayInline, children: [closeAction, moveMenu, recentlyClosedMenu, newPrivateAction, newTabAction])
 
         var topChildren: [UIMenuElement] = []
         if !groupActions.isEmpty {
@@ -188,7 +189,59 @@ extension BrowserRootViewController {
         updateRailItems()
     }
 
+    func makeRecentlyClosedMenu() -> UIMenu {
+        let children: [UIMenuElement] = if recentlyClosedTabs.isEmpty {
+            [UIAction(title: "No Recently Closed Tabs", attributes: .disabled) { _ in }]
+        } else {
+            recentlyClosedTabs.prefix(10).map { tab -> UIAction in
+                let trimmed = tab.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let title = !trimmed.isEmpty ? trimmed : (tab.url?.host ?? "Untitled")
+                return UIAction(
+                    title: title,
+                    image: UIImage(systemName: "globe")
+                ) { [weak self] _ in
+                    self?.restoreRecentlyClosedTab(tab)
+                }
+            }
+        }
+        return UIMenu(
+            title: "Recently Closed Tabs",
+            image: UIImage(systemName: "clock.arrow.circlepath"),
+            children: children
+        )
+    }
+
+    func restoreRecentlyClosedTab(_ record: TabRecord) {
+        recentlyClosedTabs.removeAll { $0.id == record.id }
+        // Restored tabs are standard; leave private mode first so selection matches.
+        if overviewMode.isPrivate {
+            setOverviewMode(.standard)
+            overviewController.setGroupFilter(nil)
+        }
+        let fresh = TabRecord(
+            url: record.url,
+            title: record.title,
+            isPrivate: false,
+            groupId: record.groupId
+        )
+        tabs.append(fresh)
+        tabPool.create(fresh)
+        do {
+            try tabStore?.saveSession(tabs: tabs, selected: fresh.id)
+        } catch {
+            logPersistenceError(error, operation: "saveSession")
+        }
+        selectTab(id: fresh.id)
+        applyBrowsingResumed(animated: true)
+        updateTabStrip()
+        updateRailItems()
+    }
+
     func switchToPrivateMode() {
+        requestPrivateMode { [weak self] in self?.performSwitchToPrivateMode() }
+    }
+
+    func performSwitchToPrivateMode() {
         setOverviewMode(.privateMode)
         overviewController.setGroupFilter(nil)
         if let existing = tabs.first(where: { $0.isPrivate }) {
@@ -261,7 +314,7 @@ extension BrowserRootViewController {
 
     func saveImageToPhotos(from url: URL) {
         guard URLNormalizer.isLoadable(url) else { return }
-        Task { [weak self] in
+        Task { @MainActor [weak self] in
             guard let self else { return }
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)
@@ -303,5 +356,39 @@ extension BrowserRootViewController {
         )
         alert.addAction(UIAlertAction(title: "OK", style: .default))
         present(alert, animated: true)
+    }
+
+    // MARK: - Element Context
+
+    /// The only place action closures are constructed: each maps a URL back
+    /// to a root-level capability, so pages never reach into stores directly.
+    func makeElementContextActions() -> ElementContextActions {
+        ElementContextActions(
+            openInNewTab: { [weak self] url in self?.openInNewTab(url: url) },
+            addToReadingList: { [weak self] url in self?.addReadingListEntry(url: url) },
+            copyLink: { [weak self] url in self?.copyElementURLToPasteboard(url) },
+            share: { [weak self] url in self?.shareElementURL(url) },
+            saveToPhotos: { [weak self] url in self?.saveImageToPhotos(from: url) },
+            copyImage: { [weak self] url in self?.copyElementURLToPasteboard(url) }
+        )
+    }
+
+    private func addReadingListEntry(url: URL) {
+        guard URLNormalizer.isLoadable(url) else { return }
+        let title = HostFormatter.displayTitle(url: url, title: nil)
+        do {
+            try readingListStore?.add(title: title, url: url)
+        } catch {
+            logPersistenceError(error, operation: "addToReadingList")
+        }
+    }
+
+    private func copyElementURLToPasteboard(_ url: URL) {
+        UIPasteboard.general.url = url
+    }
+
+    private func shareElementURL(_ url: URL) {
+        let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        presentPopover(activity)
     }
 }
