@@ -685,6 +685,7 @@ final class BrowserRootViewController: UIViewController {
         updateDownloadProgress()
         observeHorizontalSizeClass()
         observeContentBlockerChanges()
+        setupQuickActionHandling()
     }
 
     func wireLibraryInlineCommands() {
@@ -953,6 +954,14 @@ extension BrowserRootViewController {
         } catch {
             logPersistenceError(error, operation: "upsertFavorite")
         }
+    }
+
+    func setupQuickActionHandling() {
+        QuickActionDispatcher.shared.registerHandler { @MainActor [weak self] in self?.handleQuickAction($0) }
+    }
+
+    func handleQuickAction(_ action: QuickAction) {
+        handleQuickActionRouted(action)
     }
 
     func makeSettingsController() -> UIViewController? {

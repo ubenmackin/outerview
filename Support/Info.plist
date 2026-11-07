@@ -24,6 +24,8 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>outerview</string>
+				<string>http</string>
+				<string>https</string>
 			</array>
 		</dict>
 	</array>
@@ -40,11 +42,42 @@
 	<string>Unlock Private Browsing with Face ID</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Saves images from web pages to your photo library.</string>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>NSUserActivityTypeBrowsingWeb</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
 		<false/>
 	</dict>
+	<key>UIApplicationShortcutItems</key>
+	<array>
+		<dict>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>plus</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>New Tab</string>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.volcrypt.OuterView.newTab</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>hand.raised</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>New Private Tab</string>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.volcrypt.OuterView.newPrivateTab</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>magnifyingglass</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Search</string>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.volcrypt.OuterView.search</string>
+		</dict>
+	</array>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 </dict>

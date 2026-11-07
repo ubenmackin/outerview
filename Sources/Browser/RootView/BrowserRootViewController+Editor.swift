@@ -234,9 +234,52 @@ extension BrowserRootViewController {
         activePage()?.load(url)
     }
 
+    // MARK: - Quick Actions
+
+    /// Single quick-action apply path; the coordinator delegates here
+    /// to keep routing in one place.
+    func handleQuickActionRouted(_ action: QuickAction) {
+        switch action {
+        case .newTab:
+            createNewTab(isPrivate: false)
+        case .newPrivateTab:
+            requestPrivateMode { [weak self] in self?.createNewTab(isPrivate: true) }
+        case let .search(query):
+            createNewTab(isPrivate: false)
+            if let query, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                // Siri input is unbounded; bound centrally to the deep-link cap.
+                let bounded = String(query.prefix(2048))
+                let engine = SettingsViewModel(defaults: selectionDefaults).searchEngine
+                let searchURL = engine.searchURL(bounded)
+                loadActivePage(searchURL)
+            } else {
+                beginEditing()
+            }
+        case let .openURL(url):
+            openExternalURL(url)
+        }
+    }
+
     func openExternalURL(_ url: URL) {
         var targetURL = url
         if url.scheme?.lowercased() == "outerview" {
+            let host = url.host?.lowercased() ?? ""
+            if host == "newtab" {
+                handleQuickAction(.newTab)
+                return
+            } else if host == "newprivatetab" {
+                handleQuickAction(.newPrivateTab)
+                return
+            } else if host == "search" {
+                let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                // Deep-link queries share the 2048 raw cap so overlong
+                // input never reaches the search engine.
+                let rawQuery = components?.queryItems?.first(where: { $0.name == "q" })?.value
+                let query = rawQuery.map { String($0.prefix(2048)) }
+                handleQuickAction(.search(query))
+                return
+            }
+
             if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
                let queryURL = components.queryItems?.first(where: { $0.name == "url" })?.value,
                let parsed = URL(string: queryURL)

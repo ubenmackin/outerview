@@ -1,5 +1,4 @@
-// App — UIApplication delegate bridging background-download wake events to the
-// shared session and returning the system launch completion exactly once.
+// App — Background download wake plus quick-action lifecycle.
 
 import UIKit
 
@@ -27,5 +26,33 @@ final class DownloadBackgroundDelegate: NSObject, UIApplicationDelegate, Backgro
     /// Sole drain point for the session delegate's finish-events; popping clears the slot once.
     func popLaunchHandler(for identifier: String) -> (() -> Void)? {
         storedHandlers.removeValue(forKey: identifier)
+    }
+
+    // MARK: - Quick Actions
+
+    func application(
+        _: UIApplication,
+        configurationForConnecting connectingSceneSession: UISceneSession,
+        options: UIScene.ConnectionOptions
+    ) -> UISceneConfiguration {
+        if let shortcutItem = options.shortcutItem,
+           let action = QuickAction(shortcutType: shortcutItem.type)
+        {
+            QuickActionDispatcher.shared.dispatch(action)
+        }
+        return UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
+    }
+
+    func application(
+        _: UIApplication,
+        performActionFor shortcutItem: UIApplicationShortcutItem,
+        completionHandler: @escaping (Bool) -> Void
+    ) {
+        if let action = QuickAction(shortcutType: shortcutItem.type) {
+            QuickActionDispatcher.shared.dispatch(action)
+            completionHandler(true)
+        } else {
+            completionHandler(false)
+        }
     }
 }

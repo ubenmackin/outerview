@@ -129,6 +129,22 @@ extension BrowserRootViewController {
         updatePillForSnapshot(snapshot)
         updateErrorOverlay(for: snapshot)
         updateRailItems()
+        let isPrivate = tabs.first(where: { $0.id == id })?.isPrivate ?? true
+        updateHandoffActivity(for: snapshot, isPrivate: isPrivate, showStart: showStart)
+    }
+
+    func updateHandoffActivity(for snapshot: WebPageSnapshot, isPrivate: Bool, showStart: Bool) {
+        if !isPrivate, !showStart, let url = snapshot.url, URLNormalizer.isLoadable(url) {
+            let activity = userActivity ?? NSUserActivity(activityType: NSUserActivityTypeBrowsingWeb)
+            activity.webpageURL = url
+            activity.title = snapshot.title ?? url.host
+            activity.isEligibleForHandoff = true
+            activity.becomeCurrent()
+            userActivity = activity
+        } else {
+            userActivity?.invalidate()
+            userActivity = nil
+        }
     }
 
     func updateStartPageContent(with snapshot: WebPageSnapshot? = nil) {
