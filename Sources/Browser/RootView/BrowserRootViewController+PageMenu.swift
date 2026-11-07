@@ -325,7 +325,8 @@ extension BrowserRootViewController {
                     do {
                         try FileManager.default.removeItem(at: tempURL)
                     } catch {
-                        // Cleanup best-effort; stale temp file expires with the cache.
+                        Logger(subsystem: "com.volcrypt.OuterView", category: "PageMenu")
+                            .debug("Removing temp PDF failed: \(error.localizedDescription, privacy: .public)")
                     }
                 }
                 self?.presentPopover(activity)

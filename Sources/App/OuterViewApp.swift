@@ -1,7 +1,4 @@
-//
-//  OuterViewApp.swift
-//  OuterView
-//
+// App — App entry plus scene bridge for URLs and Handoff.
 
 import SwiftUI
 
@@ -24,14 +21,17 @@ private struct SceneBridgeView: View {
 
     var body: some View {
         BrowserContainerView(scenePhase: scenePhase, pendingURL: $pendingURL)
-            // The UIKit root must own the full window: the rail lives in the
-            // right system column and the web view runs under every edge. Left
-            // inside the SwiftUI safe area, the root is inset by right 84 /
-            // bottom 34 and the rail lands on top of page content. Keyboard
-            // avoidance is handled in UIKit via keyboardLayoutGuide.
+            // Full-window UIKit root: rail in the system column, web view
+            // edge-to-edge; SwiftUI safe-area insets ignored. Keyboard
+            // avoidance lives in UIKit via keyboardLayoutGuide.
             .ignoresSafeArea()
             .onOpenURL { url in
                 pendingURL = url
+            }
+            .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { userActivity in
+                if let url = userActivity.webpageURL {
+                    pendingURL = url
+                }
             }
     }
 }
