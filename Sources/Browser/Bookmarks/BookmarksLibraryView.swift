@@ -277,7 +277,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         spView.delegate = self
         spView.onDeleteFavorite = { [weak self] id in
             do {
-                try bookmarkStore.delete(id: id)
+                try startPageVM.deleteItem(id: id)
             } catch {
                 Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
                     .error("deleteFavorite failed: \(error.localizedDescription, privacy: .public)")

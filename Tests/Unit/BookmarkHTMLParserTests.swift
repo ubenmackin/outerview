@@ -95,4 +95,41 @@ final class BookmarkHTMLParserTests: XCTestCase {
         let junk = try BookmarkHTMLParser.parse(Data("<<<<>> not a bookmark file".utf8))
         XCTAssertEqual(junk.bookmarks.count, 0)
     }
+
+    func testFixtureItemsPreserveInterleavedDocumentOrder() throws {
+        let result = try BookmarkHTMLParser.parse(ImportFixtures.safariExport())
+        XCTAssertEqual(result.items.count, 9)
+        // Order in safari_export_sample.html:
+        // 1. Folder: Reading
+        // 2. Bookmark: Long Article
+        // 3. Bookmark: Nested Docs
+        // 4. Folder: Inner
+        // 5. Bookmark: Deep Page
+        // 6. Folder: Bookmarks Bar
+        // 7. Bookmark: News & Notes
+        // 8. Bookmark: News & Notes Copy
+        // 9. Bookmark: Top Direct
+        guard case let .folder(f0) = result.items[0],
+              case let .bookmark(b1) = result.items[1],
+              case let .bookmark(b2) = result.items[2],
+              case let .folder(f3) = result.items[3],
+              case let .bookmark(b4) = result.items[4],
+              case let .folder(f5) = result.items[5],
+              case let .bookmark(b6) = result.items[6],
+              case let .bookmark(b7) = result.items[7],
+              case let .bookmark(b8) = result.items[8]
+        else {
+            XCTFail("Items order mismatch")
+            return
+        }
+        XCTAssertEqual(f0.title, "Reading")
+        XCTAssertEqual(b1.title, "Long Article")
+        XCTAssertEqual(b2.title, "Nested Docs")
+        XCTAssertEqual(f3.title, "Inner")
+        XCTAssertEqual(b4.title, "Deep Page")
+        XCTAssertEqual(f5.title, "Bookmarks Bar")
+        XCTAssertEqual(b6.title, "News & Notes")
+        XCTAssertEqual(b7.title, "News & Notes Copy")
+        XCTAssertEqual(b8.title, "Top Direct")
+    }
 }

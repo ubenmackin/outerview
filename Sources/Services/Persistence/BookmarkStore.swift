@@ -43,7 +43,7 @@ enum BookmarkStoreError: Error, LocalizedError, Equatable {
 final class BookmarkStore {
     /// Retained so the container outlives any context derived from it; a
     /// temporary database would otherwise deallocate while the store is in use.
-    private let database: OuterViewDatabase
+    let database: OuterViewDatabase
 
     init(database: OuterViewDatabase) {
         self.database = database
@@ -61,7 +61,7 @@ final class BookmarkStore {
         isFavorite: Bool = false,
         addedDate: Date? = nil,
         folderId: UUID? = nil,
-        sortOrder: Int = 0
+        sortOrder: Int? = nil
     ) throws -> Bookmark? {
         // Rejected schemes never enter bookmarks or favorites.
         guard URLNormalizer.isLoadable(url) else { return nil }
@@ -73,6 +73,19 @@ final class BookmarkStore {
             }
             resolvedIsFavorite = folder.isFavorite
         }
+        let effectiveSortOrder: Int
+        if let sortOrder {
+            effectiveSortOrder = sortOrder
+        } else {
+            let bookmarkSiblings = folderId == nil && resolvedIsFavorite
+                ? fetchFavorites(rootOnly: true)
+                : fetchBookmarks(folderId: folderId)
+            // Shared sequence spans both types so manual rows never collide with imported orders.
+            let folderSiblings = folderId == nil
+                ? fetchFolders(parentId: nil, isFavorite: resolvedIsFavorite)
+                : fetchFolders(parentId: folderId)
+            effectiveSortOrder = max(bookmarkSiblings.map(\.sortOrder).max() ?? -1, folderSiblings.map(\.sortOrder).max() ?? -1) + 1
+        }
         let bookmark = Bookmark(
             id: UUID(),
             title: title,
@@ -80,7 +93,7 @@ final class BookmarkStore {
             addedAt: addedDate ?? Date(),
             isFavorite: resolvedIsFavorite,
             folderId: folderId,
-            sortOrder: sortOrder
+            sortOrder: effectiveSortOrder
         )
         context.insert(bookmark)
         try context.save()
@@ -90,7 +103,12 @@ final class BookmarkStore {
     // MARK: - Folders
 
     @discardableResult
-    func createFolder(title: String, parentId: UUID? = nil, isFavorite: Bool = false) throws -> BookmarkFolder {
+    func createFolder(
+        title: String,
+        parentId: UUID? = nil,
+        isFavorite: Bool = false,
+        sortOrder: Int? = nil
+    ) throws -> BookmarkFolder {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         // Empty titles stay rejected so untitled rows never persist.
         guard !trimmed.isEmpty else {
@@ -104,19 +122,36 @@ final class BookmarkStore {
         if let parentId, let parent = fetchFolder(id: parentId) {
             effectiveIsFavorite = parent.isFavorite
         }
-        let existing = fetchFolders(parentId: parentId, isFavorite: parentId == nil ? effectiveIsFavorite : nil)
-        let nextOrder = (existing.map(\.sortOrder).max() ?? -1) + 1
+        let siblings = fetchFolders(parentId: parentId, isFavorite: parentId == nil ? effectiveIsFavorite : nil)
+        // Shared sequence spans both types so manual folders never collide with imported bookmarks.
+        let bookmarkSiblings = parentId == nil && effectiveIsFavorite
+            ? fetchFavorites(rootOnly: true)
+            : fetchBookmarks(folderId: parentId)
+        let effectiveSortOrder = sortOrder ?? (max(siblings.map(\.sortOrder).max() ?? -1, bookmarkSiblings.map(\.sortOrder).max() ?? -1) + 1)
         let folder = BookmarkFolder(
             id: UUID(),
             title: trimmed,
             parentId: parentId,
             createdAt: Date(),
-            sortOrder: nextOrder,
+            sortOrder: effectiveSortOrder,
             isFavorite: effectiveIsFavorite
         )
         context.insert(folder)
         try context.save()
         return folder
+    }
+
+    func fetchPreviewBookmarks(forFolderId folderId: UUID, limit: Int = 4) -> [Bookmark] {
+        var descriptor = FetchDescriptor<Bookmark>(
+            predicate: #Predicate { $0.folderId == folderId },
+            sortBy: [SortDescriptor(\.sortOrder, order: .forward), SortDescriptor(\.addedAt, order: .forward)]
+        )
+        descriptor.fetchLimit = limit
+        do {
+            return try context.fetch(descriptor)
+        } catch {
+            return []
+        }
     }
 
     func fetchFolder(id: UUID) -> BookmarkFolder? {

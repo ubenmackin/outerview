@@ -1,7 +1,4 @@
-//
-//  FavoriteTileCell.swift
-//  OuterView
-//
+// Favorites — Large favicon tile plus folder preview cell.
 
 import UIKit
 
@@ -117,6 +114,44 @@ final class FavoriteTileCell: UICollectionViewCell {
             let image = await FaviconService.shared.favicon(for: targetURL, size: Self.tileLength)
             guard !Task.isCancelled, self?.currentURL == targetURL else { return }
             self?.iconView.image = image
+        }
+    }
+
+    func configure(with folder: BookmarkFolder, previewBookmarks: [Bookmark]) {
+        faviconTask?.cancel()
+        faviconTask = nil
+        currentURL = nil
+        titleLabel.text = folder.title
+
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+        accessibilityLabel = "\(folder.title), folder"
+        accessibilityHint = "Double tap to open folder"
+        accessibilityIdentifier = "StartPage.Folder.\(folder.title)"
+
+        var actions: [UIAccessibilityCustomAction] = []
+        if let onDelete {
+            actions.append(UIAccessibilityCustomAction(name: "Delete Folder") { _ in
+                onDelete()
+                return true
+            })
+        }
+        accessibilityCustomActions = actions
+
+        iconView.image = BookmarkFolderIconRenderer.folderBadge(
+            for: folder,
+            previewBookmarks: previewBookmarks,
+            size: Self.tileLength,
+            cornerRadius: 18
+        )
+    }
+
+    func configure(with item: FavoriteItem, previewBookmarks: [Bookmark] = []) {
+        switch item {
+        case let .bookmark(bookmark):
+            configure(with: bookmark)
+        case let .folder(folder):
+            configure(with: folder, previewBookmarks: previewBookmarks)
         }
     }
 }

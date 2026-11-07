@@ -4,6 +4,39 @@ import Foundation
 import Observation
 import UIKit
 
+enum FavoriteItem: Equatable, Identifiable {
+    case bookmark(Bookmark)
+    case folder(BookmarkFolder)
+
+    var id: UUID {
+        switch self {
+        case let .bookmark(bookmark): bookmark.id
+        case let .folder(folder): folder.id
+        }
+    }
+
+    var title: String {
+        switch self {
+        case let .bookmark(bookmark): bookmark.title
+        case let .folder(folder): folder.title
+        }
+    }
+
+    var sortOrder: Int {
+        switch self {
+        case let .bookmark(bookmark): bookmark.sortOrder
+        case let .folder(folder): folder.sortOrder
+        }
+    }
+
+    var addedAt: Date {
+        switch self {
+        case let .bookmark(bookmark): bookmark.addedAt
+        case let .folder(folder): folder.createdAt
+        }
+    }
+}
+
 /// Content source for the no-URL start page. Favorites come from bookmark
 /// rows flagged as favorites; recents are the newest history rows.
 @MainActor
@@ -14,13 +47,25 @@ final class StartPageViewModel {
     private let bookmarkStore: BookmarkStore
     private let historyStore: HistoryStore
 
+    var favoriteItems: [FavoriteItem] = []
     var favorites: [Bookmark] = []
     var recents: [HistoryEntry] = []
     var activePageURL: URL?
     var activePageTitle: String?
 
+    var currentFolder: BookmarkFolder?
+    var folderStack: [BookmarkFolder] = []
+
+    var isAtRoot: Bool {
+        folderStack.isEmpty
+    }
+
+    var currentTitle: String {
+        currentFolder?.title ?? "Favorites"
+    }
+
     var isFavoritesEmpty: Bool {
-        favorites.isEmpty
+        favoriteItems.isEmpty
     }
 
     var isRecentsEmpty: Bool {
@@ -37,8 +82,58 @@ final class StartPageViewModel {
         reload()
     }
 
+    func openFolder(_ folder: BookmarkFolder) {
+        folderStack.append(folder)
+        currentFolder = folder
+        reload()
+    }
+
+    func popFolder() {
+        guard !folderStack.isEmpty else { return }
+        folderStack.removeLast()
+        currentFolder = folderStack.last
+        reload()
+    }
+
+    func previewBookmarks(for folder: BookmarkFolder) -> [Bookmark] {
+        bookmarkStore.fetchPreviewBookmarks(forFolderId: folder.id, limit: 4)
+    }
+
+    func deleteItem(id: UUID) throws {
+        // Folder and bookmark ids share one space; direct lookup avoids
+        // misrouting when the visible items are stale or filtered.
+        if bookmarkStore.fetchFolder(id: id) != nil {
+            try bookmarkStore.deleteFolder(id: id)
+        } else {
+            try bookmarkStore.delete(id: id)
+        }
+        reload()
+    }
+
     func reload() {
-        favorites = Self.sortedFavorites(bookmarkStore.fetchFavorites())
+        if let currentFolder {
+            let bookmarks = bookmarkStore.fetchBookmarks(folderId: currentFolder.id)
+            let folders = bookmarkStore.fetchFolders(parentId: currentFolder.id)
+            let items = folders.map(FavoriteItem.folder) + bookmarks.map(FavoriteItem.bookmark)
+            favoriteItems = Self.sortedFavoriteItems(items)
+            favorites = favoriteItems.compactMap {
+                if case let .bookmark(bookmark) = $0 {
+                    return bookmark
+                }
+                return nil
+            }
+        } else {
+            let bookmarks = bookmarkStore.fetchFavorites(rootOnly: true)
+            let folders = bookmarkStore.fetchFolders(parentId: nil, isFavorite: true)
+            let items = folders.map(FavoriteItem.folder) + bookmarks.map(FavoriteItem.bookmark)
+            favoriteItems = Self.sortedFavoriteItems(items)
+            favorites = favoriteItems.compactMap {
+                if case let .bookmark(bookmark) = $0 {
+                    return bookmark
+                }
+                return nil
+            }
+        }
         // Fetch beyond the display cap so unique rows hidden behind a
         // duplicated head still surface after dedupe.
         recents = Self.sortedRecents(historyStore.fetchAll(limit: 200))
@@ -63,24 +158,46 @@ final class StartPageViewModel {
     func addCurrentPage() throws {
         guard let url = activePageURL, URLNormalizer.isLoadable(url) else { return }
         let title = HostFormatter.displayTitle(url: url, title: activePageTitle)
-        try bookmarkStore.upsertFavorite(url: url, title: title)
+        if let currentFolder {
+            try bookmarkStore.add(title: title, url: url, isFavorite: currentFolder.isFavorite, folderId: currentFolder.id)
+        } else {
+            try bookmarkStore.upsertFavorite(url: url, title: title)
+        }
         reload()
     }
 
     func applyOrderedFavorites(_ ordered: [UUID]) -> Bool {
-        let byID = Dictionary(uniqueKeysWithValues: favorites.map { ($0.id, $0) })
-        var rebuilt: [Bookmark] = []
+        let byID = Dictionary(uniqueKeysWithValues: favoriteItems.map { ($0.id, $0) })
+        var rebuilt: [FavoriteItem] = []
         rebuilt.reserveCapacity(ordered.count)
         for id in ordered {
-            guard let bookmark = byID[id] else { return false }
-            rebuilt.append(bookmark)
+            guard let item = byID[id] else { return false }
+            rebuilt.append(item)
         }
-        favorites = rebuilt
+        favoriteItems = rebuilt
+        favorites = favoriteItems.compactMap {
+            if case let .bookmark(bookmark) = $0 {
+                return bookmark
+            }
+            return nil
+        }
         return true
     }
 
     func persistReorderedFavorites(_ ordered: [UUID]) throws {
-        try bookmarkStore.reorderBookmarks(ordered)
+        for (index, id) in ordered.enumerated() {
+            if let item = favoriteItems.first(where: { $0.id == id }) {
+                switch item {
+                case let .bookmark(bookmark):
+                    bookmark.sortOrder = index
+                case let .folder(folder):
+                    folder.sortOrder = index
+                }
+            }
+        }
+        // Shared indices are already assigned above; an empty reorder only
+        // flushes the context without per-type reindexing.
+        try bookmarkStore.reorderBookmarks([])
     }
 
     static func sortedFavorites(_ bookmarks: [Bookmark]) -> [Bookmark] {
@@ -88,7 +205,16 @@ final class StartPageViewModel {
             if $0.sortOrder != $1.sortOrder {
                 return $0.sortOrder < $1.sortOrder
             }
-            return $0.addedAt > $1.addedAt
+            return $0.addedAt < $1.addedAt
+        }
+    }
+
+    static func sortedFavoriteItems(_ items: [FavoriteItem]) -> [FavoriteItem] {
+        items.sorted {
+            if $0.sortOrder != $1.sortOrder {
+                return $0.sortOrder < $1.sortOrder
+            }
+            return $0.addedAt < $1.addedAt
         }
     }
 
@@ -108,6 +234,10 @@ final class StartPageViewModel {
 
     nonisolated static func isFavoritesEmpty(_ favorites: [Bookmark]) -> Bool {
         favorites.isEmpty
+    }
+
+    nonisolated static func isFavoriteItemsEmpty(_ items: [FavoriteItem]) -> Bool {
+        items.isEmpty
     }
 
     nonisolated static func isRecentsEmpty(_ recents: [HistoryEntry]) -> Bool {

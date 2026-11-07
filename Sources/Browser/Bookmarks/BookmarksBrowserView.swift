@@ -476,8 +476,7 @@ final class BookmarksBrowserView: UIView {
             )
             content.text = "Favorites"
             content.secondaryText = favoritesCount > 0 ? "\(favoritesCount)" : nil
-            content.image = UIImage(systemName: "star.fill")
-            content.imageProperties.tintColor = .systemYellow
+            content.image = BookmarkFolderIconRenderer.favoritesBadge(size: 28, cornerRadius: 6)
             cell.contentConfiguration = content
             cell.backgroundColor = .secondarySystemGroupedBackground
             cell.accessoryType = isSelectionMode ? .none : .disclosureIndicator
@@ -497,8 +496,13 @@ final class BookmarksBrowserView: UIView {
             content.text = folder.title
             let itemCount = folderItemCounts[folder.id] ?? 0
             content.secondaryText = itemCount > 0 ? "\(itemCount)" : nil
-            content.image = UIImage(systemName: "folder.fill")
-            content.imageProperties.tintColor = .systemYellow
+            let previews = bookmarkStore.fetchPreviewBookmarks(forFolderId: folder.id, limit: 4)
+            content.image = BookmarkFolderIconRenderer.folderBadge(
+                for: folder,
+                previewBookmarks: previews,
+                size: 28,
+                cornerRadius: 6
+            )
             cell.contentConfiguration = content
             cell.backgroundColor = isSelected ? .tertiarySystemGroupedBackground : .secondarySystemGroupedBackground
             cell.accessoryType = isSelectionMode ? .none : .disclosureIndicator
@@ -617,22 +621,25 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
             guard case let .bookmark(bookmark) = entryAt(indexPath) else { return cell }
             cell.textLabel?.text = Self.bookmarkDisplayTitle(bookmark)
             cell.detailTextLabel?.text = HostFormatter.host(of: bookmark.url)
-            cell.imageView?.image = UIImage(systemName: bookmark.isFavorite ? "star.fill" : "bookmark.fill")
-            cell.imageView?.tintColor = bookmark.isFavorite ? .systemOrange : .systemBlue
+            cell.imageView?.image = Self.roundedFavicon(for: bookmark.url, size: 28, cornerRadius: 6)
             cell.accessoryType = .none
 
         case .pinnedFavorites:
             cell.textLabel?.text = "Favorites"
-            cell.imageView?.image = UIImage(systemName: "star.fill")
-            cell.imageView?.tintColor = .systemYellow
+            cell.imageView?.image = BookmarkFolderIconRenderer.favoritesBadge(size: 28, cornerRadius: 6)
             cell.accessoryType = .disclosureIndicator
             cell.detailTextLabel?.text = nil
 
         case .folders:
             let folder = currentFolders[indexPath.row]
             cell.textLabel?.text = folder.title
-            cell.imageView?.image = UIImage(systemName: "folder.fill")
-            cell.imageView?.tintColor = .systemYellow
+            let previews = bookmarkStore.fetchPreviewBookmarks(forFolderId: folder.id, limit: 4)
+            cell.imageView?.image = BookmarkFolderIconRenderer.folderBadge(
+                for: folder,
+                previewBookmarks: previews,
+                size: 28,
+                cornerRadius: 6
+            )
             cell.accessoryType = .disclosureIndicator
             cell.detailTextLabel?.text = nil
         }

@@ -29,8 +29,19 @@ actor BookmarkImportWorker {
     }
 }
 
+private struct BookmarkLocationKey: Hashable {
+    let folderId: UUID?
+    let isFavorite: Bool
+    let url: URL
+}
+
+private struct ContainerKey: Hashable {
+    let parentId: UUID?
+    let isFavorite: Bool
+}
+
 /// Imports a Netscape bookmarks export into the bookmark store, deduplicating
-/// against bookmarks already present by exact URL equality.
+/// against bookmarks already present in the same container by exact URL equality.
 @MainActor
 struct BookmarkImporter {
     func importFromData(_ data: Data, bookmarkStore: BookmarkStore) async -> ImportSummary {
@@ -44,6 +55,31 @@ struct BookmarkImporter {
 
         var folderMap: [[String]: UUID] = [:]
         var existingFolders = bookmarkStore.fetchAllFolders()
+        var containerOrder: [ContainerKey: Int] = [:]
+
+        func nextOrder(for key: ContainerKey) -> Int {
+            if let current = containerOrder[key] {
+                containerOrder[key] = current + 1
+                return current
+            }
+            let maxOrder: Int
+            if key.parentId == nil, key.isFavorite {
+                let bmMax = bookmarkStore.fetchFavorites(rootOnly: true).map(\.sortOrder).max() ?? -1
+                let fMax = existingFolders.filter { $0.parentId == nil && $0.isFavorite }.map(\.sortOrder).max() ?? -1
+                maxOrder = max(bmMax, fMax)
+            } else if key.parentId == nil, !key.isFavorite {
+                let bmMax = bookmarkStore.fetchBookmarks(folderId: nil).map(\.sortOrder).max() ?? -1
+                let fMax = existingFolders.filter { $0.parentId == nil && !$0.isFavorite }.map(\.sortOrder).max() ?? -1
+                maxOrder = max(bmMax, fMax)
+            } else {
+                let bmMax = bookmarkStore.fetchBookmarks(folderId: key.parentId).map(\.sortOrder).max() ?? -1
+                let fMax = existingFolders.filter { $0.parentId == key.parentId }.map(\.sortOrder).max() ?? -1
+                maxOrder = max(bmMax, fMax)
+            }
+            let start = maxOrder + 1
+            containerOrder[key] = start + 1
+            return start
+        }
 
         func resolveOrCreateFolder(path: [String]) throws -> UUID? {
             guard !path.isEmpty else { return nil }
@@ -73,62 +109,66 @@ struct BookmarkImporter {
                 return existing.id
             }
 
+            let order = nextOrder(for: ContainerKey(parentId: parentId, isFavorite: isFav))
             let created = try bookmarkStore.createFolder(
                 title: folderTitle,
                 parentId: parentId,
-                isFavorite: isFav
+                isFavorite: isFav,
+                sortOrder: order
             )
             existingFolders.append(created)
             folderMap[normalizedPath] = created.id
             return created.id
         }
 
-        // Create folders first (including empty folders)
-        for folder in parseResult.folders {
-            // Empty titles never persist as untitled folders.
-            guard !folder.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-            do {
-                _ = try resolveOrCreateFolder(path: folder.parentPath + [folder.title])
-            } catch {
-                // Unresolvable branches stay absent; bookmarks beneath skip as invalid below.
-                continue
-            }
-        }
-
-        var seen = Set<URL>(bookmarkStore.fetchAll().map(\.url))
+        var seen = Set<BookmarkLocationKey>(bookmarkStore.fetchAll().map {
+            BookmarkLocationKey(folderId: $0.folderId, isFavorite: $0.isFavorite, url: $0.url)
+        })
         var added = 0
         var skippedDuplicates = 0
         var skippedInvalid = parseResult.skippedInvalid
 
-        for bookmark in parseResult.bookmarks {
-            guard !seen.contains(bookmark.url) else {
-                skippedDuplicates += 1
-                continue
+        for item in parseResult.items {
+            switch item {
+            case let .folder(folder):
+                guard !folder.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                do {
+                    _ = try resolveOrCreateFolder(path: folder.parentPath + [folder.title])
+                } catch {
+                    continue
+                }
+
+            case let .bookmark(bookmark):
+                let folderId: UUID?
+                do {
+                    folderId = try resolveOrCreateFolder(path: bookmark.folderPath)
+                } catch {
+                    skippedInvalid += 1
+                    continue
+                }
+                let isFav = Self.isFavorite(folderPath: bookmark.folderPath)
+                let key = BookmarkLocationKey(folderId: folderId, isFavorite: isFav, url: bookmark.url)
+                guard !seen.contains(key) else {
+                    skippedDuplicates += 1
+                    continue
+                }
+                let order = nextOrder(for: ContainerKey(parentId: folderId, isFavorite: isFav))
+                do {
+                    try bookmarkStore.add(
+                        title: bookmark.title,
+                        url: bookmark.url,
+                        isFavorite: isFav,
+                        addedDate: bookmark.addedDate,
+                        folderId: folderId,
+                        sortOrder: order
+                    )
+                } catch {
+                    skippedInvalid += 1
+                    continue
+                }
+                seen.insert(key)
+                added += 1
             }
-            let folderId: UUID?
-            do {
-                folderId = try resolveOrCreateFolder(path: bookmark.folderPath)
-            } catch {
-                // Storage failure never falls back to root; the row skips as invalid.
-                skippedInvalid += 1
-                continue
-            }
-            // Store owns flag truth; heuristic only covers root-level rows.
-            let isFav = Self.isFavorite(folderPath: bookmark.folderPath)
-            do {
-                try bookmarkStore.add(
-                    title: bookmark.title,
-                    url: bookmark.url,
-                    isFavorite: isFav,
-                    addedDate: bookmark.addedDate,
-                    folderId: folderId
-                )
-            } catch {
-                skippedInvalid += 1
-                continue
-            }
-            seen.insert(bookmark.url)
-            added += 1
         }
 
         return ImportSummary(

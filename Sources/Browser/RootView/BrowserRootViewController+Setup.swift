@@ -752,7 +752,7 @@ extension BrowserRootViewController {
         startView.onImportTapped = { [weak self] in self?.presentSettings() }
         startView.onDeleteFavorite = { [weak self] id in
             do {
-                try self?.bookmarkStore?.delete(id: id)
+                try viewModel.deleteItem(id: id)
             } catch {
                 self?.logPersistenceError(error, operation: "deleteFavorite")
             }
