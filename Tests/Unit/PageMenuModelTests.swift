@@ -136,7 +136,7 @@ final class PageMenuModelTests: XCTestCase {
         XCTAssertEqual(titles, [
             "Back", "Forward", "Reload", "Share",
             "Add Bookmark", "Add to Favorites", "Add to Reading List", "Show Reader",
-            "Find on Page", "Text Zoom", "Zoom In", "Zoom Out", "Reset", "Request Desktop Website", "Downloads",
+            "Find on Page", "Text Zoom", "Zoom In", "Zoom Out", "Reset", "Request Desktop Website", "Print", "Save as PDF", "Downloads",
             "Open Start Page", "Settings…"
         ])
     }
@@ -156,7 +156,7 @@ final class PageMenuModelTests: XCTestCase {
         XCTAssertEqual(titles, [
             "Back", "Forward", "Reload", "Share",
             "Add Bookmark", "Add to Favorites", "Add to Reading List",
-            "Find on Page", "Text Zoom", "Zoom In", "Zoom Out", "Reset", "Request Desktop Website", "Downloads",
+            "Find on Page", "Text Zoom", "Zoom In", "Zoom Out", "Reset", "Request Desktop Website", "Print", "Save as PDF", "Downloads",
             "Open Start Page", "Settings…"
         ])
     }
@@ -213,11 +213,24 @@ final class PageMenuModelTests: XCTestCase {
         let actions = Dictionary(
             uniqueKeysWithValues: allActions(menu).map { ($0.title, $0) }
         )
-        for title in ["Add to Reading List", "Show Reader", "Zoom In", "Zoom Out", "Reset", "Request Desktop Website", "Downloads"] {
+        for title in ["Add to Reading List", "Show Reader", "Zoom In", "Zoom Out", "Reset", "Request Desktop Website", "Print", "Downloads"] {
             let action = try XCTUnwrap(actions[title], title)
             XCTAssertFalse(action.accessibilityLabel?.isEmpty ?? true, title)
         }
         let zoomMenu = try XCTUnwrap(submenu(named: "Text Zoom", in: menu))
         XCTAssertFalse(zoomMenu.accessibilityLabel?.isEmpty ?? true)
+    }
+
+    func testPrintActionEnabledWithLoadablePage() throws {
+        let root = try makeRoot()
+        let menuWithPage = try root.makePageMenu(model: PageMenuModel(url: pageURL()))
+        let actionsWithPage = Dictionary(uniqueKeysWithValues: allActions(menuWithPage).map { ($0.title, $0) })
+        let printWithPage = try XCTUnwrap(actionsWithPage["Print"])
+        XCTAssertFalse(printWithPage.attributes.contains(.disabled))
+
+        let menuWithoutPage = root.makePageMenu(model: PageMenuModel(url: nil))
+        let actionsWithoutPage = Dictionary(uniqueKeysWithValues: allActions(menuWithoutPage).map { ($0.title, $0) })
+        let printWithoutPage = try XCTUnwrap(actionsWithoutPage["Print"])
+        XCTAssertTrue(printWithoutPage.attributes.contains(.disabled))
     }
 }

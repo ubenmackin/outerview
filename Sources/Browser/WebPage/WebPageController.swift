@@ -834,6 +834,8 @@ extension WebPageController {
 
 extension WebPageController {
     func currentTextZoom() -> Double {
+        // Private tabs stay ephemeral so hosts never read persisted zooms.
+        guard !isPrivateTab else { return Double(webView.pageZoom) }
         guard let store = siteZoomStore, let host = webView.url?.host else { return 1.0 }
         return store.zoom(forHost: host)
     }
@@ -841,12 +843,18 @@ extension WebPageController {
     func setTextZoom(_ zoom: Double) {
         let clamped = SiteZoomStore.clamp(zoom)
         webView.pageZoom = CGFloat(clamped)
-        guard let host = webView.url?.host, !host.isEmpty else { return }
+        // Private hosts never reach defaults; zoom applies to the live view only.
+        guard !isPrivateTab, let host = webView.url?.host, !host.isEmpty else { return }
         siteZoomStore?.setZoom(clamped, forHost: host)
     }
 
     func applySiteZoom() {
-        webView.pageZoom = CGFloat(currentTextZoom())
+        // New documents reset private zoom; standard tabs restore persisted zoom.
+        if isPrivateTab {
+            webView.pageZoom = CGFloat(SiteZoomStore.defaultZoom)
+        } else {
+            webView.pageZoom = CGFloat(currentTextZoom())
+        }
     }
 }
 

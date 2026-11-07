@@ -1,7 +1,4 @@
-//
-//  SettingsViewModelTests.swift
-//  OuterView
-//
+// Settings — Search engine plus privacy toggles plus clearance tests.
 
 @testable import OuterView
 import XCTest
@@ -106,5 +103,21 @@ final class SettingsViewModelTests: XCTestCase {
         let fresh = try XCTUnwrap(tabs.first)
         XCTAssertFalse(fresh.isPrivate)
         XCTAssertEqual(selected, fresh.id)
+    }
+
+    func testBiometricsAndContentBlockingDefaultsAndPersistence() throws {
+        let defaults = try makeDefaults()
+        let vmDefault = SettingsViewModel(defaults: defaults)
+        XCTAssertTrue(vmDefault.requireBiometricsForPrivateTabs)
+        XCTAssertTrue(vmDefault.blockTrackersAndAds)
+
+        vmDefault.requireBiometricsForPrivateTabs = false
+        vmDefault.blockTrackersAndAds = false
+        XCTAssertFalse(defaults.bool(forKey: SettingsViewModel.requireBiometricsDefaultsKey))
+        XCTAssertFalse(defaults.bool(forKey: SettingsViewModel.blockTrackersDefaultsKey))
+
+        let vmReloaded = SettingsViewModel(defaults: defaults)
+        XCTAssertFalse(vmReloaded.requireBiometricsForPrivateTabs)
+        XCTAssertFalse(vmReloaded.blockTrackersAndAds)
     }
 }

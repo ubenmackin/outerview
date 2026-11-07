@@ -172,7 +172,13 @@ extension BrowserRootViewController {
     }
 
     private func removeTabs(ids: Set<UUID>) {
-        for id in ids {
+        // Deterministic close order follows strip order, not Set iteration.
+        let order: [UUID: Int] = Dictionary(uniqueKeysWithValues: tabs.enumerated().map { ($1.id, $0) })
+        let orderedIDs = ids.sorted { (order[$0] ?? Int.max) < (order[$1] ?? Int.max) }
+        for id in orderedIDs {
+            if let tab = tabs.first(where: { $0.id == id && !$0.isPrivate }), tab.url != nil || tab.title != nil {
+                recentlyClosedTabs.insert(tab, at: 0)
+            }
             prunePerTabState(id: id)
             tabPool.delete(id: id)
             do {
@@ -180,6 +186,9 @@ extension BrowserRootViewController {
             } catch {
                 logPersistenceError(error, operation: "deleteTab")
             }
+        }
+        if recentlyClosedTabs.count > 15 {
+            recentlyClosedTabs = Array(recentlyClosedTabs.prefix(15))
         }
         tabs.removeAll { ids.contains($0.id) }
     }
@@ -345,6 +354,16 @@ extension BrowserRootViewController {
         }
         let commit = AddressBarView.shouldCommitVertical(translationY: translation, height: height, velocityY: velocity)
         if commit {
+            // Detached test windows never tick the settle animator,
+            // so commit synchronously there; production keeps the animation.
+            if AppEnvironment.isTestHost {
+                setOverviewVisible(true)
+                contentContainer.transform = .identity
+                contentContainer.layer.cornerRadius = 0
+                contentContainer.clipsToBounds = false
+                overviewDragAnimator = nil
+                return
+            }
             let progress = min(1, -translation / height)
             let remaining = (1 - progress) * height * 0.20
             let duration = AddressBarView.settleDuration(remaining: remaining, velocity: velocity)
@@ -466,7 +485,11 @@ extension BrowserRootViewController: TabOverviewViewControllerDelegate {
     }
 
     func tabOverview(_: TabOverviewViewController, didChangeMode mode: TabOverviewMode) {
-        setOverviewMode(mode)
+        guard mode == .privateMode else {
+            setOverviewMode(mode)
+            return
+        }
+        requestPrivateMode { [weak self] in self?.setOverviewMode(.privateMode) }
     }
 
     func tabOverviewDidRequestCloseAll(_: TabOverviewViewController, in mode: TabOverviewMode) {

@@ -1,7 +1,4 @@
-//
-//  ReadingListStore.swift
-//  OuterView
-//
+// Persistence — URL-deduped saved-pages store with archive lifecycle.
 
 import Foundation
 import os
@@ -79,6 +76,9 @@ final class ReadingListStore {
         guard let found = try item(id: id) else { return }
         context.delete(found)
         try context.save()
+        // Archives live outside SwiftData, so remove each evicted file
+        // after the rows commit; failures only log inside the manager.
+        ReadingListArchiveManager.shared.deleteArchive(for: id)
     }
 
     func delete(ids: Set<UUID>) throws {
@@ -89,6 +89,11 @@ final class ReadingListStore {
             }
         }
         try context.save()
+        // Archives live outside SwiftData, so remove each evicted file
+        // after the rows commit; failures only log inside the manager.
+        for id in ids {
+            ReadingListArchiveManager.shared.deleteArchive(for: id)
+        }
     }
 
     /// Assigns `sortIndex` 0…n-1 in `ids` order; unknown ids are skipped and
@@ -104,14 +109,23 @@ final class ReadingListStore {
         try context.save()
     }
 
-    func clear() throws {
+    @discardableResult
+    func clear() throws -> [UUID] {
         // Bounded deletes can leave overflow rows when inserts bypass the
         // capped add path, so clear fetches without a limit.
         let descriptor = FetchDescriptor<ReadingListItem>()
-        for entry in try context.fetch(descriptor) {
+        let entries = try context.fetch(descriptor)
+        let removedIDs = entries.map(\.id)
+        for entry in entries {
             context.delete(entry)
         }
         try context.save()
+        // Archives live outside SwiftData, so remove each evicted file
+        // after the rows commit; failures only log inside the manager.
+        for id in removedIDs {
+            ReadingListArchiveManager.shared.deleteArchive(for: id)
+        }
+        return removedIDs
     }
 
     func count() -> Int {
@@ -145,16 +159,25 @@ final class ReadingListStore {
     /// Deletes only the rows overflowing the cap: the oldest `excess` entries
     /// by `addedAt`. The row just added carries the latest timestamp, so it is
     /// never among the pruned block.
-    private func pruneIfNeeded() throws {
+    @discardableResult
+    private func pruneIfNeeded() throws -> [UUID] {
         let count = try context.fetchCount(FetchDescriptor<ReadingListItem>())
-        guard count > Self.maxEntries else { return }
+        guard count > Self.maxEntries else { return [] }
         var descriptor = FetchDescriptor<ReadingListItem>(
             sortBy: [SortDescriptor(\.addedAt, order: .forward)]
         )
         descriptor.fetchLimit = count - Self.maxEntries
-        for entry in try context.fetch(descriptor) {
+        let evicted = try context.fetch(descriptor)
+        let removedIDs = evicted.map(\.id)
+        for entry in evicted {
             context.delete(entry)
         }
         try context.save()
+        // Archives live outside SwiftData, so remove each evicted file
+        // after the rows commit; failures only log inside the manager.
+        for id in removedIDs {
+            ReadingListArchiveManager.shared.deleteArchive(for: id)
+        }
+        return removedIDs
     }
 }

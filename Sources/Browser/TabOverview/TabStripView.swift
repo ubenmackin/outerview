@@ -1,7 +1,4 @@
-//
-//  TabStripView.swift
-//  OuterView
-//
+// TabOverview — Regular-width live tab strip.
 
 import UIKit
 
@@ -300,7 +297,8 @@ final class TabStripCell: UICollectionViewCell {
                 into: faviconView,
                 identity: item.id,
                 currentIdentity: { [weak self] in self?.currentID },
-                size: 16
+                size: 16,
+                isPrivate: item.isPrivate
             )
         } else {
             titleLabel.text = "New Tab"
