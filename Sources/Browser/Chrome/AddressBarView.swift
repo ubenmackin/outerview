@@ -280,6 +280,7 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
     // MARK: - Private
 
     private func setup() {
+        accessibilityIdentifier = "AddressBar.Pill"
         backgroundColor = .clear
         clipsToBounds = true
 
@@ -341,9 +342,14 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
         domainLabel.lineBreakMode = .byTruncatingMiddle
         domainLabel.numberOfLines = 1
 
+        domainStack.isUserInteractionEnabled = false
         domainContainer.isAccessibilityElement = true
+        domainContainer.accessibilityIdentifier = "AddressBar.DomainContainer"
         domainContainer.accessibilityTraits = .button
         domainContainer.accessibilityHint = "Double tap to edit address or search"
+        domainContainer.addAction(UIAction { [weak self] _ in
+            self?.onPillTap?()
+        }, for: .touchUpInside)
         domainContainer.onActivate = { [weak self] in
             self?.onPillTap?()
         }
@@ -560,7 +566,7 @@ final class AccessibleButton: UIButton {
 }
 
 @MainActor
-final class DomainPillView: UIView {
+final class DomainPillView: UIButton {
     var onActivate: (() -> Void)?
 
     override func accessibilityActivate() -> Bool {
