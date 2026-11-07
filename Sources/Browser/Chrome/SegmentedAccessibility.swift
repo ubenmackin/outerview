@@ -6,18 +6,24 @@
 import UIKit
 
 /// Single owner of `UISegmentedControl` VoiceOver wiring.
-///
-/// Both the library tab bar and the tab-groups sheet pill drive private
-/// `UISegment` subviews, so segment discovery (type-name filter +
-/// left-to-right sort) and per-index label/identifier assignment live here
-/// instead of being mirrored in each host view.
+/// Recursively resolves `UISegment` subviews in minX order, assigning pairwise
+/// labels/identifiers for the library tab bar and tab-groups sheet pill.
 @MainActor
 enum SegmentedAccessibility {
     /// Private segment subviews backing `control`, ordered left-to-right.
     static func segmentViews(in control: UISegmentedControl) -> [UIView] {
-        control.subviews.filter {
-            String(describing: type(of: $0)).contains("Segment")
-        }.sorted { $0.frame.minX < $1.frame.minX }
+        func findSegments(in parentView: UIView) -> [UIView] {
+            var segments: [UIView] = []
+            for child in parentView.subviews {
+                if String(describing: type(of: child)).contains("Segment") {
+                    segments.append(child)
+                } else {
+                    segments.append(contentsOf: findSegments(in: child))
+                }
+            }
+            return segments
+        }
+        return findSegments(in: control).sorted { $0.frame.minX < $1.frame.minX }
     }
 
     /// Assigns VoiceOver labels/identifiers pairwise. Extra segment views
