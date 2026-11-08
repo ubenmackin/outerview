@@ -19,8 +19,20 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     }
 
     var onOpenURL: ((URL) -> Void)?
-    var onOpenInNewTab: ((URL) -> Void)?
-    var onRequestEdit: ((BookmarkEditorTarget) -> Void)?
+    var onOpenInNewTab: ((URL) -> Void)? {
+        didSet {
+            bookmarksBrowserView?.onOpenInNewTab = onOpenInNewTab
+            startPageView?.onOpenInNewTab = onOpenInNewTab
+        }
+    }
+
+    var onRequestEdit: ((BookmarkEditorTarget) -> Void)? {
+        didSet {
+            bookmarksBrowserView?.onRequestEdit = onRequestEdit
+            startPageView?.onRequestEdit = onRequestEdit
+        }
+    }
+
     var onDone: (() -> Void)?
     var onTabChanged: ((LibraryTab) -> Void)?
     var onInlineAddFolder: (() -> Void)?
@@ -32,24 +44,28 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     var tabGroupsProvider: (() -> [TabGroup])? {
         didSet {
             bookmarksBrowserView?.tabGroupsProvider = tabGroupsProvider
+            startPageView?.tabGroupsProvider = tabGroupsProvider
         }
     }
 
     var onOpenURLsInBackground: (([URL]) -> Void)? {
         didSet {
             bookmarksBrowserView?.onOpenURLsInBackground = onOpenURLsInBackground
+            startPageView?.onOpenURLsInBackground = onOpenURLsInBackground
         }
     }
 
     var onOpenURLsInTabGroup: (([URL], TabGroup) -> Void)? {
         didSet {
             bookmarksBrowserView?.onOpenURLsInTabGroup = onOpenURLsInTabGroup
+            startPageView?.onOpenURLsInTabGroup = onOpenURLsInTabGroup
         }
     }
 
     var onOpenURLsInNewTabGroup: (([URL], String) -> Void)? {
         didSet {
             bookmarksBrowserView?.onOpenURLsInNewTabGroup = onOpenURLsInNewTabGroup
+            startPageView?.onOpenURLsInNewTabGroup = onOpenURLsInNewTabGroup
         }
     }
 
@@ -211,14 +227,6 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         historyListView?.canClearHistory ?? false
     }
 
-    var isReadingListInSelectionMode: Bool {
-        readingListView?.isSelectionMode ?? false
-    }
-
-    var canDeleteReadingListSelection: Bool {
-        readingListView?.hasSelectedItems ?? false
-    }
-
     var onReadingListStateChanged: (() -> Void)?
     var onDidMutateLibraryData: (() -> Void)?
     var onSelectSearchQuery: ((String) -> Void)?
@@ -275,6 +283,22 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         let startPageVM = StartPageViewModel(bookmarkStore: bookmarkStore, historyStore: historyStore)
         let spView = StartPageView(viewModel: startPageVM)
         spView.delegate = self
+        spView.tabGroupsProvider = tabGroupsProvider
+        spView.onOpenInNewTab = { [weak self] url in
+            self?.onOpenInNewTab?(url)
+        }
+        spView.onOpenURLsInBackground = { [weak self] urls in
+            self?.onOpenURLsInBackground?(urls)
+        }
+        spView.onOpenURLsInTabGroup = { [weak self] urls, group in
+            self?.onOpenURLsInTabGroup?(urls, group)
+        }
+        spView.onOpenURLsInNewTabGroup = { [weak self] urls, name in
+            self?.onOpenURLsInNewTabGroup?(urls, name)
+        }
+        spView.onRequestEdit = { [weak self] target in
+            self?.onRequestEdit?(target)
+        }
         spView.onDeleteFavorite = { [weak self] id in
             do {
                 try startPageVM.deleteItem(id: id)
@@ -395,82 +419,6 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
 
     func promptClearHistory() {
         historyListView?.promptClearHistory()
-    }
-
-    func makeReadingListMenu() -> UIMenu? {
-        if let menu = readingListView?.makeMenu() {
-            return menu
-        }
-        // Bare library has no list view yet; vend stored-default sections
-        // so the trailing button never renders an empty menu.
-        let displayMode = ReadingListView.storedDisplayMode(defaults: defaults)
-        let filterMode = ReadingListView.storedFilterMode(defaults: defaults)
-        let largeAction = UIAction(
-            title: "Large",
-            image: UIImage(systemName: "rectangle.grid.1x2"),
-            state: displayMode == .large ? .on : .off
-        ) { [weak self] _ in
-            guard let self else { return }
-            self.readingListView?.setDisplayMode(.large)
-            ReadingListView.persist(displayMode: .large, defaults: self.defaults)
-            self.updateInlineCommands()
-        }
-        let compactAction = UIAction(
-            title: "Compact",
-            image: UIImage(systemName: "list.bullet"),
-            state: displayMode == .compact ? .on : .off
-        ) { [weak self] _ in
-            guard let self else { return }
-            self.readingListView?.setDisplayMode(.compact)
-            ReadingListView.persist(displayMode: .compact, defaults: self.defaults)
-            self.updateInlineCommands()
-        }
-        let allAction = UIAction(
-            title: "All",
-            image: UIImage(systemName: "line.3.horizontal.decrease.circle"),
-            state: filterMode == .all ? .on : .off
-        ) { [weak self] _ in
-            guard let self else { return }
-            self.readingListView?.setFilterMode(.all)
-            ReadingListView.persist(filterMode: .all, defaults: self.defaults)
-            self.updateInlineCommands()
-        }
-        let unreadAction = UIAction(
-            title: "Unread Only",
-            image: UIImage(systemName: "circle"),
-            state: filterMode == .unreadOnly ? .on : .off
-        ) { [weak self] _ in
-            guard let self else { return }
-            self.readingListView?.setFilterMode(.unreadOnly)
-            ReadingListView.persist(filterMode: .unreadOnly, defaults: self.defaults)
-            self.updateInlineCommands()
-        }
-        let selectAction = UIAction(
-            title: "Select Items",
-            image: UIImage(systemName: "checkmark.circle")
-        ) { [weak self] _ in
-            self?.enterReadingListSelectionMode()
-        }
-        let displaySection = UIMenu(title: "", options: .displayInline, children: [largeAction, compactAction])
-        let filterSection = UIMenu(title: "", options: .displayInline, children: [allAction, unreadAction])
-        let actionsSection = UIMenu(title: "", options: .displayInline, children: [selectAction])
-        return UIMenu(title: "", children: [displaySection, filterSection, actionsSection])
-    }
-
-    func exitReadingListSelectionMode() {
-        readingListView?.exitSelectionMode()
-        inlineMenu = makeReadingListMenu()
-        updateInlineCommands()
-    }
-
-    func enterReadingListSelectionMode() {
-        readingListView?.enterSelectionMode()
-        updateInlineCommands()
-    }
-
-    func deleteReadingListSelectedItems() {
-        readingListView?.deleteSelectedItems()
-        updateInlineCommands()
     }
 
     func applyPlacement() {

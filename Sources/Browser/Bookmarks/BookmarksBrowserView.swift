@@ -171,9 +171,7 @@ final class BookmarksBrowserView: UIView {
             folderItemCounts = itemCounts(for: rawFolders)
             currentFolders = Self.sortedFolders(rawFolders, by: activeSort)
             currentBookmarks = Self.sortedBookmarks(rawBookmarks, by: activeSort)
-            combinedEntries = effectiveShowsFoldersOnTop
-                ? []
-                : Self.mergedEntries(folders: currentFolders, bookmarks: currentBookmarks, sortMode: activeSort)
+            combinedEntries = Self.mergedEntries(folders: currentFolders, bookmarks: currentBookmarks, sortMode: activeSort)
 
             backButton.isHidden = false
             if folderStack.isEmpty {
@@ -243,10 +241,7 @@ final class BookmarksBrowserView: UIView {
             return .searchResults
         }
         if isViewingFavorites {
-            if !effectiveShowsFoldersOnTop {
-                return .combinedItems
-            }
-            return section == 0 ? .folders : .bookmarks
+            return .combinedItems
         }
         if !effectiveShowsFoldersOnTop {
             if folderStack.isEmpty {
@@ -407,7 +402,7 @@ final class BookmarksBrowserView: UIView {
     }
 
     /// Single alert seam for folder and tab-group prompts.
-    private func presentTextPrompt(title: String, message: String, placeholder: String, initialText: String? = nil, onSave: @escaping (String) -> Void) {
+    private func presentTextPrompt(title: String, message: String, placeholder: String, onSave: @escaping (String) -> Void) {
         guard let windowScene = window?.windowScene,
               let rootVC = windowScene.windows.first(where: \.isKeyWindow)?.rootViewController
         else {
@@ -420,7 +415,6 @@ final class BookmarksBrowserView: UIView {
         let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
         alert.addTextField { field in
             field.placeholder = placeholder
-            field.text = initialText
             field.autocapitalizationType = .words
         }
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
@@ -541,19 +535,6 @@ final class BookmarksBrowserView: UIView {
     func presentEditor(for target: BookmarkEditorTarget) {
         onRequestEdit?(target)
     }
-
-    private func promptNewTabGroup(for urls: [URL], defaultTitle: String) {
-        guard !urls.isEmpty else { return }
-        // Prefill truncates to the persisted group cap so the sheet never shows an overlong name.
-        let prefill = String(defaultTitle.prefix(TabGroup.maxNameLength))
-        presentTextPrompt(title: "New Tab Group", message: "Enter a name for this tab group.", placeholder: "Group Name", initialText: prefill) { [weak self] raw in
-            guard let self else { return }
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return }
-            let name = String(trimmed.prefix(TabGroup.maxNameLength))
-            self.onOpenURLsInNewTabGroup?(urls, name)
-        }
-    }
 }
 
 // MARK: - UITableViewDataSource, UITableViewDelegate
@@ -564,10 +545,7 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
             return 1
         }
         if isViewingFavorites {
-            if !effectiveShowsFoldersOnTop {
-                return 1
-            }
-            return 2
+            return 1
         }
         if !effectiveShowsFoldersOnTop {
             return folderStack.isEmpty ? 2 : 1
@@ -601,7 +579,7 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
         case .bookmarks:
             currentBookmarks.isEmpty ? nil : (isViewingFavorites ? "Favorites" : "Bookmarks")
         case .combinedItems:
-            combinedEntries.isEmpty ? nil : (isViewingFavorites ? "Favorites" : "Bookmarks")
+            isViewingFavorites ? nil : (combinedEntries.isEmpty ? nil : "Bookmarks")
         }
     }
 
@@ -617,7 +595,7 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
         (cell as? LibrarySubtitleCell)?.configureSelectionIndicator(visible: false, isSelected: false)
         cell.contentConfiguration = nil
         switch sectionType(for: indexPath.section) {
-        case .searchResults, .bookmarks, .combinedItems:
+        case .searchResults, .bookmarks:
             guard case let .bookmark(bookmark) = entryAt(indexPath) else { return cell }
             cell.textLabel?.text = Self.bookmarkDisplayTitle(bookmark)
             cell.detailTextLabel?.text = HostFormatter.host(of: bookmark.url)
@@ -642,6 +620,27 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
             )
             cell.accessoryType = .disclosureIndicator
             cell.detailTextLabel?.text = nil
+
+        case .combinedItems:
+            guard let entry = entryAt(indexPath) else { return cell }
+            switch entry {
+            case let .folder(folder):
+                cell.textLabel?.text = folder.title
+                let previews = bookmarkStore.fetchPreviewBookmarks(forFolderId: folder.id, limit: 4)
+                cell.imageView?.image = BookmarkFolderIconRenderer.folderBadge(
+                    for: folder,
+                    previewBookmarks: previews,
+                    size: 28,
+                    cornerRadius: 6
+                )
+                cell.accessoryType = .disclosureIndicator
+                cell.detailTextLabel?.text = nil
+            case let .bookmark(bookmark):
+                cell.textLabel?.text = Self.bookmarkDisplayTitle(bookmark)
+                cell.detailTextLabel?.text = HostFormatter.host(of: bookmark.url)
+                cell.imageView?.image = Self.roundedFavicon(for: bookmark.url, size: 28, cornerRadius: 6)
+                cell.accessoryType = .none
+            }
         }
 
         return cell
@@ -729,8 +728,12 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
     }
 
     func tableView(_: UITableView, canMoveRowAt indexPath: IndexPath) -> Bool {
-        guard !isSelectionMode, effectiveSortMode == .none, effectiveShowsFoldersOnTop else { return false }
+        guard !isSelectionMode, effectiveSortMode == .none else { return false }
         let type = sectionType(for: indexPath.section)
+        if isViewingFavorites {
+            return type == .combinedItems
+        }
+        guard effectiveShowsFoldersOnTop else { return false }
         return type == .folders || type == .bookmarks
     }
 
@@ -750,13 +753,32 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
         let type = sectionType(for: sourceIndexPath.section)
         guard destinationIndexPath.section == sourceIndexPath.section else { return }
 
-        if type == .folders {
+        if type == .combinedItems {
+            var updated = combinedEntries
+            let item = updated.remove(at: sourceIndexPath.row)
+            updated.insert(item, at: destinationIndexPath.row)
+            combinedEntries = updated
+            let orderedIDs = updated.map { entry -> UUID in
+                switch entry {
+                case let .folder(folder): folder.id
+                case let .bookmark(bookmark): bookmark.id
+                }
+            }
+            do {
+                try bookmarkStore.reorderItems(orderedIDs)
+                onDidMutateBookmarks?()
+            } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
+                    .error("reorderItems failed: \(error.localizedDescription, privacy: .public)")
+            }
+        } else if type == .folders {
             var updated = currentFolders
             let item = updated.remove(at: sourceIndexPath.row)
             updated.insert(item, at: destinationIndexPath.row)
             currentFolders = updated
             do {
                 try bookmarkStore.reorderFolders(updated.map(\.id))
+                onDidMutateBookmarks?()
             } catch {
                 Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
                     .error("reorderFolders failed: \(error.localizedDescription, privacy: .public)")
@@ -768,6 +790,7 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
             currentBookmarks = updated
             do {
                 try bookmarkStore.reorderBookmarks(updated.map(\.id))
+                onDidMutateBookmarks?()
             } catch {
                 Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
                     .error("reorderBookmarks failed: \(error.localizedDescription, privacy: .public)")
@@ -798,84 +821,45 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
         let allBookmarks = bookmarkStore.fetchAllBookmarks(inFolderId: folder.id)
         // Rejected schemes never become tabs; truncated to the live-page cap.
         let urls = Array(allBookmarks.map(\.url).filter { URLNormalizer.isLoadable($0) }.prefix(TabPool.livePageLimit))
-        let hasBookmarks = !urls.isEmpty
-        let openAction = UIAction(
-            title: "Open",
-            image: UIImage(systemName: "safari"),
-            attributes: hasBookmarks ? [] : [.disabled]
-        ) { [weak self] _ in
-            guard !urls.isEmpty else { return }
-            for url in urls {
+        let actions = BookmarkFolderContextActions(
+            onOpenInNewTab: { [weak self] url in
                 self?.onOpenInNewTab?(url)
-            }
-        }
-        let openBackgroundAction = UIAction(
-            title: "Open in Background",
-            image: UIImage(systemName: "plus.square.on.square"),
-            attributes: hasBookmarks ? [] : [.disabled]
-        ) { [weak self] _ in
-            guard !urls.isEmpty else { return }
-            self?.onOpenURLsInBackground?(urls)
-        }
-        let tabGroupElement = folderTabGroupElement(for: folder, urls: urls)
-        let editAction = UIAction(
-            title: "Edit…",
-            image: UIImage(systemName: "pencil")
-        ) { [weak self] _ in
-            self?.presentEditor(for: .editFolder(folder))
-        }
-        let deleteAction = UIAction(
-            title: "Delete",
-            image: UIImage(systemName: "trash"),
-            attributes: .destructive
-        ) { [weak self] _ in
-            do {
-                try self?.bookmarkStore.deleteFolder(id: folder.id)
-                self?.reload()
-                self?.onDidMutateBookmarks?()
-            } catch {
-                Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
-                    .error("deleteFolder failed: \(error.localizedDescription, privacy: .public)")
-            }
-        }
-        return UIMenu(children: [openAction, openBackgroundAction, tabGroupElement, editAction, deleteAction])
-    }
-
-    private func folderTabGroupElement(for folder: BookmarkFolder, urls: [URL]) -> UIMenuElement {
-        guard !urls.isEmpty else {
-            return UIAction(
-                title: "Open in Tab Group",
-                image: UIImage(systemName: "square.grid.2x2"),
-                attributes: [.disabled]
-            ) { _ in }
-        }
-        var groupElements: [UIMenuElement] = []
-        let newGroupAction = UIAction(
-            title: "New Tab Group…",
-            image: UIImage(systemName: "plus")
-        ) { [weak self] _ in
-            guard !urls.isEmpty else { return }
-            let prefill = String(folder.title.prefix(TabGroup.maxNameLength))
-            self?.promptNewTabGroup(for: urls, defaultTitle: prefill)
-        }
-        groupElements.append(newGroupAction)
-        let existingGroups = (tabGroupsProvider?() ?? []).sorted {
-            $0.name.localizedStandardCompare($1.name) == .orderedAscending
-        }
-        for group in existingGroups {
-            let groupAction = UIAction(
-                title: group.name,
-                image: UIImage(systemName: "square.on.square")
-            ) { [weak self] _ in
-                guard !urls.isEmpty else { return }
+            },
+            onOpenURLsInBackground: { [weak self] urls in
+                self?.onOpenURLsInBackground?(urls)
+            },
+            onOpenURLsInTabGroup: { [weak self] urls, group in
                 self?.onOpenURLsInTabGroup?(urls, group)
+            },
+            onOpenURLsInNewTabGroup: { [weak self] urls, name in
+                self?.onOpenURLsInNewTabGroup?(urls, name)
+            },
+            onRequestEdit: { [weak self] folder in
+                self?.presentEditor(for: .editFolder(folder))
+            },
+            onDelete: { [weak self] folder in
+                do {
+                    try self?.bookmarkStore.deleteFolder(id: folder.id)
+                    self?.reload()
+                    self?.onDidMutateBookmarks?()
+                } catch {
+                    Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
+                        .error("deleteFolder failed: \(error.localizedDescription, privacy: .public)")
+                }
+            },
+            presentNewTabGroupPrompt: { [weak self] defaultTitle, onSave in
+                BookmarkFolderContextMenu.presentNewTabGroupAlert(
+                    from: self?.window,
+                    defaultTitle: defaultTitle,
+                    onSave: onSave
+                )
             }
-            groupElements.append(groupAction)
-        }
-        return UIMenu(
-            title: "Open in Tab Group",
-            image: UIImage(systemName: "square.grid.2x2"),
-            children: groupElements
+        )
+        return BookmarkFolderContextMenu.build(
+            for: folder,
+            urls: urls,
+            tabGroups: tabGroupsProvider?() ?? [],
+            actions: actions
         )
     }
 

@@ -18,6 +18,12 @@ final class StartPageView: UIView {
     weak var delegate: StartPageViewDelegate?
     var onImportTapped: (() -> Void)?
     var onDeleteFavorite: ((UUID) -> Void)?
+    var onOpenInNewTab: ((URL) -> Void)?
+    var onOpenURLsInBackground: (([URL]) -> Void)?
+    var onOpenURLsInTabGroup: (([URL], TabGroup) -> Void)?
+    var onOpenURLsInNewTabGroup: (([URL], String) -> Void)?
+    var onRequestEdit: ((BookmarkEditorTarget) -> Void)?
+    var tabGroupsProvider: (() -> [TabGroup])?
 
     let viewModel: StartPageViewModel
 
@@ -439,16 +445,56 @@ extension StartPageView: UICollectionViewDataSource, UICollectionViewDelegate {
             }
         case let .folder(folder):
             return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-                let deleteAction = UIAction(
-                    title: "Delete Folder",
-                    image: UIImage(systemName: "trash"),
-                    attributes: .destructive
-                ) { _ in
-                    self?.onDeleteFavorite?(folder.id)
-                }
-                return UIMenu(children: [deleteAction])
+                self?.folderContextMenu(for: folder)
             }
         }
+    }
+
+    func folderContextMenu(for folder: BookmarkFolder) -> UIMenu? {
+        let urls = viewModel.loadableURLs(in: folder)
+        let actions = BookmarkFolderContextActions(
+            onOpenInNewTab: { [weak self] url in
+                self?.onOpenInNewTab?(url)
+            },
+            onOpenURLsInBackground: { [weak self] urls in
+                self?.onOpenURLsInBackground?(urls)
+            },
+            onOpenURLsInTabGroup: { [weak self] urls, group in
+                self?.onOpenURLsInTabGroup?(urls, group)
+            },
+            onOpenURLsInNewTabGroup: { [weak self] urls, name in
+                self?.onOpenURLsInNewTabGroup?(urls, name)
+            },
+            onRequestEdit: { [weak self] folder in
+                self?.onRequestEdit?(.editFolder(folder))
+            },
+            onDelete: { [weak self] folder in
+                if let onDeleteFavorite = self?.onDeleteFavorite {
+                    onDeleteFavorite(folder.id)
+                } else {
+                    do {
+                        try self?.viewModel.deleteItem(id: folder.id)
+                        self?.reload()
+                    } catch {
+                        Logger(subsystem: "com.volcrypt.OuterView", category: "StartPage")
+                            .error("deleteFolder failed: \(error.localizedDescription, privacy: .public)")
+                    }
+                }
+            },
+            presentNewTabGroupPrompt: { [weak self] defaultTitle, onSave in
+                BookmarkFolderContextMenu.presentNewTabGroupAlert(
+                    from: self?.window,
+                    defaultTitle: defaultTitle,
+                    onSave: onSave
+                )
+            }
+        )
+        return BookmarkFolderContextMenu.build(
+            for: folder,
+            urls: urls,
+            tabGroups: tabGroupsProvider?() ?? [],
+            actions: actions
+        )
     }
 }
 

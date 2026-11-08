@@ -62,6 +62,14 @@ extension BookmarksLibraryView {
         historyListView?.hasSelectedEntries ?? false
     }
 
+    var isReadingListInSelectionMode: Bool {
+        readingListView?.isSelectionMode ?? false
+    }
+
+    var canDeleteReadingListSelection: Bool {
+        readingListView?.hasSelectedItems ?? false
+    }
+
     var isActiveTabInSelectionMode: Bool {
         switch activeTab {
         case .bookmarks:
@@ -115,6 +123,22 @@ extension BookmarksLibraryView {
 
     func deleteHistorySelectedItems() {
         historyListView?.deleteSelectedEntries()
+        updateInlineCommands()
+    }
+
+    func enterReadingListSelectionMode() {
+        readingListView?.enterSelectionMode()
+        updateInlineCommands()
+    }
+
+    func exitReadingListSelectionMode() {
+        readingListView?.exitSelectionMode()
+        inlineMenu = makeReadingListMenu()
+        updateInlineCommands()
+    }
+
+    func deleteReadingListSelectedItems() {
+        readingListView?.deleteSelectedItems()
         updateInlineCommands()
     }
 
@@ -200,6 +224,66 @@ extension BookmarksLibraryView {
             self?.triggerInlineClear()
         }
         return UIMenu(title: "", children: [selectWebsites, clearHistory])
+    }
+
+    func makeReadingListMenu() -> UIMenu? {
+        if let menu = readingListView?.makeMenu() {
+            return menu
+        }
+        // Bare library has no list view yet; vend stored-default sections
+        // so the trailing button never renders an empty menu.
+        let displayMode = ReadingListView.storedDisplayMode(defaults: defaults)
+        let filterMode = ReadingListView.storedFilterMode(defaults: defaults)
+        let largeAction = UIAction(
+            title: "Large",
+            image: UIImage(systemName: "rectangle.grid.1x2"),
+            state: displayMode == .large ? .on : .off
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.readingListView?.setDisplayMode(.large)
+            ReadingListView.persist(displayMode: .large, defaults: self.defaults)
+            self.updateInlineCommands()
+        }
+        let compactAction = UIAction(
+            title: "Compact",
+            image: UIImage(systemName: "list.bullet"),
+            state: displayMode == .compact ? .on : .off
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.readingListView?.setDisplayMode(.compact)
+            ReadingListView.persist(displayMode: .compact, defaults: self.defaults)
+            self.updateInlineCommands()
+        }
+        let allAction = UIAction(
+            title: "All",
+            image: UIImage(systemName: "line.3.horizontal.decrease.circle"),
+            state: filterMode == .all ? .on : .off
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.readingListView?.setFilterMode(.all)
+            ReadingListView.persist(filterMode: .all, defaults: self.defaults)
+            self.updateInlineCommands()
+        }
+        let unreadAction = UIAction(
+            title: "Unread Only",
+            image: UIImage(systemName: "circle"),
+            state: filterMode == .unreadOnly ? .on : .off
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.readingListView?.setFilterMode(.unreadOnly)
+            ReadingListView.persist(filterMode: .unreadOnly, defaults: self.defaults)
+            self.updateInlineCommands()
+        }
+        let selectAction = UIAction(
+            title: "Select Items",
+            image: UIImage(systemName: "checkmark.circle")
+        ) { [weak self] _ in
+            self?.enterReadingListSelectionMode()
+        }
+        let displaySection = UIMenu(title: "", options: .displayInline, children: [largeAction, compactAction])
+        let filterSection = UIMenu(title: "", options: .displayInline, children: [allAction, unreadAction])
+        let actionsSection = UIMenu(title: "", options: .displayInline, children: [selectAction])
+        return UIMenu(title: "", children: [displaySection, filterSection, actionsSection])
     }
 
     // MARK: - Inline Command Triggers

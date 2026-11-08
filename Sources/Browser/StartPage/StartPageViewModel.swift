@@ -99,6 +99,11 @@ final class StartPageViewModel {
         bookmarkStore.fetchPreviewBookmarks(forFolderId: folder.id, limit: 4)
     }
 
+    func loadableURLs(in folder: BookmarkFolder) -> [URL] {
+        let allBookmarks = bookmarkStore.fetchAllBookmarks(inFolderId: folder.id)
+        return Array(allBookmarks.map(\.url).filter { URLNormalizer.isLoadable($0) }.prefix(TabPool.livePageLimit))
+    }
+
     func deleteItem(id: UUID) throws {
         // Folder and bookmark ids share one space; direct lookup avoids
         // misrouting when the visible items are stale or filtered.
