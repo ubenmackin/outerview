@@ -1,7 +1,4 @@
-//
-//  FoldTransitionTests.swift
-//  OuterViewTests
-//
+// RootView — Fold and rotation structural layout tests.
 
 @testable import OuterView
 import UIKit
@@ -42,9 +39,22 @@ final class FoldTransitionTests: XCTestCase {
     }
 
     func testPlacementRecomputeOnTraitChange() throws {
-        XCTAssertEqual(BrowserRootViewController.placement(for: .compact), .compact)
-        XCTAssertEqual(BrowserRootViewController.placement(for: .regular), .regular)
-        XCTAssertEqual(BrowserRootViewController.placement(for: .unspecified), .compact)
+        XCTAssertEqual(BrowserRootViewController.placement(for: .compact, bounds: .zero), .compact)
+        XCTAssertEqual(
+            BrowserRootViewController.placement(
+                for: .regular,
+                bounds: CGRect(x: 0, y: 0, width: 951, height: 669)
+            ),
+            .regular
+        )
+        XCTAssertEqual(
+            BrowserRootViewController.placement(
+                for: .regular,
+                bounds: CGRect(x: 0, y: 0, width: 669, height: 951)
+            ),
+            .compact
+        )
+        XCTAssertEqual(BrowserRootViewController.placement(for: .unspecified, bounds: .zero), .compact)
         let fixture = try makeRootWithParent(tabCount: 2)
         let root = fixture.root
         root.traitOverrides.horizontalSizeClass = .compact
@@ -123,7 +133,7 @@ final class FoldTransitionTests: XCTestCase {
     }
 
     func testLandscapeCompactRetention() throws {
-        XCTAssertEqual(BrowserRootViewController.placement(for: .compact), .compact)
+        XCTAssertEqual(BrowserRootViewController.placement(for: .compact, bounds: .zero), .compact)
         let landscape = UITraitCollection(mutations: { traits in
             traits.horizontalSizeClass = .compact
             traits.verticalSizeClass = .compact

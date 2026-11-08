@@ -1,4 +1,4 @@
-// RootView — View hierarchy construction plus pill and overlay setup.
+// RootView — Hierarchy plus pill, overlay, and vertical tab bar setup.
 
 import os
 import SwiftUI
@@ -33,6 +33,7 @@ extension BrowserRootViewController {
         setupTopBar()
         setupTabStrip()
         setupPill()
+        setupVerticalTabBar()
         setupFind()
         setupRail()
         setupEditor()
@@ -64,9 +65,9 @@ extension BrowserRootViewController {
     /// Hidden rail has zero alpha and skips hit testing.
     func bringChromeToFront() {
         view.bringSubviewToFront(errorContainer)
-        // Mode 3 retains the pill above the library; elsewhere the
-        // library covers the pill so Mode 1 full-screen browsing hides it.
-        if interfaceMode == .nonDuoPhone {
+        // Modes 3 plus 4 retain pill above library for Dismiss;
+        // elsewhere library covers pill.
+        if interfaceMode == .nonDuoPhone || interfaceMode == .duoInnerOrPadPortrait {
             if bookmarksLibraryView.superview === view {
                 view.bringSubviewToFront(bookmarksLibraryView)
             }
@@ -102,6 +103,7 @@ extension BrowserRootViewController {
         } else if !isOverviewVisible {
             view.bringSubviewToFront(topBarView)
         }
+        view.bringSubviewToFront(verticalTabBarView)
         view.bringSubviewToFront(railView)
     }
 
@@ -179,6 +181,83 @@ extension BrowserRootViewController {
             tabStripView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tabStripView.heightAnchor.constraint(equalToConstant: TabStripView.stripHeight)
         ])
+    }
+
+    func setupVerticalTabBar() {
+        verticalTabBarView.translatesAutoresizingMaskIntoConstraints = false
+        verticalTabBarView.isHidden = true
+        verticalTabBarView.onSelectTab = { [weak self] id in
+            self?.selectTab(id: id)
+        }
+        verticalTabBarView.onCloseTab = { [weak self] id in
+            self?.closeTab(id: id, replacementIfEmpty: nil)
+        }
+        verticalTabBarView.onNewTab = { [weak self] in
+            guard let self else { return }
+            self.createNewTab(isPrivate: self.overviewMode.isPrivate)
+        }
+        view.addSubview(verticalTabBarView)
+
+        let trailing = verticalTabBarView.trailingAnchor.constraint(
+            equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+            constant: -16
+        )
+        let leading = verticalTabBarView.leadingAnchor.constraint(
+            equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+            constant: 16
+        )
+        verticalTabBarTrailingConstraint = trailing
+        verticalTabBarLeadingConstraint = leading
+
+        NSLayoutConstraint.activate([
+            verticalTabBarView.widthAnchor.constraint(equalToConstant: VerticalTabBarView.barWidth),
+            verticalTabBarView.bottomAnchor.constraint(equalTo: pillView.topAnchor, constant: -16),
+            verticalTabBarView.topAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.topAnchor, constant: 16)
+        ])
+
+        updateVerticalTabBarPosition()
+        observePortraitTabBarPosition()
+    }
+
+    private func observePortraitTabBarPosition() {
+        guard !hasPortraitObserver() else { return }
+        let observer = NotificationCenter.default.addObserver(
+            forName: .portraitTabBarPositionChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            // Queue is main, so this already runs on the MainActor;
+            // assume isolation for a synchronous live re-constrain.
+            MainActor.assumeIsolated {
+                self.updateVerticalTabBarPosition()
+            }
+        }
+        storePortraitObserver(observer)
+    }
+
+    func updateVerticalTabBarPosition() {
+        let position = selectionDefaults.string(forKey: SettingsViewModel.portraitTabBarPositionDefaultsKey)
+            .flatMap(PortraitTabBarPosition.init(rawValue:)) ?? .right
+        // Skip redundant re-constraining so preference no-ops never relayout.
+        if position == .left {
+            guard verticalTabBarTrailingConstraint?.isActive != false
+                || verticalTabBarLeadingConstraint?.isActive != true else { return }
+            verticalTabBarTrailingConstraint?.isActive = false
+            verticalTabBarLeadingConstraint?.isActive = true
+        } else {
+            guard verticalTabBarTrailingConstraint?.isActive != true
+                || verticalTabBarLeadingConstraint?.isActive != false else { return }
+            verticalTabBarLeadingConstraint?.isActive = false
+            verticalTabBarTrailingConstraint?.isActive = true
+        }
+        guard isViewLoaded else { return }
+        view.setNeedsLayout()
+        // Detached views apply on the next attached pass; forcing layout
+        // without a window re-enters viewDidLayoutSubviews mid-setup.
+        if view.window != nil {
+            view.layoutIfNeeded()
+        }
     }
 
     func setupPill() {
@@ -576,7 +655,7 @@ extension BrowserRootViewController {
     func openBookmarksLibrary(tab: LibraryTab? = nil) {
         let resolved = tab ?? LibraryTabBar.storedTab(defaults: selectionDefaults)
         let placement = chromePlacement
-        bookmarksLibraryView.isNonDuoPhone = (interfaceMode == .nonDuoPhone)
+        bookmarksLibraryView.isNonDuoPhone = (interfaceMode == .nonDuoPhone || interfaceMode == .duoInnerOrPadPortrait)
         if interfaceMode == .nonDuoPhone {
             pillView.showsPageMenu = false
         }

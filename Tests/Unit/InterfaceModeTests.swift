@@ -7,14 +7,14 @@ import XCTest
 @MainActor
 final class InterfaceModeTests: XCTestCase {
     func testInterfaceModeResolution() {
-        // Mode 2: regular horizontal size class -> duoInnerOrPad (iPad / Duo inner / Pro Max landscape)
+        // Mode 2: regular horizontal size class landscape -> duoInnerOrPadLandscape (iPad / Duo inner / Pro Max landscape)
         let modeRegular = BrowserRootViewController.interfaceMode(
             horizontalSizeClass: .regular,
             safeAreaInsets: .zero,
             bounds: CGRect(x: 0, y: 0, width: 951, height: 669),
             deviceName: "iPhone Duo"
         )
-        XCTAssertEqual(modeRegular, .duoInnerOrPad)
+        XCTAssertEqual(modeRegular, .duoInnerOrPadLandscape)
 
         // Mode 2: iPhone 17 Pro Max in landscape has regular size class
         let modeProMaxLandscape = BrowserRootViewController.interfaceMode(
@@ -23,7 +23,25 @@ final class InterfaceModeTests: XCTestCase {
             bounds: CGRect(x: 0, y: 0, width: 932, height: 430),
             deviceName: "iPhone 17 Pro Max"
         )
-        XCTAssertEqual(modeProMaxLandscape, .duoInnerOrPad)
+        XCTAssertEqual(modeProMaxLandscape, .duoInnerOrPadLandscape)
+
+        // Mode 4: regular horizontal size class portrait -> duoInnerOrPadPortrait (Duo inner portrait)
+        let modeDuoInnerPortrait = BrowserRootViewController.interfaceMode(
+            horizontalSizeClass: .regular,
+            safeAreaInsets: .zero,
+            bounds: CGRect(x: 0, y: 0, width: 669, height: 951),
+            deviceName: "iPhone Duo"
+        )
+        XCTAssertEqual(modeDuoInnerPortrait, .duoInnerOrPadPortrait)
+
+        // Mode 4: iPad in portrait -> duoInnerOrPadPortrait
+        let modeIPadPortrait = BrowserRootViewController.interfaceMode(
+            horizontalSizeClass: .regular,
+            safeAreaInsets: UIEdgeInsets(top: 24, left: 0, bottom: 20, right: 0),
+            bounds: CGRect(x: 0, y: 0, width: 834, height: 1194),
+            deviceName: "iPad Pro"
+        )
+        XCTAssertEqual(modeIPadPortrait, .duoInnerOrPadPortrait)
 
         // Mode 1: iPhone Duo outer display (bounds 466x678, compact)
         let modeDuoOuterBounds = BrowserRootViewController.interfaceMode(
@@ -98,13 +116,27 @@ final class InterfaceModeTests: XCTestCase {
 
         // Mode 2: statusBarHidden is true when address bar is collapsed/minified
         XCTAssertTrue(BrowserRootViewController.shouldHideStatusBar(
-            for: .duoInnerOrPad,
+            for: .duoInnerOrPadLandscape,
             state: minifiedState,
             isOverviewVisible: false,
             isSheetOverlayVisible: false
         ))
         XCTAssertFalse(BrowserRootViewController.shouldHideStatusBar(
-            for: .duoInnerOrPad,
+            for: .duoInnerOrPadLandscape,
+            state: expandedState,
+            isOverviewVisible: false,
+            isSheetOverlayVisible: false
+        ))
+
+        // Mode 4: statusBarHidden is true when address bar is collapsed/minified in portrait
+        XCTAssertTrue(BrowserRootViewController.shouldHideStatusBar(
+            for: .duoInnerOrPadPortrait,
+            state: minifiedState,
+            isOverviewVisible: false,
+            isSheetOverlayVisible: false
+        ))
+        XCTAssertFalse(BrowserRootViewController.shouldHideStatusBar(
+            for: .duoInnerOrPadPortrait,
             state: expandedState,
             isOverviewVisible: false,
             isSheetOverlayVisible: false
@@ -292,6 +324,18 @@ final class InterfaceModeTests: XCTestCase {
                 CGFloat(top)
             )
         }
+        // Mode 4 (portrait inner/iPad) matches safeAreaTop like Mode 3
+        XCTAssertEqual(
+            BrowserRootViewController.topContentInset(
+                for: .compact,
+                state: expanded,
+                stripVisible: false,
+                interfaceMode: .duoInnerOrPadPortrait,
+                safeAreaTop: 59
+            ),
+            59
+        )
+
         // Duo modes ignore the cluster inset and keep prior reservations.
         XCTAssertEqual(
             BrowserRootViewController.topContentInset(
@@ -305,7 +349,7 @@ final class InterfaceModeTests: XCTestCase {
         )
     }
 
-    func testPillSwipeEnabledOnlyInModes1And3() throws {
+    func testPillSwipeEnabledInModes1_3_4() throws {
         // Pin the Duo-outer vs standard-phone split so swipe scope never blurs.
         XCTAssertEqual(
             BrowserRootViewController.interfaceMode(
@@ -326,7 +370,7 @@ final class InterfaceModeTests: XCTestCase {
             .nonDuoPhone
         )
 
-        // Mode 2 (regular): swipe disabled.
+        // Mode 2 (regular landscape): swipe disabled.
         let databaseRegular = try OuterViewDatabase(inMemory: true)
         let defaultsRegular = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
         let rootRegular = BrowserRootViewController(database: databaseRegular, defaults: defaultsRegular)
@@ -335,6 +379,17 @@ final class InterfaceModeTests: XCTestCase {
         rootRegular.view.layoutIfNeeded()
         rootRegular.applyChromePlacement(for: .regular)
         XCTAssertFalse(rootRegular.pillView.isSwipeEnabled)
+
+        // Mode 4 (regular portrait, 669x951): swipe enabled.
+        let databasePortrait = try OuterViewDatabase(inMemory: true)
+        let defaultsPortrait = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let rootPortrait = BrowserRootViewController(database: databasePortrait, defaults: defaultsPortrait)
+        TestWindow.attach(rootPortrait, frame: CGRect(x: 0, y: 0, width: 669, height: 951))
+        rootPortrait.traitOverrides.horizontalSizeClass = .regular
+        rootPortrait.view.layoutIfNeeded()
+        rootPortrait.applyChromePlacement(for: .compact)
+        XCTAssertEqual(rootPortrait.interfaceMode, .duoInnerOrPadPortrait)
+        XCTAssertTrue(rootPortrait.pillView.isSwipeEnabled)
 
         // Mode 1 (compact Duo outer, 466pt bounds): swipe enabled.
         let databaseOuter = try OuterViewDatabase(inMemory: true)

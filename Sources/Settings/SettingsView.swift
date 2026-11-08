@@ -1,4 +1,4 @@
-// Settings — Preferences plus clearance confirmation UI.
+// Settings — Preferences, tabs position picker, and clearance confirmation UI.
 
 import os
 import SwiftUI
@@ -15,6 +15,8 @@ struct SettingsView: View {
     var inlineCommands = false
     var onDone: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     @State private var showingImporter = false
     @State private var importSummary: ImportSummary?
@@ -104,6 +106,16 @@ struct SettingsView: View {
                     )
                 }
 
+                if viewModel.isDuoOrPad {
+                    Section("Tabs") {
+                        Picker("Portrait Tab Bar Position", selection: $viewModel.portraitTabBarPosition) {
+                            ForEach(PortraitTabBarPosition.allCases) { position in
+                                Text(position.displayName).tag(position)
+                            }
+                        }
+                    }
+                }
+
                 Section("Data") {
                     Button("Clear History and Website Data", role: .destructive) {
                         showingClearHistoryConfirm = true
@@ -125,6 +137,15 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                viewModel.refreshDuoOrPad()
+            }
+            .onChange(of: horizontalSizeClass) { _, _ in
+                viewModel.refreshDuoOrPad()
+            }
+            .onChange(of: verticalSizeClass) { _, _ in
+                viewModel.refreshDuoOrPad()
+            }
             .toolbar {
                 if inlineCommands {
                     ToolbarItem(placement: .confirmationAction) {

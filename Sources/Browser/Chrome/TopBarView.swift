@@ -1,20 +1,22 @@
-// Chrome — Regular and Mode 3 top toolbar with collapse and background control.
+// Chrome — Four-mode toolbar + BrowserInterfaceMode declaration.
 
 import UIKit
 
-/// Compact width uses the bottom pill plus right rail; regular width uses a
-/// top toolbar with the centered pill, a live tab strip, and no rail.
+/// Compact uses bottom pill plus rail or stacks; regular landscape
+/// uses top toolbar, regular portrait (Mode 4) bottom plus vertical bar.
 enum ChromePlacement: Sendable, Equatable {
     case compact
     case regular
 }
 
 /// Interface modes: duoOuter (outer rail + bottom pill),
-/// duoInnerOrPad (inner/iPad top bar + tab strip),
+/// duoInnerOrPadLandscape (inner/iPad landscape top bar + tab strip),
+/// duoInnerOrPadPortrait (inner/iPad portrait bottom bar + vertical tab bar),
 /// nonDuoPhone (bottom pill + top toolbar buttons).
 enum BrowserInterfaceMode: Sendable, Equatable {
     case duoOuter
-    case duoInnerOrPad
+    case duoInnerOrPadLandscape
+    case duoInnerOrPadPortrait
     case nonDuoPhone
 }
 

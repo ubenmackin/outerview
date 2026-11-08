@@ -39,7 +39,8 @@ extension BrowserRootViewController {
                 refreshStatusBarAppearanceIfNeeded()
             }
             overviewController.isRegular = (chromePlacement == .regular)
-            overviewController.showsInlineCommands = (interfaceMode == .nonDuoPhone)
+            // Mode 4 hides the rail, so overview commands use the inline bar like Mode 3.
+            overviewController.showsInlineCommands = (interfaceMode == .nonDuoPhone || interfaceMode == .duoInnerOrPadPortrait)
             applyOverviewChromeItems()
             overviewController.applyInlineCommandsVisibility()
             applyChromeViews(animated: false)
@@ -273,7 +274,7 @@ extension BrowserRootViewController {
     // MARK: - Vertical overview drag
 
     func handleVerticalPan(_ event: PillPanEvent) {
-        guard interfaceMode != .duoInnerOrPad, !isEditingAddress, !isFindActive, !isOverviewVisible else { return }
+        guard interfaceMode != .duoInnerOrPadLandscape, !isEditingAddress, !isFindActive, !isOverviewVisible else { return }
         switch event {
         case .began:
             beginOverviewDrag()
@@ -439,9 +440,15 @@ extension BrowserRootViewController {
 }
 
 extension BrowserRootViewController {
-    // MARK: - Tab strip
+    // MARK: - Tab strip & Vertical tab bar
 
     func updateTabStrip() {
+        if interfaceMode == .duoInnerOrPadPortrait {
+            tabStripView.isHidden = true
+            updateVerticalTabBar()
+            return
+        }
+        verticalTabBarView.isHidden = true
         if topBarView.isHidden || topBarView.isNonDuoPhone {
             tabStripView.isHidden = true
             return
@@ -461,6 +468,34 @@ extension BrowserRootViewController {
         }
         tabStripView.isHidden = false
         tabStripView.render(tabs: items, selectedID: selectedTabID)
+    }
+
+    /// Single hide owner for portrait chrome: overlay, minified, or single tab.
+    /// The bar fades with the minified pill, never on the earlier rail step.
+    func shouldHidePortraitChrome(itemCount: Int) -> Bool {
+        isPortraitChromeOverlay || isLibraryVisible
+            || chromeController.state.pill == .minified
+            || itemCount < 2
+    }
+
+    func updateVerticalTabBar() {
+        guard interfaceMode == .duoInnerOrPadPortrait else {
+            verticalTabBarView.alpha = 0
+            verticalTabBarView.isUserInteractionEnabled = false
+            verticalTabBarView.isHidden = true
+            return
+        }
+        let items = TabOverviewViewController.tabs(overviewItems(), in: overviewMode)
+        verticalTabBarView.render(tabs: items, selectedID: selectedTabID)
+        if shouldHidePortraitChrome(itemCount: items.count) {
+            verticalTabBarView.alpha = 0
+            verticalTabBarView.isUserInteractionEnabled = false
+            verticalTabBarView.isHidden = true
+            return
+        }
+        verticalTabBarView.alpha = 1
+        verticalTabBarView.isUserInteractionEnabled = true
+        verticalTabBarView.isHidden = false
     }
 }
 

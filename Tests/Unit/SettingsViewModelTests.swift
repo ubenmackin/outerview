@@ -120,4 +120,84 @@ final class SettingsViewModelTests: XCTestCase {
         XCTAssertFalse(vmReloaded.requireBiometricsForPrivateTabs)
         XCTAssertFalse(vmReloaded.blockTrackersAndAds)
     }
+
+    func testPortraitTabBarPositionDefaultsAndPersistence() throws {
+        let defaults = try makeDefaults()
+        let vm = SettingsViewModel(defaults: defaults)
+        XCTAssertEqual(vm.portraitTabBarPosition, .right)
+
+        final class PositionNotified: @unchecked Sendable {
+            private let lock = NSLock()
+            private var fired = false
+
+            func mark() {
+                lock.lock()
+                fired = true
+                lock.unlock()
+            }
+
+            var value: Bool {
+                lock.lock()
+                defer { lock.unlock() }
+                return fired
+            }
+        }
+        let notified = PositionNotified()
+        let observer = NotificationCenter.default.addObserver(
+            forName: .portraitTabBarPositionChanged,
+            object: nil,
+            queue: nil
+        ) { notif in
+            if notif.userInfo?["position"] as? String == "left" {
+                notified.mark()
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        vm.portraitTabBarPosition = .left
+        XCTAssertTrue(notified.value)
+        XCTAssertEqual(defaults.string(forKey: SettingsViewModel.portraitTabBarPositionDefaultsKey), "left")
+
+        let reloaded = SettingsViewModel(defaults: defaults)
+        XCTAssertEqual(reloaded.portraitTabBarPosition, .left)
+    }
+
+    func testIsDuoOrPadDeviceClassification() {
+        // Plain regular without Duo hardware fail-closes.
+        XCTAssertFalse(SettingsViewModel.isDuoOrPadDevice(horizontalSizeClass: .regular))
+        XCTAssertFalse(SettingsViewModel.isDuoOrPadDevice(
+            bounds: CGRect(x: 0, y: 0, width: 932, height: 430),
+            deviceName: "iPhone 17 Pro Max",
+            userInterfaceIdiom: .phone,
+            horizontalSizeClass: .regular
+        ))
+
+        XCTAssertTrue(SettingsViewModel.isDuoOrPadDevice(userInterfaceIdiom: .pad))
+
+        // Phone with Duo name -> true
+        XCTAssertTrue(SettingsViewModel.isDuoOrPadDevice(
+            deviceName: "iPhone Duo - Outer Display",
+            userInterfaceIdiom: .phone
+        ))
+
+        // Duo outer geometry -> true
+        XCTAssertTrue(SettingsViewModel.isDuoOrPadDevice(
+            bounds: CGRect(x: 0, y: 0, width: 466, height: 678),
+            userInterfaceIdiom: .phone
+        ))
+
+        // Duo inner portrait geometry with explicit regular size class -> true.
+        XCTAssertTrue(SettingsViewModel.isDuoOrPadDevice(
+            bounds: CGRect(x: 0, y: 0, width: 669, height: 951),
+            userInterfaceIdiom: .phone,
+            horizontalSizeClass: .regular
+        ))
+
+        // Standard phone -> false
+        XCTAssertFalse(SettingsViewModel.isDuoOrPadDevice(
+            bounds: CGRect(x: 0, y: 0, width: 402, height: 874),
+            deviceName: "iPhone 17 Pro",
+            userInterfaceIdiom: .phone
+        ))
+    }
 }
