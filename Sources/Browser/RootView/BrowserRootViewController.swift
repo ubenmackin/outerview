@@ -739,6 +739,9 @@ final class BrowserRootViewController: UIViewController {
             height: occlusionHeight
         )
         railView.reservedOcclusionUnion = reservedOcclusionUnion
+        if lastVerticalBarPlacement != chromePlacement {
+            applyStructuralLayout()
+        }
         applyRailViews(animated: false)
         if pillWidthConstraint.isActive {
             let width = AddressBarView.widthForBounds(pillReferenceWidth)

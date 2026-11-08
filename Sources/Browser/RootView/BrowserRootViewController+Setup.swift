@@ -656,6 +656,7 @@ extension BrowserRootViewController {
         let resolved = tab ?? LibraryTabBar.storedTab(defaults: selectionDefaults)
         let placement = chromePlacement
         bookmarksLibraryView.isNonDuoPhone = (interfaceMode == .nonDuoPhone || interfaceMode == .duoInnerOrPadPortrait)
+        bookmarksLibraryView.isMode4 = (interfaceMode == .duoInnerOrPadPortrait)
         if interfaceMode == .nonDuoPhone {
             pillView.showsPageMenu = false
         }

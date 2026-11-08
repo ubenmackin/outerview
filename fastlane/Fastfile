@@ -203,7 +203,30 @@ lane :screenshots_duo_inner do
       override_status_bar: true,
       clear_previous_screenshots: false,
       localize_simulator: false,
-      launch_arguments: ["-OuterViewScreenshots", "-OuterViewInnerDisplay"]
+      launch_arguments: ["-OuterViewScreenshots -OuterViewInnerLandscape"]
+    )
+  ensure
+    Process.kill("TERM", watcher_pid) rescue nil
+    Process.wait(watcher_pid) rescue nil
+  end
+end
+
+lane :screenshots_duo_inner_portrait do
+  listing = sh("xcrun simctl list devices -j", log: false)
+  ensure_simulator_present("iPhone Duo", listing)
+  udid = prepare_simulator("iPhone Duo")
+  sh("\"#{hinge_bin}\" -d \"#{udid}\" open")
+  watcher_pid = Process.spawn(
+    "while true; do \"#{hinge_bin}\" -d \"#{udid}\" open >/dev/null 2>&1; sleep 3; done"
+  )
+  begin
+    snapshot(
+      devices: ["iPhone Duo"],
+      erase_simulator: false,
+      override_status_bar: true,
+      clear_previous_screenshots: false,
+      localize_simulator: false,
+      launch_arguments: ["-OuterViewScreenshots -OuterViewInnerPortrait"]
     )
   ensure
     Process.kill("TERM", watcher_pid) rescue nil
@@ -216,4 +239,5 @@ lane :screenshots_all do
   screenshots_iphone
   screenshots_duo_outer
   screenshots_duo_inner
+  screenshots_duo_inner_portrait
 end
