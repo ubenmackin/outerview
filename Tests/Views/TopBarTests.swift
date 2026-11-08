@@ -405,4 +405,27 @@ final class TopBarTests: XCTestCase {
 
         XCTAssertEqual(toolbarLabels(in: root), ["Back", "Bookmarks", "New Tab", "Tabs"], "TopBarView must retain browsing buttons during settings sheet")
     }
+
+    func testMode4ChromeButtonPlacementAtBottom() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let root = BrowserRootViewController(database: database)
+        let parent = UIViewController()
+        TestWindow.attach(parent, frame: CGRect(x: 0, y: 0, width: 669, height: 951))
+        parent.addChild(root)
+        root.traitOverrides.horizontalSizeClass = .regular
+        parent.view.addSubview(root.view)
+        root.didMove(toParent: parent)
+        root.view.layoutIfNeeded()
+
+        XCTAssertEqual(root.interfaceMode, .duoInnerOrPadPortrait)
+        XCTAssertEqual(toolbarLabels(in: root), [])
+        XCTAssertTrue(root.topBarView.isHidden)
+
+        let leadingLabels = root.bottomLeadingStack.arrangedSubviews.compactMap { ($0 as? UIButton)?.accessibilityLabel }
+        let trailingLabels = root.bottomTrailingStack.arrangedSubviews.compactMap { ($0 as? UIButton)?.accessibilityLabel }
+        XCTAssertEqual(leadingLabels, ["Back", "Bookmarks"])
+        XCTAssertEqual(trailingLabels, ["New Tab", "Tabs"])
+
+        XCTAssertFalse(root.verticalTabBarView.showsNewTabButton)
+    }
 }

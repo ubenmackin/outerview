@@ -15,9 +15,11 @@ final class OuterViewScreenshots: XCTestCase {
         setupSnapshot(app)
         app.launch()
 
+        let isMode4 = app.launchArguments.contains("-OuterViewInnerPortrait")
+
         let startPageText = app.staticTexts["Favorites"]
         XCTAssertTrue(startPageText.waitForExistence(timeout: 10))
-        snapshot("01-StartPage")
+        snapshot(isMode4 ? "Mode4-01-StartPage" : "01-StartPage")
 
         let tabsButton = app.buttons["Tabs"].firstMatch
         XCTAssertTrue(tabsButton.waitForExistence(timeout: 10))
@@ -32,7 +34,7 @@ final class OuterViewScreenshots: XCTestCase {
 
         let fixtureText = app.staticTexts["Swift (programming language)"].firstMatch
         XCTAssertTrue(fixtureText.waitForExistence(timeout: 10))
-        snapshot("02-Browsing")
+        snapshot(isMode4 ? "Mode4-02-Browsing" : "02-Browsing")
 
         let bookmarksButton = app.buttons["Bookmarks"].firstMatch
         if bookmarksButton.waitForExistence(timeout: 1) {
@@ -54,9 +56,9 @@ final class OuterViewScreenshots: XCTestCase {
 
         let libraryText = app.staticTexts["Bookmarks"].firstMatch
         XCTAssertTrue(libraryText.waitForExistence(timeout: 10))
-        snapshot("03-Library")
+        snapshot(isMode4 ? "Mode4-03-Library" : "03-Library")
 
-        // Library rail offers Done (on Duo) or Dismiss (on iPhone non-Duo phone).
+        // Library rail offers Done (on Duo) or Dismiss (on iPhone non-Duo phone and Mode 4).
         let doneOrDismiss = app.buttons.matching(NSPredicate(format: "label == 'Done' OR label == 'Dismiss'")).firstMatch
         XCTAssertTrue(doneOrDismiss.waitForExistence(timeout: 10))
         let hittableLibraryExit = app.buttons.allElementsBoundByIndex.first(where: {
@@ -71,7 +73,7 @@ final class OuterViewScreenshots: XCTestCase {
 
         let overviewGridAgain = app.collectionViews["TabOverview.Grid"].firstMatch
         XCTAssertTrue(overviewGridAgain.waitForExistence(timeout: 10))
-        snapshot("04-TabOverview")
+        snapshot(isMode4 ? "Mode4-04-TabOverview" : "04-TabOverview")
 
         // Overview chrome provides Search, New Tab, Menu, and Done across all form factors.
         let overviewDone = app.buttons.matching(NSPredicate(format: "label == 'Done'")).firstMatch
@@ -83,7 +85,7 @@ final class OuterViewScreenshots: XCTestCase {
         XCTAssertNotNil(hittableOverviewDone)
         hittableOverviewDone?.tap()
 
-        let isRegularPlacement = app.launchArguments.contains("-OuterViewInnerDisplay") || app.windows.firstMatch.frame.width > 500
+        let isRegularPlacement = (app.launchArguments.contains("-OuterViewInnerDisplay") || app.windows.firstMatch.frame.width > 500) && !isMode4
 
         let browsingSettled = app.staticTexts["Swift (programming language)"].firstMatch
         XCTAssertTrue(browsingSettled.waitForExistence(timeout: 10))

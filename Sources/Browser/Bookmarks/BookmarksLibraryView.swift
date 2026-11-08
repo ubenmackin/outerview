@@ -85,6 +85,14 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         }
     }
 
+    var isMode4: Bool = false {
+        didSet {
+            if oldValue != isMode4 {
+                applyPlacement()
+            }
+        }
+    }
+
     // MARK: - Regular Safari Sheet Header Controls
 
     private let regularHeaderRow = UIView()
@@ -98,6 +106,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
 
     private var compactHeaderConstraints: [NSLayoutConstraint] = []
     private var regularHeaderConstraints: [NSLayoutConstraint] = []
+    private var mode4HeaderConstraints: [NSLayoutConstraint] = []
 
     /// Glass buttons owning all trailing controls.
     var trailingButtons: [UIButton] {
@@ -114,7 +123,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     }
 
     var isDoneVisible: Bool {
-        guard !regularHeaderRow.isHidden else { return false }
+        guard !regularHeaderRow.isHidden, !isNonDuoPhone, !isMode4 else { return false }
         return trailingToolbarItems.contains {
             $0.accessibilityLabel == "Done" || $0.accessibilityLabel == "Done Editing"
         }
@@ -422,18 +431,26 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     }
 
     func applyPlacement() {
-        let isRegular = chromePlacement == .regular || isNonDuoPhone
+        let isRegular = chromePlacement == .regular || isNonDuoPhone || isMode4
         backgroundColor = isRegular ? .systemGroupedBackground : .systemBackground
-        NSLayoutConstraint.deactivate(isRegular ? compactHeaderConstraints : regularHeaderConstraints)
+        NSLayoutConstraint.deactivate(compactHeaderConstraints)
+        NSLayoutConstraint.deactivate(regularHeaderConstraints)
+        NSLayoutConstraint.deactivate(mode4HeaderConstraints)
         regularHeaderRow.isHidden = !isRegular
-        NSLayoutConstraint.activate(isRegular ? regularHeaderConstraints : compactHeaderConstraints)
+        if isMode4 {
+            NSLayoutConstraint.activate(mode4HeaderConstraints)
+        } else if isRegular {
+            NSLayoutConstraint.activate(regularHeaderConstraints)
+        } else {
+            NSLayoutConstraint.activate(compactHeaderConstraints)
+        }
         applyChildHeaderVisibility()
-        contentBottomConstraint?.constant = isNonDuoPhone ? -84 : 0
+        contentBottomConstraint?.constant = (isNonDuoPhone || isMode4) ? -84 : 0
         updateInlineCommands()
     }
 
     func updateInlineCommands() {
-        guard chromePlacement == .regular || isNonDuoPhone else {
+        guard chromePlacement == .regular || isNonDuoPhone || isMode4 else {
             // Hidden controls must not keep stale regular items.
             SystemToolbarMapper.clearStack(trailingStack)
             trailingToolbar.items = []
@@ -515,8 +532,8 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         }
 
         // Close stays visible on empty lists; selection swaps it to Done.
-        // In Mode 3 (isNonDuoPhone), dismiss is owned solely by the bottom bar.
-        if !isNonDuoPhone {
+        // In Mode 3 (isNonDuoPhone) and Mode 4 (isMode4), dismiss is owned solely by the bottom bar.
+        if !isNonDuoPhone, !isMode4 {
             if commands.isEditingBookmarks {
                 actions.append(RailAction(
                     systemImageName: "checkmark",
@@ -708,6 +725,36 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
             contentContainer.topAnchor.constraint(equalTo: headerContainer.bottomAnchor, constant: 4)
         ]
 
+        let m4TabLeading = topTabBar.leadingAnchor.constraint(
+            equalTo: headerContainer.leadingAnchor, constant: 20
+        )
+        m4TabLeading.priority = UILayoutPriority(999)
+        let m4TabTrailing = topTabBar.trailingAnchor.constraint(
+            equalTo: headerContainer.trailingAnchor, constant: -84
+        )
+        m4TabTrailing.priority = UILayoutPriority(999)
+
+        mode4HeaderConstraints = [
+            headerContainer.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 10),
+            regTabRowHeight,
+            m4TabLeading,
+            m4TabTrailing,
+            regularHeaderRow.topAnchor.constraint(equalTo: headerContainer.bottomAnchor, constant: 8),
+            regLeading,
+            regTrailing,
+            regHeaderHeight,
+            leadingTitleStack.leadingAnchor.constraint(equalTo: regularHeaderRow.leadingAnchor),
+            leadingTitleStack.centerYAnchor.constraint(equalTo: regularHeaderRow.centerYAnchor),
+            trailingStack.trailingAnchor.constraint(equalTo: regularHeaderRow.trailingAnchor),
+            trailingStack.centerYAnchor.constraint(equalTo: regularHeaderRow.centerYAnchor),
+            trailingStack.heightAnchor.constraint(equalToConstant: 44),
+            trailingToolbar.trailingAnchor.constraint(equalTo: regularHeaderRow.trailingAnchor),
+            trailingToolbar.centerYAnchor.constraint(equalTo: regularHeaderRow.centerYAnchor),
+            trailingToolbarWidthConstraint,
+            titleSpacing,
+            contentContainer.topAnchor.constraint(equalTo: regularHeaderRow.bottomAnchor, constant: 4)
+        ]
+
         contentBottomConstraint = contentContainer.bottomAnchor.constraint(equalTo: bottomAnchor)
         NSLayoutConstraint.activate([
             headerContainer.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor),
@@ -759,7 +806,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     }
 
     private func applyChildHeaderVisibility() {
-        let hideInnerHeaders = chromePlacement == .regular || isNonDuoPhone
+        let hideInnerHeaders = chromePlacement == .regular || isNonDuoPhone || isMode4
         bookmarksBrowserView?.setHeaderBarHidden(hideInnerHeaders)
         historyListView?.setHeaderBarHidden(hideInnerHeaders)
         readingListView?.setHeaderBarHidden(hideInnerHeaders)

@@ -20,6 +20,14 @@ final class VerticalTabBarView: UIView {
     var onCloseTab: ((UUID) -> Void)?
     var onNewTab: (() -> Void)?
 
+    var showsNewTabButton: Bool = false {
+        didSet {
+            if oldValue != showsNewTabButton {
+                render(tabs: displayedTabs, selectedID: displayedSelectedID)
+            }
+        }
+    }
+
     private(set) var displayedTabs: [TabOverviewItem] = []
     private(set) var displayedSelectedID: UUID?
 
@@ -40,8 +48,10 @@ final class VerticalTabBarView: UIView {
     }
 
     override var intrinsicContentSize: CGSize {
-        let contentHeight = CGFloat(displayedTabs.count + 1) * Self.itemSize
-            + CGFloat(displayedTabs.count) * Self.spacing + Self.verticalPadding
+        let count = displayedTabs.count + (showsNewTabButton ? 1 : 0)
+        guard count > 0 else { return CGSize(width: Self.barWidth, height: 0) }
+        let contentHeight = CGFloat(count) * Self.itemSize
+            + CGFloat(count - 1) * Self.spacing + Self.verticalPadding
         return CGSize(width: Self.barWidth, height: min(contentHeight, Self.maxHeight))
     }
 
@@ -61,7 +71,11 @@ final class VerticalTabBarView: UIView {
         }
         itemViews.removeAll()
 
-        for tab in tabs {
+        if showsNewTabButton {
+            stackView.addArrangedSubview(newTabButton)
+        }
+
+        for tab in tabs.reversed() {
             let isSelected = (tab.id == selectedID)
             let itemView = VerticalTabItemView(item: tab, isSelected: isSelected)
             itemView.onTap = { [weak self] in
@@ -73,8 +87,6 @@ final class VerticalTabBarView: UIView {
             itemViews[tab.id] = itemView
             stackView.addArrangedSubview(itemView)
         }
-
-        stackView.addArrangedSubview(newTabButton)
         invalidateIntrinsicContentSize()
     }
 

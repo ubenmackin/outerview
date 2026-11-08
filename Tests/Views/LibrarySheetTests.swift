@@ -407,4 +407,36 @@ final class LibrarySheetTests: XCTestCase {
         XCTAssertNotNil(gridImage)
         XCTAssertEqual(gridImage?.accessibilityLabel, LibraryTab.startPage.title)
     }
+
+    func testMode4LibraryLayoutAndDismiss() throws {
+        let library = try makeLibrary(tab: .bookmarks, placement: .regular)
+        library.isMode4 = true
+        library.layoutIfNeeded()
+
+        // In Mode 4, Done/X is suppressed from the regular header row.
+        XCTAssertFalse(library.isDoneVisible)
+        // Options menu is still visible in the section row.
+        XCTAssertTrue(library.isOptionsMenuVisible)
+    }
+
+    func testMode4RootViewControllerLibraryDismissInBottomBar() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let root = BrowserRootViewController(database: database, defaults: defaults)
+        let frame = CGRect(x: 0, y: 0, width: 669, height: 951)
+        TestWindow.attach(root, frame: frame)
+        root.traitOverrides.horizontalSizeClass = .regular
+        root.view.layoutIfNeeded()
+
+        XCTAssertEqual(root.interfaceMode, .duoInnerOrPadPortrait)
+
+        root.openBookmarksLibrary(tab: .bookmarks)
+        root.view.layoutIfNeeded()
+
+        XCTAssertEqual(root.bookmarksLibraryView.isMode4, true)
+        let suffixButtons = root.bottomTrailingStack.arrangedSubviews.compactMap { $0 as? UIButton }
+        XCTAssertEqual(suffixButtons.count, 1)
+        XCTAssertEqual(suffixButtons.first?.accessibilityLabel, "Dismiss")
+        XCTAssertTrue(root.topBarView.leadingButtons.isEmpty && root.topBarView.trailingButtons.isEmpty)
+    }
 }

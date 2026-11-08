@@ -648,15 +648,12 @@ extension BrowserRootViewController {
     func setChromeItems(prefix: [RailAction], suffix: [RailAction]) {
         railView.setItems(prefix: prefix, suffix: suffix)
         if interfaceMode == .nonDuoPhone || interfaceMode == .duoInnerOrPadPortrait {
-            // Portrait keeps topBarView hidden, so only Mode 3 touches it here.
             let isPortrait = interfaceMode == .duoInnerOrPadPortrait
             let isEditing = isEditingAddress && chromePlacement == .compact
             if isEditing {
                 SystemToolbarMapper.populateBottomStack(bottomLeadingStack, with: [])
                 SystemToolbarMapper.populateBottomStack(bottomTrailingStack, with: [])
-                if !isPortrait {
-                    topBarView.setItems(prefix: [], suffix: [])
-                }
+                topBarView.setItems(prefix: [], suffix: [])
                 editorView.isNonDuoPhone = true
                 editorView.isEditing = true
                 if interfaceMode == .nonDuoPhone {
@@ -677,23 +674,17 @@ extension BrowserRootViewController {
             if isOverlay {
                 SystemToolbarMapper.populateBottomStack(bottomLeadingStack, with: [])
                 SystemToolbarMapper.populateBottomStack(bottomTrailingStack, with: [])
-                if !isPortrait {
-                    if shouldShowNonDuoTopBar {
-                        topBarView.setItems(prefix: prefix, suffix: suffix)
-                    } else {
-                        topBarView.setItems(prefix: [], suffix: [])
-                    }
-                }
-            } else if isLibraryVisible {
-                if !isPortrait {
+                if !isPortrait, shouldShowNonDuoTopBar {
+                    topBarView.setItems(prefix: prefix, suffix: suffix)
+                } else {
                     topBarView.setItems(prefix: [], suffix: [])
                 }
+            } else if isLibraryVisible {
+                topBarView.setItems(prefix: [], suffix: [])
                 SystemToolbarMapper.populateBottomStack(bottomLeadingStack, with: [])
                 SystemToolbarMapper.populateBottomStack(bottomTrailingStack, with: suffix)
             } else {
-                if !isPortrait {
-                    topBarView.setItems(prefix: [], suffix: [])
-                }
+                topBarView.setItems(prefix: [], suffix: [])
                 SystemToolbarMapper.populateBottomStack(bottomLeadingStack, with: prefix)
                 SystemToolbarMapper.populateBottomStack(bottomTrailingStack, with: suffix)
             }
@@ -890,7 +881,7 @@ extension BrowserRootViewController {
     }
 
     /// Shared pill anchor for bottom chrome; minified keeps centered constraints.
-    private func layoutBottomPillAnchors(hideLeading: Bool) {
+    private func layoutBottomPillAnchors(hideLeading: Bool, hideTrailing: Bool) {
         guard chromeController.state.pill != .minified else { return }
         if hideLeading {
             pillBottomLeadingConstraint?.isActive = false
@@ -898,6 +889,13 @@ extension BrowserRootViewController {
         } else {
             pillLeadingConstraint.isActive = false
             pillBottomLeadingConstraint?.isActive = true
+        }
+        if hideTrailing {
+            pillBottomTrailingConstraint?.isActive = false
+            pillTrailingConstraint.isActive = true
+        } else {
+            pillTrailingConstraint.isActive = false
+            pillBottomTrailingConstraint?.isActive = true
         }
     }
 
@@ -922,7 +920,7 @@ extension BrowserRootViewController {
         } else {
             pillView.isHidden = chromeController.state.pill == .editing
         }
-        layoutBottomPillAnchors(hideLeading: hideLeading)
+        layoutBottomPillAnchors(hideLeading: hideLeading, hideTrailing: hideTrailing)
     }
 
     /// Single visibility owner for Mode 3 bottom pill versus transparent bar versus hidden.
@@ -964,6 +962,7 @@ extension BrowserRootViewController {
             hideTrailing: hideTrailing
         )
         let freshTabs = TabOverviewViewController.tabs(overviewItems(), in: overviewMode)
+        verticalTabBarView.showsNewTabButton = false
         verticalTabBarView.render(tabs: freshTabs, selectedID: selectedTabID)
         let hideSideTab = shouldHidePortraitChrome(itemCount: freshTabs.count)
         verticalTabBarView.alpha = hideSideTab ? 0 : 1

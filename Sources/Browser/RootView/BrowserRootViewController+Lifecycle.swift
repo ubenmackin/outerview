@@ -119,6 +119,7 @@ extension BrowserRootViewController {
         overviewController.isRegular = (placement == .regular)
         overviewController.showsInlineCommands = (interfaceMode == .nonDuoPhone || interfaceMode == .duoInnerOrPadPortrait)
         bookmarksLibraryView.isNonDuoPhone = (interfaceMode == .nonDuoPhone || interfaceMode == .duoInnerOrPadPortrait)
+        bookmarksLibraryView.isMode4 = (interfaceMode == .duoInnerOrPadPortrait)
         for overlay in [libraryOverlay, settingsOverlay, downloadsOverlay, bookmarkEditorOverlay]
             where overlay.isHidden
         {

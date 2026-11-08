@@ -22,6 +22,8 @@ final class BrowserChromeHostViewController: UIViewController {
         // Inner-display captures run the regular-width chrome on the
         // compact-sized host window before first layout.
         let isInnerDisplayRun = CommandLine.arguments.contains("-OuterViewInnerDisplay")
+            || CommandLine.arguments.contains("-OuterViewInnerPortrait")
+            || CommandLine.arguments.contains("-OuterViewInnerLandscape")
         if isInnerDisplayRun {
             browserRoot.traitOverrides.horizontalSizeClass = .regular
         }
