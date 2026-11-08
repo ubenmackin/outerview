@@ -3,18 +3,22 @@
 import os
 import SwiftUI
 
-/// Single chrome applier: tab content, floating rail + pill, editor, error
-/// overlay, and tab overview placeholder. Content renders full-bleed while
-/// chrome floats above it.
-/// UserDefaults keys libraryTab as Int, overviewMode as String, and overviewGroup as String.
-/// Values are read at init and setup and written on every change; private mode is never
-/// written and restores as standard. Unparseable values fall back to bookmarks, standard,
-/// and nil; a stored group id resolving to no existing group restores as nil.
+/// Single chrome applier: tab content, rail + pill, editor, overview.
+/// Content renders full-bleed with chrome floating above it.
+/// Defaults restore libraryTab/overviewMode/overviewGroup; private never persists.
 @MainActor
 final class BrowserRootViewController: UIViewController {
     nonisolated static let railHideDuration: TimeInterval = 0.25
     nonisolated static let pillMorphDuration: TimeInterval = 0.3
     nonisolated static let structuralDebounceInterval: TimeInterval = 0.15
+
+    /// Width floor for the regular portrait split; narrow harness windows stay landscape.
+    nonisolated static let portraitRegularWidthThreshold: CGFloat = 500
+
+    /// Regular portrait split: taller than wide and wide enough to split.
+    nonisolated static func isPortraitRegular(bounds: CGRect) -> Bool {
+        bounds.height > bounds.width && bounds.width >= portraitRegularWidthThreshold
+    }
 
     /// Gap between the expanded pill and the system bottom safe area.
     nonisolated static let expandedPillBottomGap: CGFloat = 4
@@ -52,11 +56,9 @@ final class BrowserRootViewController: UIViewController {
             + contentBottomGap
     }
 
-    /// Shared Contract REGULAR-COLLAPSE: collapsed keeps topBarView visible with
-    /// both stacks plus strip hidden; expanded centered with min(380,slotWidth)
-    /// and collapsed centered with domain-hugging capsule width capped at
-    /// min(220,slotWidth); collapsed top inset equals TopBarView.remnantHeight;
-    /// additionalSafeArea top is zero in every placement and state; no remnant view exists anywhere.
+    /// REGULAR-COLLAPSE: collapsed bar visible, stacks/strip hidden.
+    /// Pill caps min(380)/min(220); collapsed inset equals remnantHeight.
+    /// additionalSafeArea top is zero; no remnant view exists.
     nonisolated static var regularRemnantHeight: CGFloat {
         TopBarView.remnantHeight
     }
@@ -83,10 +85,10 @@ final class BrowserRootViewController: UIViewController {
         for placement: ChromePlacement,
         state: ChromeState,
         stripVisible: Bool,
-        interfaceMode: BrowserInterfaceMode = .duoInnerOrPad,
+        interfaceMode: BrowserInterfaceMode = .duoInnerOrPadLandscape,
         safeAreaTop: CGFloat = 0
     ) -> CGFloat {
-        if interfaceMode == .nonDuoPhone {
+        if interfaceMode == .nonDuoPhone || interfaceMode == .duoInnerOrPadPortrait {
             return max(0, safeAreaTop)
         }
         guard placement == .regular else { return 0 }
@@ -139,14 +141,32 @@ final class BrowserRootViewController: UIViewController {
         bounds: CGRect = .zero,
         deviceName: String? = nil
     ) -> BrowserInterfaceMode {
-        if CommandLine.arguments.contains("-OuterViewInnerDisplay") || horizontalSizeClass == .regular {
-            return .duoInnerOrPad
+        if CommandLine.arguments.contains("-OuterViewInnerLandscape") {
+            return .duoInnerOrPadLandscape
+        }
+        if CommandLine.arguments.contains("-OuterViewInnerPortrait") {
+            return .duoInnerOrPadPortrait
         }
         if CommandLine.arguments.contains("-OuterViewNonDuoPhone") {
             return .nonDuoPhone
         }
         if CommandLine.arguments.contains("-OuterViewDuoOuter") {
             return .duoOuter
+        }
+        if CommandLine.arguments.contains("-OuterViewInnerDisplay") {
+            // Narrow regular portrait stays landscape so 466 pt harness windows never split.
+            if isPortraitRegular(bounds: bounds) {
+                return .duoInnerOrPadPortrait
+            } else {
+                return .duoInnerOrPadLandscape
+            }
+        }
+        if horizontalSizeClass == .regular {
+            if isPortraitRegular(bounds: bounds) {
+                return .duoInnerOrPadPortrait
+            } else {
+                return .duoInnerOrPadLandscape
+            }
         }
         if isDuoOuterDisplay(safeAreaInsets: safeAreaInsets, bounds: bounds, deviceName: deviceName) {
             return .duoOuter
@@ -172,11 +192,22 @@ final class BrowserRootViewController: UIViewController {
 
     /// Regular width uses the top toolbar with the centered pill and no rail.
     var chromePlacement: ChromePlacement {
-        interfaceMode == .duoInnerOrPad ? .regular : .compact
+        interfaceMode == .duoInnerOrPadLandscape ? .regular : .compact
     }
 
-    nonisolated static func placement(for sizeClass: UIUserInterfaceSizeClass) -> ChromePlacement {
-        sizeClass == .regular ? .regular : .compact
+    /// Placement truth follows interfaceMode: only landscape inner/iPad is regular.
+    nonisolated static func placement(
+        for sizeClass: UIUserInterfaceSizeClass,
+        bounds: CGRect,
+        safeAreaInsets: UIEdgeInsets = .zero,
+        deviceName: String? = nil
+    ) -> ChromePlacement {
+        interfaceMode(
+            horizontalSizeClass: sizeClass,
+            safeAreaInsets: safeAreaInsets,
+            bounds: bounds,
+            deviceName: deviceName
+        ) == .duoInnerOrPadLandscape ? .regular : .compact
     }
 
     /// Regular disables the vertical bar so status moves to the top axis;
@@ -206,9 +237,9 @@ final class BrowserRootViewController: UIViewController {
         isOverviewVisible: Bool,
         isSheetOverlayVisible: Bool
     ) -> Bool {
-        // Active in both Mode 1 (Duo outer screen) and Mode 2 (Duo inner screen + iPads)
-        // when scrolling down and the address bar is collapsed (minified).
-        guard mode == .duoOuter || mode == .duoInnerOrPad else { return false }
+        // Active in Mode 1 (Duo outer screen), Mode 2 (Duo inner landscape),
+        // and Mode 4 (Duo inner / iPad portrait) when scrolling down.
+        guard mode == .duoOuter || mode == .duoInnerOrPadLandscape || mode == .duoInnerOrPadPortrait else { return false }
         if state.pill == .editing || isOverviewVisible || isSheetOverlayVisible {
             return false
         }
@@ -236,53 +267,6 @@ final class BrowserRootViewController: UIViewController {
         parent?.setNeedsStatusBarAppearanceUpdate()
     }
 
-    /// Mode 3 shows the transparent bar for the editor overlay.
-    /// Editor over library keeps the bar so Cancel/Save stay reachable.
-    var shouldShowNonDuoTopBar: Bool {
-        (isBookmarkEditorVisible && !isBookmarkEditorPresentedModally)
-            && !isOverviewVisible
-    }
-
-    /// Any sheet or overview covering the Mode 3 browsing chrome.
-    var isNonDuoChromeOverlay: Bool {
-        isOverviewVisible || (isBookmarkEditorVisible && !isBookmarkEditorPresentedModally)
-    }
-
-    /// Single visibility owner for Mode 3 bottom pill versus transparent bar versus hidden.
-    func applyNonDuoChromeVisibility() {
-        guard interfaceMode == .nonDuoPhone, chromePlacement != .regular else { return }
-        let showsTopBar = shouldShowNonDuoTopBar
-        let isOverlay = isNonDuoChromeOverlay
-        let hideBottomButtons = isOverlay || chromeController.state.pill == .minified || chromeController.state.rail == .hidden
-        topBarView.isHidden = !showsTopBar
-        topBarView.showsBackgroundBar = !showsTopBar
-        bottomLeadingStack.alpha = hideBottomButtons ? 0 : 1
-        bottomTrailingStack.alpha = hideBottomButtons ? 0 : 1
-        bottomLeadingStack.isUserInteractionEnabled = !hideBottomButtons
-        bottomTrailingStack.isUserInteractionEnabled = !hideBottomButtons
-        let hideLeading = hideBottomButtons || isLibraryVisible || bottomLeadingStack.arrangedSubviews.isEmpty
-        bottomLeadingStack.isHidden = hideLeading
-        bottomTrailingStack.isHidden = hideBottomButtons || bottomTrailingStack.arrangedSubviews.isEmpty
-        pillView.showsPageMenu = !isLibraryVisible
-        if isOverlay {
-            pillView.isHidden = true
-        } else if isFindActive, chromeController.state.pill != .editing {
-            pillView.isHidden = true
-        } else {
-            pillView.isHidden = chromeController.state.pill == .editing
-        }
-        let isMinified = chromeController.state.pill == .minified
-        if !isMinified {
-            if hideLeading {
-                pillBottomLeadingConstraint?.isActive = false
-                pillLeadingConstraint.isActive = true
-            } else {
-                pillLeadingConstraint.isActive = false
-                pillBottomLeadingConstraint?.isActive = true
-            }
-        }
-    }
-
     /// Moves the shared pill between the bottom anchors and the toolbar slot.
     func applyChromePlacement() {
         applyChromePlacement(for: chromePlacement)
@@ -291,7 +275,8 @@ final class BrowserRootViewController: UIViewController {
     func applyChromePlacement(for placement: ChromePlacement) {
         let isRegular = placement == .regular
         let isNonDuo = (interfaceMode == .nonDuoPhone) && !isRegular
-        pillView.isSwipeEnabled = interfaceMode != .duoInnerOrPad
+        let isPortrait = (interfaceMode == .duoInnerOrPadPortrait)
+        pillView.isSwipeEnabled = interfaceMode != .duoInnerOrPadLandscape
 
         topBarView.isNonDuoPhone = isNonDuo
         if isRegular {
@@ -302,11 +287,12 @@ final class BrowserRootViewController: UIViewController {
             topBarView.showsBackgroundBar = true
         }
         topBarView.isHidden = !isRegular
-        railView.isHidden = isRegular || isNonDuo
+        railView.isHidden = isRegular || isNonDuo || isPortrait
 
         if isRegular {
             bottomLeadingStack.isHidden = true
             bottomTrailingStack.isHidden = true
+            verticalTabBarView.isHidden = true
             updateToolbarVisibility(for: chromeController.state)
             if pillView.superview !== topBarView.pillSlotView {
                 NSLayoutConstraint.deactivate([
@@ -368,17 +354,22 @@ final class BrowserRootViewController: UIViewController {
             let isMinified = chromeController.state.pill == .minified
             pillBottomConstraint.isActive = true
             pillHeightConstraint.isActive = true
-            if isNonDuo {
+            if isNonDuo || isPortrait {
                 pillLeadingConstraint.isActive = false
                 pillTrailingConstraint.isActive = false
                 pillBottomLeadingConstraint?.isActive = !isMinified
                 pillBottomTrailingConstraint?.isActive = !isMinified
                 pillCenterXConstraint.isActive = isMinified
                 pillWidthConstraint.isActive = isMinified
-                applyNonDuoChromeVisibility()
+                if isNonDuo {
+                    applyNonDuoChromeVisibility()
+                } else {
+                    applyPortraitChromeVisibility()
+                }
             } else {
                 bottomLeadingStack.isHidden = true
                 bottomTrailingStack.isHidden = true
+                verticalTabBarView.isHidden = true
                 pillBottomLeadingConstraint?.isActive = false
                 pillBottomTrailingConstraint?.isActive = false
                 pillLeadingConstraint.isActive = !isMinified
@@ -391,7 +382,8 @@ final class BrowserRootViewController: UIViewController {
             }
         }
         overviewController.isRegular = (placement == .regular)
-        overviewController.showsInlineCommands = (interfaceMode == .nonDuoPhone)
+        // Rail stays hidden in Mode 4, so overview commands use the inline bar like Mode 3.
+        overviewController.showsInlineCommands = (interfaceMode == .nonDuoPhone || interfaceMode == .duoInnerOrPadPortrait)
         editorView.applyPlacement(for: placement)
         if !isOverviewVisible {
             updateRailItems()
@@ -425,6 +417,9 @@ final class BrowserRootViewController: UIViewController {
     let bottomTrailingStack = UIStackView()
     let topBarView = TopBarView()
     let tabStripView = TabStripView()
+    let verticalTabBarView = VerticalTabBarView()
+    var verticalTabBarLeadingConstraint: NSLayoutConstraint?
+    var verticalTabBarTrailingConstraint: NSLayoutConstraint?
     let findView = FindInPageView()
     let editorView = AddressEditorView()
     let bookmarksLibraryView: BookmarksLibraryView
@@ -589,7 +584,11 @@ final class BrowserRootViewController: UIViewController {
     var biometricAuthService: BiometricAuthenticating = BiometricAuthService.shared
     var isPrivateSessionLocked = false
     var recentlyClosedTabs: [TabRecord] = []
-    private var contentBlockerObserver: NSObjectProtocol?
+    // Observer tokens are touched on the main actor but released from
+    // nonisolated deinit, so isolation is unchecked by declaration.
+    // Tokens never escape; extensions use the has/store bridges below.
+    private nonisolated(unsafe) var contentBlockerObserver: NSObjectProtocol?
+    private nonisolated(unsafe) var portraitTabBarPositionObserver: NSObjectProtocol?
 
     var isBiometricAuthEnabled: Bool {
         selectionDefaults.object(forKey: SettingsViewModel.requireBiometricsDefaultsKey) as? Bool ?? true
@@ -665,6 +664,15 @@ final class BrowserRootViewController: UIViewController {
     @available(*, unavailable)
     required init?(coder _: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        if let observer = portraitTabBarPositionObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = contentBlockerObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 
     override func viewDidLoad() {
@@ -767,156 +775,6 @@ final class BrowserRootViewController: UIViewController {
 }
 
 extension BrowserRootViewController {
-    // MARK: - App lifecycle
-
-    /// Single gate for private entry; failure restores standard chrome.
-    func requestPrivateMode(authenticatedApply: @escaping @MainActor () -> Void) {
-        guard shouldRequireBiometricsForPrivateMode else {
-            authenticatedApply()
-            return
-        }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            if await self.biometricAuthService.authenticate(reason: "Unlock Private Browsing") {
-                authenticatedApply()
-            } else {
-                self.overviewController.applySelectionBatched(mode: .standard, groupID: nil, notify: false)
-                self.switchToStandardMode()
-            }
-        }
-    }
-
-    /// Scene changes forwarded from the app entry. Persistence is owned by the
-    /// restore coordinator; background fails foreground transfers, active only
-    /// refreshes pool recency. Chrome state is intentionally untouched.
-    func handleScenePhase(_ phase: ScenePhase) {
-        restoreCoordinator?.handleScenePhase(phase)
-        if phase == .background {
-            // Suspend fail-closed: private work fails, daemon tasks survive.
-            downloadsManager.suspendForegroundDownloads()
-            // Any private tab locks, even when standard is frontmost.
-            if isBiometricAuthEnabled, tabs.contains(where: \.isPrivate) {
-                isPrivateSessionLocked = true
-            }
-        }
-        if phase == .active {
-            let selectedIsPrivate = tabs.first(where: { $0.id == selectedTabID })?.isPrivate ?? false
-            let isPrivateVisible = overviewMode.isPrivate || selectedIsPrivate
-            if isPrivateSessionLocked, isPrivateVisible, shouldRequireBiometricsForPrivateMode {
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    let authenticated = await self.biometricAuthService.authenticate(reason: "Unlock Private Browsing")
-                    if authenticated {
-                        self.isPrivateSessionLocked = false
-                        self.markActivePageActivated()
-                    } else {
-                        // Fail-closed to standard; clear lock so standard never re-prompts.
-                        self.isPrivateSessionLocked = false
-                        self.switchToStandardMode()
-                    }
-                }
-                return
-            }
-            // Standard browsing never re-prompts: stale lock clears outside private.
-            if !isPrivateVisible || !shouldRequireBiometricsForPrivateMode {
-                isPrivateSessionLocked = false
-            }
-            markActivePageActivated()
-        }
-    }
-
-    func logPersistenceError(_ error: Error, operation: String) {
-        Logger(subsystem: "com.volcrypt.OuterView", category: "BrowserRoot")
-            .error("\(operation, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
-    }
-
-    /// Single live owner for the tracker toggle: shared configs cover future
-    /// tabs while live web views update in place with no restart.
-    func applyContentBlockerEnabled(_ enabled: Bool) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let controllers = [self.tabPool.configuration(isPrivate: false).userContentController,
-                               self.tabPool.configuration(isPrivate: true).userContentController]
-                + self.tabPool.pages.compactMap { $0.page?.webView.configuration.userContentController }
-            await ContentBlockerService.shared.setEnabled(enabled, controllers: controllers)
-        }
-    }
-
-    func observeContentBlockerChanges() {
-        guard contentBlockerObserver == nil else { return }
-        contentBlockerObserver = NotificationCenter.default.addObserver(forName: .outerViewContentBlockerChanged, object: nil, queue: .main) { [weak self] note in
-            let posted = note.userInfo?["enabled"] as? Bool
-            Task { @MainActor [weak self, posted] in
-                guard let self else { return }
-                let enabled = posted ?? (self.selectionDefaults.object(forKey: SettingsViewModel.blockTrackersDefaultsKey) as? Bool ?? true)
-                self.applyContentBlockerEnabled(enabled)
-            }
-        }
-    }
-
-    // MARK: - Fold handling
-
-    func scheduleStructuralUpdate() {
-        structuralTask?.cancel()
-        structuralTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: UInt64(Self.structuralDebounceInterval * 1_000_000_000))
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            self?.applyStructuralLayout()
-        }
-    }
-
-    func applyStructuralLayout() {
-        let placement = chromePlacement
-        if lastVerticalBarPlacement != placement {
-            lastVerticalBarPlacement = placement
-            verticalBarConfigurationUpdateCount += 1
-            setNeedsUpdateOfVerticalBarConfiguration()
-        }
-        applyChromePlacement(for: placement)
-        editorView.chromePlacement = placement
-        overviewController.isRegular = (placement == .regular)
-        overviewController.showsInlineCommands = (interfaceMode == .nonDuoPhone)
-        bookmarksLibraryView.isNonDuoPhone = (interfaceMode == .nonDuoPhone)
-        for overlay in [libraryOverlay, settingsOverlay, downloadsOverlay, bookmarkEditorOverlay]
-            where overlay.isHidden
-        {
-            overlay.applyPlacement(for: placement)
-        }
-        if !isLibraryVisible {
-            bookmarksLibraryView.applyPlacement(for: placement)
-        } else if placement == .compact, let sheet = librarySheetController {
-            sheet.onDidDismiss = nil
-            sheet.dismiss(animated: false)
-            sheet.detachLibraryView()
-            librarySheetController = nil
-            if bookmarksLibraryView.superview !== view {
-                view.addSubview(bookmarksLibraryView)
-                NSLayoutConstraint.activate(libraryCompactConstraints)
-            }
-            bookmarksLibraryView.applyPlacement(for: .compact)
-            bookmarksLibraryView.isHidden = false
-        }
-        if isEditingAddress, let id = selectedTabID, peekActivePage()?.snapshot.url != nil {
-            if placement == .regular {
-                forcedStartPageTabs.remove(id)
-            } else {
-                forcedStartPageTabs.insert(id)
-            }
-        }
-        updateTabStrip()
-        updateTopBarPinning(for: placement)
-        updateHeaderBackgrounds()
-        updateStartPageTop()
-        refreshForActiveSnapshot()
-        applyChromeViews(animated: false)
-        applyContentInsets()
-        view.setNeedsLayout()
-    }
-
     // MARK: - Bridges for same-type extensions
 
     /// Single gateway for the browsing-resumed FSM input so extensions never
@@ -924,6 +782,41 @@ extension BrowserRootViewController {
     func applyBrowsingResumed(animated: Bool) {
         let commands = chromeController.handle(.browsingResumed)
         applyCommands(commands, animated: animated)
+    }
+
+    /// Narrow lifecycle bridges so extensions never touch task and observer state.
+    func hasContentBlockerObserver() -> Bool {
+        contentBlockerObserver != nil
+    }
+
+    func storeContentBlockerObserver(_ observer: NSObjectProtocol) {
+        contentBlockerObserver = observer
+    }
+
+    /// Portrait position observer bridges matching the content-blocker pattern.
+    func hasPortraitObserver() -> Bool {
+        portraitTabBarPositionObserver != nil
+    }
+
+    func storePortraitObserver(_ observer: NSObjectProtocol) {
+        portraitTabBarPositionObserver = observer
+    }
+
+    func cancelStructuralTask() {
+        structuralTask?.cancel()
+    }
+
+    func storeStructuralTask(_ task: Task<Void, Never>?) {
+        structuralTask = task
+    }
+
+    /// Returns true when the placement changed and the caller must poke configuration.
+    func syncVerticalBarPlacement(to placement: ChromePlacement) -> Bool {
+        if lastVerticalBarPlacement != placement {
+            lastVerticalBarPlacement = placement
+            return true
+        }
+        return false
     }
 
     func setOverviewMode(_ mode: TabOverviewMode) {
@@ -970,6 +863,7 @@ extension BrowserRootViewController {
             database: database,
             siteZoomStore: siteZoomStore,
             inlineCommands: chromePlacement == .regular || interfaceMode == .nonDuoPhone
+                || interfaceMode == .duoInnerOrPadPortrait
         )
         settingsView.onDidClearHistory = { [weak self] in self?.refreshStartPageAfterHistoryClear() }
         settingsView.onDidClearTabs = { [weak self] in self?.resetAllTabsToSingleEmptyTab() }

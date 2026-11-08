@@ -17,9 +17,22 @@ final class TopBarTests: XCTestCase {
     }
 
     func testPlacementResolution() {
-        XCTAssertEqual(BrowserRootViewController.placement(for: .compact), .compact)
-        XCTAssertEqual(BrowserRootViewController.placement(for: .regular), .regular)
-        XCTAssertEqual(BrowserRootViewController.placement(for: .unspecified), .compact)
+        XCTAssertEqual(BrowserRootViewController.placement(for: .compact, bounds: .zero), .compact)
+        XCTAssertEqual(
+            BrowserRootViewController.placement(
+                for: .regular,
+                bounds: CGRect(x: 0, y: 0, width: 951, height: 669)
+            ),
+            .regular
+        )
+        XCTAssertEqual(
+            BrowserRootViewController.placement(
+                for: .regular,
+                bounds: CGRect(x: 0, y: 0, width: 669, height: 951)
+            ),
+            .compact
+        )
+        XCTAssertEqual(BrowserRootViewController.placement(for: .unspecified, bounds: .zero), .compact)
         XCTAssertEqual(ChromePlacement.compact, ChromePlacement.compact)
         XCTAssertNotEqual(ChromePlacement.compact, ChromePlacement.regular)
     }

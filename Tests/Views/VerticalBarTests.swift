@@ -1,7 +1,4 @@
-//
-//  VerticalBarTests.swift
-//  OuterViewTests
-//
+// RootView — Vertical-bar behavior plus status-bar scope tests.
 
 @testable import OuterView
 import SwiftUI
@@ -42,9 +39,22 @@ final class VerticalBarTests: XCTestCase {
     }
 
     func testPlacementMapping() {
-        XCTAssertEqual(BrowserRootViewController.placement(for: .compact), .compact)
-        XCTAssertEqual(BrowserRootViewController.placement(for: .regular), .regular)
-        XCTAssertEqual(BrowserRootViewController.placement(for: .unspecified), .compact)
+        XCTAssertEqual(BrowserRootViewController.placement(for: .compact, bounds: .zero), .compact)
+        XCTAssertEqual(
+            BrowserRootViewController.placement(
+                for: .regular,
+                bounds: CGRect(x: 0, y: 0, width: 951, height: 669)
+            ),
+            .regular
+        )
+        XCTAssertEqual(
+            BrowserRootViewController.placement(
+                for: .regular,
+                bounds: CGRect(x: 0, y: 0, width: 669, height: 951)
+            ),
+            .compact
+        )
+        XCTAssertEqual(BrowserRootViewController.placement(for: .unspecified, bounds: .zero), .compact)
         XCTAssertEqual(BrowserRootViewController.verticalBarBehavior(for: .compact), .automatic)
         XCTAssertEqual(BrowserRootViewController.verticalBarBehavior(for: .regular), .disabled)
     }
@@ -90,7 +100,15 @@ final class VerticalBarTests: XCTestCase {
         )
         XCTAssertTrue(
             BrowserRootViewController.shouldHideStatusBar(
-                for: .duoInnerOrPad,
+                for: .duoInnerOrPadLandscape,
+                state: collapsed,
+                isOverviewVisible: false,
+                isSheetOverlayVisible: false
+            )
+        )
+        XCTAssertTrue(
+            BrowserRootViewController.shouldHideStatusBar(
+                for: .duoInnerOrPadPortrait,
                 state: collapsed,
                 isOverviewVisible: false,
                 isSheetOverlayVisible: false
@@ -114,7 +132,7 @@ final class VerticalBarTests: XCTestCase {
         )
         XCTAssertFalse(
             BrowserRootViewController.shouldHideStatusBar(
-                for: .duoInnerOrPad,
+                for: .duoInnerOrPadLandscape,
                 state: editing,
                 isOverviewVisible: false,
                 isSheetOverlayVisible: false
@@ -130,7 +148,7 @@ final class VerticalBarTests: XCTestCase {
         )
         XCTAssertFalse(
             BrowserRootViewController.shouldHideStatusBar(
-                for: .duoInnerOrPad,
+                for: .duoInnerOrPadLandscape,
                 state: collapsed,
                 isOverviewVisible: false,
                 isSheetOverlayVisible: true

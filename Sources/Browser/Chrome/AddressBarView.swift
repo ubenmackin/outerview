@@ -1,7 +1,4 @@
-//
-//  AddressBarView.swift
-//  OuterView
-//
+// Chrome — Floating address pill with transient gestures.
 
 import UIKit
 
@@ -165,7 +162,7 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
     var onHorizontalPan: ((PillPanEvent) -> Void)?
     var onVerticalPan: ((PillPanEvent) -> Void)?
 
-    /// Mode 2 (`duoInnerOrPad`) disables every pill swipe; taps still route.
+    /// Mode 2 (`duoInnerOrPadLandscape`) disables every pill swipe; taps still route.
     var isSwipeEnabled = true {
         didSet {
             pillPanRecognizer?.isEnabled = isSwipeEnabled

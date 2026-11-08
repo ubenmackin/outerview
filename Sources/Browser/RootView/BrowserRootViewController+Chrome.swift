@@ -1,4 +1,4 @@
-// RootView — Chrome state application plus Mode 3 bottom-pill composition.
+// RootView — Chrome state plus Modes 3 and 4 bottom-pill composition.
 
 import UIKit
 
@@ -248,7 +248,7 @@ extension BrowserRootViewController {
     }
 
     func reconcileTopInsetAfterSettle() {
-        guard interfaceMode == .duoInnerOrPad,
+        guard interfaceMode == .duoInnerOrPadLandscape,
               chromeController.state.pill != .minified,
               !isOverviewVisible,
               let webView = peekActivePage()?.webView else { return }
@@ -270,7 +270,7 @@ extension BrowserRootViewController {
 
     func updateTopBarPinning(for _: ChromePlacement) {
         guard isViewLoaded else { return }
-        if interfaceMode == .duoInnerOrPad {
+        if interfaceMode == .duoInnerOrPadLandscape {
             if topBarTopToSafeAreaConstraint?.isActive == true {
                 topBarTopToSafeAreaConstraint?.isActive = false
             }
@@ -370,75 +370,44 @@ extension BrowserRootViewController {
         pillView.setAddressState(state)
 
         if chromePlacement == .regular {
-            if pillView.superview !== topBarView.pillSlotView {
-                applyChromePlacement(for: .regular)
-            }
-            let updateToolbarPill = { [weak self] in
-                guard let self else { return }
-                self.pillHeightConstraint.constant = AddressBarView.heightForState(state.pill)
-                self.updateRegularPillGeometry()
-                self.pillView.isHidden = self.isOverviewVisible || state.pill == .editing
-                self.editorView.isHidden = state.pill != .editing
-                self.view.layoutIfNeeded()
-            }
-            if animated {
-                pillAnimator?.stopAnimation(false)
-                pillAnimator?.finishAnimation(at: .current)
-                let animator = UIViewPropertyAnimator(
-                    duration: Self.pillMorphDuration, curve: .easeInOut, animations: updateToolbarPill
-                )
-                pillAnimator = animator
-                animator.addCompletion { [weak self, weak animator] _ in
-                    if let animator, self?.pillAnimator === animator {
-                        self?.pillAnimator = nil
-                    }
-                }
-                animator.startAnimation()
-            } else {
-                updateToolbarPill()
-            }
+            applyRegularPillViews(state: state, animated: animated)
             return
         }
-        let updatePillGeometry = { [weak self] in
+        applyCompactPillViews(state: state, animated: animated)
+    }
+
+    private func applyRegularPillViews(state: ChromeState, animated: Bool) {
+        if pillView.superview !== topBarView.pillSlotView {
+            applyChromePlacement(for: .regular)
+        }
+        let updateToolbarPill = { [weak self] in
             guard let self else { return }
             self.pillHeightConstraint.constant = AddressBarView.heightForState(state.pill)
-            self.updatePillBottomOffset()
-            let isMinified = state.pill == .minified
-            if self.interfaceMode == .nonDuoPhone {
-                self.pillLeadingConstraint.isActive = false
-                self.pillTrailingConstraint.isActive = false
-                self.pillBottomLeadingConstraint?.isActive = !isMinified
-                self.pillBottomTrailingConstraint?.isActive = !isMinified
-            } else {
-                self.pillBottomLeadingConstraint?.isActive = false
-                self.pillBottomTrailingConstraint?.isActive = false
-                self.pillLeadingConstraint.isActive = !isMinified
-                self.pillTrailingConstraint.isActive = !isMinified
-            }
-            self.pillCenterXConstraint.isActive = isMinified
-            self.pillWidthConstraint.isActive = isMinified
-            if isMinified {
-                self.pillWidthConstraint.constant = AddressBarView.widthForBounds(self.pillReferenceWidth)
-            }
-            self.editorView.isNonDuoPhone = (self.interfaceMode == .nonDuoPhone)
-            self.editorView.isEditing = self.isEditingAddress
-            if self.interfaceMode == .nonDuoPhone {
-                self.applyNonDuoChromeVisibility()
-                if self.isEditingAddress, self.chromePlacement == .compact {
-                    self.bottomLeadingStack.isHidden = true
-                    self.bottomTrailingStack.isHidden = true
-                }
-            } else {
-                self.pillView.isHidden = self.isOverviewVisible || state.pill == .editing
-            }
+            self.updateRegularPillGeometry()
+            self.pillView.isHidden = self.isOverviewVisible || state.pill == .editing
             self.editorView.isHidden = state.pill != .editing
             self.view.layoutIfNeeded()
         }
+        runPillMorph(animated: animated, update: updateToolbarPill)
+    }
+
+    private func applyCompactPillViews(state: ChromeState, animated: Bool) {
+        let updatePillGeometry = { [weak self] in
+            guard let self else { return }
+            self.updateCompactPillGeometry(state: state)
+            if self.view.window != nil {
+                self.view.layoutIfNeeded()
+            }
+        }
+        runPillMorph(animated: animated, update: updatePillGeometry)
+    }
+
+    private func runPillMorph(animated: Bool, update: @escaping () -> Void) {
         if animated {
             pillAnimator?.stopAnimation(false)
             pillAnimator?.finishAnimation(at: .current)
             let animator = UIViewPropertyAnimator(
-                duration: Self.pillMorphDuration, curve: .easeInOut, animations: updatePillGeometry
+                duration: Self.pillMorphDuration, curve: .easeInOut, animations: update
             )
             pillAnimator = animator
             animator.addCompletion { [weak self, weak animator] _ in
@@ -448,7 +417,56 @@ extension BrowserRootViewController {
             }
             animator.startAnimation()
         } else {
-            updatePillGeometry()
+            update()
+        }
+    }
+
+    private func updateCompactPillGeometry(state: ChromeState) {
+        pillHeightConstraint.constant = AddressBarView.heightForState(state.pill)
+        updatePillBottomOffset()
+        let isMinified = state.pill == .minified
+        let isNonDuo = interfaceMode == .nonDuoPhone
+        let isPortrait = interfaceMode == .duoInnerOrPadPortrait
+        if isNonDuo || isPortrait {
+            pillLeadingConstraint.isActive = false
+            pillTrailingConstraint.isActive = false
+            pillBottomLeadingConstraint?.isActive = !isMinified
+            pillBottomTrailingConstraint?.isActive = !isMinified
+        } else {
+            pillBottomLeadingConstraint?.isActive = false
+            pillBottomTrailingConstraint?.isActive = false
+            pillLeadingConstraint.isActive = !isMinified
+            pillTrailingConstraint.isActive = !isMinified
+        }
+        pillCenterXConstraint.isActive = isMinified
+        pillWidthConstraint.isActive = isMinified
+        if isMinified {
+            pillWidthConstraint.constant = AddressBarView.widthForBounds(pillReferenceWidth)
+        }
+        editorView.isNonDuoPhone = (interfaceMode == .nonDuoPhone || interfaceMode == .duoInnerOrPadPortrait)
+        editorView.isEditing = isEditingAddress
+        updateCompactBottomStacks(state: state)
+        editorView.isHidden = state.pill != .editing
+    }
+
+    private func updateCompactBottomStacks(state: ChromeState) {
+        if interfaceMode == .nonDuoPhone {
+            applyNonDuoChromeVisibility()
+            if isEditingAddress, chromePlacement == .compact {
+                bottomLeadingStack.isHidden = true
+                bottomTrailingStack.isHidden = true
+            }
+        } else if interfaceMode == .duoInnerOrPadPortrait {
+            applyPortraitChromeVisibility()
+            if isEditingAddress {
+                bottomLeadingStack.isHidden = true
+                bottomTrailingStack.isHidden = true
+                verticalTabBarView.alpha = 0
+                verticalTabBarView.isUserInteractionEnabled = false
+                verticalTabBarView.isHidden = true
+            }
+        } else {
+            pillView.isHidden = isOverviewVisible || state.pill == .editing
         }
     }
 
@@ -482,6 +500,28 @@ extension BrowserRootViewController {
                 UIView.animate(withDuration: Self.pillMorphDuration, animations: updateStacks)
             } else {
                 updateStacks()
+            }
+            return
+        }
+
+        if mode == .duoInnerOrPadPortrait {
+            if !railView.isHidden {
+                railView.isHidden = true
+            }
+            if !topBarView.isHidden {
+                topBarView.isHidden = true
+            }
+            updateTopBarPinning(for: .compact)
+            updateHeaderBackgrounds()
+            updateStartPageTop()
+            refreshStatusBarAppearanceIfNeeded()
+            let updatePortrait: () -> Void = { [weak self] in
+                self?.applyPortraitChromeVisibility()
+            }
+            if animated {
+                UIView.animate(withDuration: Self.pillMorphDuration, animations: updatePortrait)
+            } else {
+                updatePortrait()
             }
             return
         }
@@ -599,43 +639,69 @@ extension BrowserRootViewController {
         )
     }
 
+    /// Portrait overlay covers overview plus editing plus find; editor
+    /// plus library use dedicated branches so trailing Dismiss survives.
+    var isPortraitChromeOverlay: Bool {
+        isOverviewVisible || isEditingAddress || isFindActive
+    }
+
     func setChromeItems(prefix: [RailAction], suffix: [RailAction]) {
         railView.setItems(prefix: prefix, suffix: suffix)
-        if interfaceMode == .nonDuoPhone {
-            let isMode3Editing = isEditingAddress && chromePlacement == .compact
-            if isMode3Editing {
+        if interfaceMode == .nonDuoPhone || interfaceMode == .duoInnerOrPadPortrait {
+            // Portrait keeps topBarView hidden, so only Mode 3 touches it here.
+            let isPortrait = interfaceMode == .duoInnerOrPadPortrait
+            let isEditing = isEditingAddress && chromePlacement == .compact
+            if isEditing {
                 SystemToolbarMapper.populateBottomStack(bottomLeadingStack, with: [])
                 SystemToolbarMapper.populateBottomStack(bottomTrailingStack, with: [])
-                topBarView.setItems(prefix: [], suffix: [])
+                if !isPortrait {
+                    topBarView.setItems(prefix: [], suffix: [])
+                }
                 editorView.isNonDuoPhone = true
                 editorView.isEditing = true
-                applyNonDuoChromeVisibility()
+                if interfaceMode == .nonDuoPhone {
+                    applyNonDuoChromeVisibility()
+                } else {
+                    applyPortraitChromeVisibility()
+                }
                 bottomLeadingStack.isHidden = true
                 bottomTrailingStack.isHidden = true
-                view.layoutIfNeeded()
+                if view.window != nil {
+                    view.layoutIfNeeded()
+                }
                 return
             }
-            editorView.isNonDuoPhone = true
+            editorView.isNonDuoPhone = (interfaceMode == .nonDuoPhone || isPortrait)
             editorView.isEditing = isEditingAddress
-            let isOverlay = isNonDuoChromeOverlay
+            let isOverlay = isPortrait ? isPortraitChromeOverlay : isNonDuoChromeOverlay
             if isOverlay {
                 SystemToolbarMapper.populateBottomStack(bottomLeadingStack, with: [])
                 SystemToolbarMapper.populateBottomStack(bottomTrailingStack, with: [])
-                if shouldShowNonDuoTopBar {
-                    topBarView.setItems(prefix: prefix, suffix: suffix)
-                } else {
-                    topBarView.setItems(prefix: [], suffix: [])
+                if !isPortrait {
+                    if shouldShowNonDuoTopBar {
+                        topBarView.setItems(prefix: prefix, suffix: suffix)
+                    } else {
+                        topBarView.setItems(prefix: [], suffix: [])
+                    }
                 }
             } else if isLibraryVisible {
-                topBarView.setItems(prefix: [], suffix: [])
+                if !isPortrait {
+                    topBarView.setItems(prefix: [], suffix: [])
+                }
                 SystemToolbarMapper.populateBottomStack(bottomLeadingStack, with: [])
                 SystemToolbarMapper.populateBottomStack(bottomTrailingStack, with: suffix)
             } else {
-                topBarView.setItems(prefix: [], suffix: [])
+                if !isPortrait {
+                    topBarView.setItems(prefix: [], suffix: [])
+                }
                 SystemToolbarMapper.populateBottomStack(bottomLeadingStack, with: prefix)
                 SystemToolbarMapper.populateBottomStack(bottomTrailingStack, with: suffix)
             }
-            applyNonDuoChromeVisibility()
+            if interfaceMode == .nonDuoPhone {
+                applyNonDuoChromeVisibility()
+            } else {
+                applyPortraitChromeVisibility()
+            }
             return
         }
         editorView.isNonDuoPhone = false
@@ -730,7 +796,8 @@ extension BrowserRootViewController {
             canDeleteSelection: bookmarksLibraryView.canDeleteActiveTabSelection
         )
         var prefix: [RailAction] = []
-        let suffix: [RailAction] = if interfaceMode == .nonDuoPhone {
+        // Portrait uses bottom stacks like Mode 3, so it shares the Dismiss affordance.
+        let suffix: [RailAction] = if interfaceMode == .nonDuoPhone || interfaceMode == .duoInnerOrPadPortrait {
             [
                 RailAction(
                     systemImageName: "xmark",
@@ -789,6 +856,119 @@ extension BrowserRootViewController {
         }
         setChromeItems(prefix: prefix, suffix: suffix)
         bookmarksLibraryView.updateInlineCommands()
+    }
+
+    // MARK: - Modes 3 and 4 bottom chrome
+
+    /// Mode 3 editor overlay keeps the transparent bar for Cancel/Save.
+    /// Diverges from portrait overlay: overview plus non-modal editor only;
+    /// library stays out so its trailing Dismiss survives.
+    var shouldShowNonDuoTopBar: Bool {
+        (isBookmarkEditorVisible && !isBookmarkEditorPresentedModally)
+            && !isOverviewVisible
+    }
+
+    /// Sheet or overview covering Mode 3 browsing chrome.
+    /// Covers overview plus non-modal editor; editing and find route
+    /// through editing, library stays out so Dismiss survives.
+    var isNonDuoChromeOverlay: Bool {
+        isOverviewVisible || (isBookmarkEditorVisible && !isBookmarkEditorPresentedModally)
+    }
+
+    /// Shared bottom-stack fade so Mode 3 and Mode 4 stay in sync.
+    private func setBottomStacksFaded(_ hidden: Bool) {
+        bottomLeadingStack.alpha = hidden ? 0 : 1
+        bottomTrailingStack.alpha = hidden ? 0 : 1
+        bottomLeadingStack.isUserInteractionEnabled = !hidden
+        bottomTrailingStack.isUserInteractionEnabled = !hidden
+    }
+
+    /// Shared bottom-stack hide so Mode 3 and Mode 4 stay in sync.
+    private func setBottomStacksHidden(hideLeading: Bool, hideTrailing: Bool) {
+        bottomLeadingStack.isHidden = hideLeading
+        bottomTrailingStack.isHidden = hideTrailing
+    }
+
+    /// Shared pill anchor for bottom chrome; minified keeps centered constraints.
+    private func layoutBottomPillAnchors(hideLeading: Bool) {
+        guard chromeController.state.pill != .minified else { return }
+        if hideLeading {
+            pillBottomLeadingConstraint?.isActive = false
+            pillLeadingConstraint.isActive = true
+        } else {
+            pillLeadingConstraint.isActive = false
+            pillBottomLeadingConstraint?.isActive = true
+        }
+    }
+
+    /// Shared bottom-chrome applier for Mode 3 and Mode 4: fade plus hide
+    /// plus page-menu plus pill-hidden plus pill anchors. Top, rail, strip,
+    /// and vertical-bar visibility stay in the per-mode callers.
+    private func applyBottomChromeVisibility(
+        isPortrait: Bool,
+        isOverlay: Bool,
+        hideBottomButtons: Bool,
+        hideLeading: Bool,
+        hideTrailing: Bool
+    ) {
+        setBottomStacksFaded(hideBottomButtons)
+        setBottomStacksHidden(hideLeading: hideLeading, hideTrailing: hideTrailing)
+        pillView.showsPageMenu = !isLibraryVisible
+        let hidePillForOverlay = isPortrait ? isOverviewVisible : isOverlay
+        if hidePillForOverlay {
+            pillView.isHidden = true
+        } else if isFindActive, chromeController.state.pill != .editing {
+            pillView.isHidden = true
+        } else {
+            pillView.isHidden = chromeController.state.pill == .editing
+        }
+        layoutBottomPillAnchors(hideLeading: hideLeading)
+    }
+
+    /// Single visibility owner for Mode 3 bottom pill versus transparent bar versus hidden.
+    func applyNonDuoChromeVisibility() {
+        guard interfaceMode == .nonDuoPhone, chromePlacement != .regular else { return }
+        let showsTopBar = shouldShowNonDuoTopBar
+        let isOverlay = isNonDuoChromeOverlay
+        let hideBottomButtons = isOverlay || chromeController.state.pill == .minified || chromeController.state.rail == .hidden
+        topBarView.isHidden = !showsTopBar
+        topBarView.showsBackgroundBar = !showsTopBar
+        verticalTabBarView.isHidden = true
+        let hideLeading = hideBottomButtons || isLibraryVisible || bottomLeadingStack.arrangedSubviews.isEmpty
+        let hideTrailing = hideBottomButtons || bottomTrailingStack.arrangedSubviews.isEmpty
+        applyBottomChromeVisibility(
+            isPortrait: false,
+            isOverlay: isOverlay,
+            hideBottomButtons: hideBottomButtons,
+            hideLeading: hideLeading,
+            hideTrailing: hideTrailing
+        )
+    }
+
+    /// Single visibility owner for Mode 4 (Duo inner / iPad portrait) bottom chrome plus vertical tab bar.
+    func applyPortraitChromeVisibility() {
+        guard interfaceMode == .duoInnerOrPadPortrait else { return }
+        let isOverlay = isPortraitChromeOverlay
+        let hideBottomButtons = isOverlay || chromeController.state.pill == .minified || chromeController.state.rail == .hidden
+        topBarView.isHidden = true
+        railView.isHidden = true
+        tabStripView.isHidden = true
+        // Library hides the leading stack so the pill can expand to the edge.
+        let hideLeading = hideBottomButtons || isLibraryVisible || bottomLeadingStack.arrangedSubviews.isEmpty
+        let hideTrailing = hideBottomButtons || bottomTrailingStack.arrangedSubviews.isEmpty
+        applyBottomChromeVisibility(
+            isPortrait: true,
+            isOverlay: isOverlay,
+            hideBottomButtons: hideBottomButtons,
+            hideLeading: hideLeading,
+            hideTrailing: hideTrailing
+        )
+        let freshTabs = TabOverviewViewController.tabs(overviewItems(), in: overviewMode)
+        verticalTabBarView.render(tabs: freshTabs, selectedID: selectedTabID)
+        let hideSideTab = shouldHidePortraitChrome(itemCount: freshTabs.count)
+        verticalTabBarView.alpha = hideSideTab ? 0 : 1
+        verticalTabBarView.isUserInteractionEnabled = !hideSideTab
+        verticalTabBarView.isHidden = hideSideTab
     }
 
     // MARK: - Scroll bridges
