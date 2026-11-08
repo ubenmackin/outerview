@@ -154,6 +154,10 @@ header nav a:hover {
   grid-column: 1 / -1;
 }
 
+#screenshots > p {
+  grid-column: 1 / -1;
+}
+
 #screenshots figure {
   background: var(--card);
   border: 1px solid var(--line);
@@ -161,14 +165,30 @@ header nav a:hover {
   overflow: hidden;
 }
 
+#screenshots .shot-wide {
+  grid-column: 1 / -1;
+}
+
 #screenshots figure img {
   width: 100%;
+  height: auto;
+  display: block;
   background: var(--navy-deep);
 }
 
 #screenshots figcaption {
   padding: 0.65rem 1rem 0.85rem;
   font-size: 0.875rem;
+  color: var(--muted);
+}
+
+#screenshots figcaption h3 {
+  font-size: 1.02rem;
+  color: var(--navy);
+}
+
+#screenshots figcaption p {
+  font-size: 0.95rem;
   color: var(--muted);
 }
 
@@ -229,6 +249,10 @@ footer a {
   #screenshots {
     grid-template-columns: 1fr;
   }
+
+  #screenshots .shot-wide {
+    grid-column: auto;
+  }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -257,6 +281,10 @@ footer a {
 
   #support p a:hover {
     background: #ffffff;
+  }
+
+  #screenshots figcaption h3 {
+    color: var(--ink);
   }
 
   :focus-visible {
