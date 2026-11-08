@@ -410,6 +410,17 @@ final class BookmarkStore {
         try context.save()
     }
 
+    func reorderItems(_ ids: [UUID]) throws {
+        for (index, id) in ids.enumerated() {
+            if let found = try bookmark(id: id) {
+                found.sortOrder = index
+            } else if let folder = fetchFolder(id: id) {
+                folder.sortOrder = index
+            }
+        }
+        try context.save()
+    }
+
     func fetchFavorites(rootOnly: Bool = false) -> [Bookmark] {
         var descriptor = FetchDescriptor<Bookmark>(
             predicate: #Predicate { $0.isFavorite },

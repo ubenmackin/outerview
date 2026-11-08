@@ -838,6 +838,28 @@ extension BrowserRootViewController {
             self?.updateStartPageContent()
             self?.bookmarksLibraryView.reload()
         }
+        startView.tabGroupsProvider = { [weak self] in
+            guard let self else { return [] }
+            let groups = self.tabStore?.fetchGroups() ?? []
+            return groups.filter { group in
+                self.tabs.contains { $0.groupId == group.id && !$0.isPrivate }
+            }
+        }
+        startView.onOpenInNewTab = { [weak self] url in
+            self?.openNewTab(with: url)
+        }
+        startView.onOpenURLsInBackground = { [weak self] urls in
+            self?.openURLsInBackground(urls)
+        }
+        startView.onOpenURLsInTabGroup = { [weak self] urls, group in
+            self?.openURLsInGroup(urls, groupId: group.id)
+        }
+        startView.onOpenURLsInNewTabGroup = { [weak self] urls, name in
+            self?.openURLsInNewGroup(urls, name: name)
+        }
+        startView.onRequestEdit = { [weak self] target in
+            self?.presentBookmarkEditor(for: target)
+        }
         startView.translatesAutoresizingMaskIntoConstraints = false
         startPageContainer.addSubview(startView)
         NSLayoutConstraint.activate([
