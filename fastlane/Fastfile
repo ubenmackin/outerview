@@ -87,17 +87,30 @@ def prepare_simulator(device_name)
   udid
 end
 
-# Resolves the Outer Display devicetype; falls back to iPhone Duo type.
-# nil lets the caller abort fail-closed with the full diagnostic listing.
-def duo_outer_devicetype_id(devicetypes_json)
+# Resolves a devicetype identifier by exact name, walking the fallback chain in order.
+# nil on a miss or parse failure keeps each caller's fail-closed abort intact.
+def devicetype_id(name:, fallbacks: [])
   require "json"
+  devicetypes_json = sh("xcrun simctl list devicetypes -j", log: false)
   types = JSON.parse(devicetypes_json)["devicetypes"] || []
-  outer = types.find { |t| t["name"] == "iPhone Duo - Outer Display" } ||
-          types.find { |t| t["name"] == "iPhone Duo" }
-  return outer["identifier"] if outer && outer["identifier"]
+  match = [name, *fallbacks].reduce(nil) do |found, wanted|
+    found || types.find { |t| t["name"] == wanted }
+  end
+  return match["identifier"] if match && match["identifier"]
   nil
 rescue JSON::ParserError
   nil
+end
+
+# Resolves the Outer Display devicetype; falls back to iPhone Duo type.
+# nil lets the caller abort fail-closed with the full diagnostic listing.
+def duo_outer_devicetype_id
+  devicetype_id(name: "iPhone Duo - Outer Display", fallbacks: ["iPhone Duo"])
+end
+
+# Resolves the iPad Air 13 devicetype.
+def ipad_devicetype_id
+  devicetype_id(name: "iPad Air 13-inch (M3)", fallbacks: ["iPad Air 13-inch (M4)", "iPad Air 13-inch (M2)"])
 end
 
 # Picks the newest available iOS runtime, matching the device type when provided.
@@ -128,26 +141,48 @@ rescue JSON::ParserError
   nil
 end
 
+# Single create-or-verify path shared by the Duo outer display and iPad device families.
+# Fail-closed: a missing device with no matching type/runtime aborts with the full
+# devices plus types plus runtimes listing; never substitutes another device.
+# hinge: true marks the Duo hinge family (its type falls back to the folded type);
+# hinge: false marks the standalone iPad family.
+def ensure_simulator(name:, devicetype_id:, hinge:)
+  require "json"
+  listing = sh("xcrun simctl list devices -j", log: false)
+  return listing if simulator_available?(name, listing)
+  runtimes_json = sh("xcrun simctl list runtimes -j", log: false)
+  # devicetype_id resolves lazily so an existing device never triggers a lookup.
+  type_id = devicetype_id.call
+  runtime_id = newest_ios_runtime_id(runtimes_json, type_id)
+  if type_id.nil? || runtime_id.nil?
+    names = JSON.parse(listing)["devices"].values.flatten.map { |d| d["name"] }.compact.uniq.sort
+    types = JSON.parse(sh("xcrun simctl list devicetypes -j", log: false))["devicetypes"].map { |t| t["name"] }.compact.sort
+    runtimes = JSON.parse(runtimes_json)["runtimes"].map { |r| r["name"] }.compact.sort
+    UI.user_error!("Missing simulator '#{name}' and no matching type/runtime to create it.\nAvailable devices:\n#{names.join("\n")}\nDevice types:\n#{types.join("\n")}\nRuntimes:\n#{runtimes.join("\n")}")
+  end
+  sh("xcrun simctl create \"#{name}\" \"#{type_id}\" \"#{runtime_id}\"")
+  refreshed = sh("xcrun simctl list devices -j", log: false)
+  ensure_simulator_present(name, refreshed)
+  refreshed
+end
+
 # Creates the Outer Display simulator when absent, else aborts fail-closed.
 # Never substitutes another device; the abort lists devices plus types plus runtimes.
 def ensure_outer_display_simulator
-  require "json"
-  listing = sh("xcrun simctl list devices -j", log: false)
-  return listing if simulator_available?("iPhone Duo - Outer Display", listing)
-  devicetypes_json = sh("xcrun simctl list devicetypes -j", log: false)
-  runtimes_json = sh("xcrun simctl list runtimes -j", log: false)
-  device_type_id = duo_outer_devicetype_id(devicetypes_json)
-  runtime_id = newest_ios_runtime_id(runtimes_json, device_type_id)
-  if device_type_id.nil? || runtime_id.nil?
-    names = JSON.parse(listing)["devices"].values.flatten.map { |d| d["name"] }.compact.uniq.sort
-    types = JSON.parse(devicetypes_json)["devicetypes"].map { |t| t["name"] }.compact.sort
-    runtimes = JSON.parse(runtimes_json)["runtimes"].map { |r| r["name"] }.compact.sort
-    UI.user_error!("Missing simulator 'iPhone Duo - Outer Display' and no matching type/runtime to create it.\nAvailable devices:\n#{names.join("\n")}\nDevice types:\n#{types.join("\n")}\nRuntimes:\n#{runtimes.join("\n")}")
-  end
-  sh("xcrun simctl create \"iPhone Duo - Outer Display\" \"#{device_type_id}\" \"#{runtime_id}\"")
-  refreshed = sh("xcrun simctl list devices -j", log: false)
-  ensure_simulator_present("iPhone Duo - Outer Display", refreshed)
-  refreshed
+  ensure_simulator(
+    name: "iPhone Duo - Outer Display",
+    devicetype_id: -> { duo_outer_devicetype_id },
+    hinge: true
+  )
+end
+
+# Creates the iPad Air 13-inch (M3) simulator when absent, else aborts fail-closed.
+def ensure_ipad_simulator
+  ensure_simulator(
+    name: "iPad Air 13-inch (M3)",
+    devicetype_id: -> { ipad_devicetype_id },
+    hinge: false
+  )
 end
 
 lane :screenshots_iphone do
@@ -166,7 +201,7 @@ lane :screenshots_iphone do
 end
 
 def hinge_bin
-  File.expand_path("../scripts/hinge", __dir__)
+  File.expand_path("../Scripts/hinge", __dir__)
 end
 
 # Outer compact runs on the Outer Display simulator; inner regular runs on Duo.
@@ -183,6 +218,34 @@ lane :screenshots_duo_outer do
     clear_previous_screenshots: false,
     localize_simulator: false,
     launch_arguments: ["-OuterViewScreenshots"]
+  )
+end
+
+lane :screenshots_ipad do
+  ensure_ipad_simulator
+  prepare_simulator("iPad Air 13-inch (M3)")
+  # Pre-erased plus pre-booted; appends so prior device output survives.
+  snapshot(
+    devices: ["iPad Air 13-inch (M3)"],
+    erase_simulator: false,
+    override_status_bar: true,
+    clear_previous_screenshots: false,
+    localize_simulator: false,
+    launch_arguments: ["-OuterViewScreenshots -landscape"]
+  )
+end
+
+lane :screenshots_ipad_portrait do
+  ensure_ipad_simulator
+  prepare_simulator("iPad Air 13-inch (M3)")
+  # Pre-erased plus pre-booted; appends so prior device output survives.
+  snapshot(
+    devices: ["iPad Air 13-inch (M3)"],
+    erase_simulator: false,
+    override_status_bar: true,
+    clear_previous_screenshots: false,
+    localize_simulator: false,
+    launch_arguments: ["-OuterViewScreenshots -OuterViewInnerPortrait -portrait"]
   )
 end
 
@@ -238,6 +301,6 @@ end
 lane :screenshots_all do
   screenshots_iphone
   screenshots_duo_outer
-  screenshots_duo_inner
-  screenshots_duo_inner_portrait
+  screenshots_ipad
+  screenshots_ipad_portrait
 end
