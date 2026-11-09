@@ -84,6 +84,9 @@ extension BrowserRootViewController {
 
     /// Presented destructive prompt; tests drive confirm/cancel through it.
     var clearAllConfirmationAlert: UIAlertController? {
+        if let stored = activeClearAllAlert {
+            return stored
+        }
         var current: UIViewController? = self
         while let vc = current {
             if let alert = vc.presentedViewController as? UIAlertController,
@@ -98,19 +101,26 @@ extension BrowserRootViewController {
 
     /// Simulates tapping the prompt destructive button; needs the prompt visible.
     func confirmPresentedClearAllDownloads() {
-        guard clearAllConfirmationAlert != nil else { return }
+        guard let alert = clearAllConfirmationAlert else { return }
+        activeClearAllAlert = nil
         downloadsManager.deleteAll()
         updateRailItems()
-        clearAllConfirmationAlert?.dismiss(animated: false)
+        alert.dismiss(animated: false)
     }
 
     /// Simulates tapping the prompt cancel button; rows are never touched here.
     func cancelPresentedClearAllDownloads() {
         guard let alert = clearAllConfirmationAlert else { return }
+        activeClearAllAlert = nil
         alert.dismiss(animated: false)
     }
 
     func promptClearAllDownloads() {
+        if let existing = activeClearAllAlert,
+           existing.presentingViewController != nil
+        {
+            return
+        }
         var presenter: UIViewController = self
         while let next = presenter.presentedViewController {
             presenter = next
@@ -121,11 +131,15 @@ extension BrowserRootViewController {
             preferredStyle: .actionSheet
         )
         sheet.view.accessibilityIdentifier = "ClearAllDownloadsConfirm"
+        activeClearAllAlert = sheet
         sheet.addAction(UIAlertAction(title: "Clear All", style: .destructive) { [weak self] _ in
+            self?.activeClearAllAlert = nil
             self?.downloadsManager.deleteAll()
             self?.updateRailItems()
         })
-        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in
+            self?.activeClearAllAlert = nil
+        })
         if let popover = sheet.popoverPresentationController {
             popover.sourceView = presenter.view
             popover.sourceRect = CGRect(

@@ -36,20 +36,27 @@ final class DownloadsSheetTests: XCTestCase {
     /// Fires the mapped button action so the UIAction
     /// handler path runs instead of calling the root directly.
     private func fire(_ button: UIButton) async {
+        try? await Task.sleep(nanoseconds: 50_000_000)
         button.sendActions(for: .touchUpInside)
-        await Task.yield()
-        await Task.yield()
+        for _ in 0 ..< 5 {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+            await Task.yield()
+        }
+    }
+
+    private func isAlertSettled(_ alert: UIAlertController) -> Bool {
+        !alert.isBeingPresented && !alert.isBeingDismissed
+            && alert.transitionCoordinator == nil
     }
 
     private func waitForClearAllAlert(in root: BrowserRootViewController) async -> UIAlertController? {
         let deadline = Date(timeIntervalSinceNow: 5.0)
         while Date() < deadline {
-            if let alert = root.clearAllConfirmationAlert,
-               !alert.isBeingPresented, !alert.isBeingDismissed
-            {
+            if let alert = root.clearAllConfirmationAlert, isAlertSettled(alert) {
                 return alert
             }
             try? await Task.sleep(nanoseconds: 50_000_000)
+            await Task.yield()
         }
         if let alert = root.clearAllConfirmationAlert, !alert.isBeingPresented {
             return alert
@@ -60,10 +67,14 @@ final class DownloadsSheetTests: XCTestCase {
     private func waitForClearAllDismissed(in root: BrowserRootViewController) async -> Bool {
         let deadline = Date(timeIntervalSinceNow: 5.0)
         while Date() < deadline {
-            if root.clearAllConfirmationAlert == nil {
+            if root.clearAllConfirmationAlert == nil,
+               !root.isBeingPresented, !root.isBeingDismissed,
+               root.transitionCoordinator == nil
+            {
                 return true
             }
             try? await Task.sleep(nanoseconds: 50_000_000)
+            await Task.yield()
         }
         return root.clearAllConfirmationAlert == nil
     }
