@@ -1,7 +1,7 @@
 // UITests — Store listing capture driving the seeded browser.
 import XCTest
 
-/// Drives the seeded browser through portrait captures, adding landscape on regular.
+/// Drives the seeded browser through portrait and landscape captures across form factors.
 final class OuterViewScreenshots: XCTestCase {
     override static var runsForEachTargetApplicationUIConfiguration: Bool {
         false
@@ -15,7 +15,18 @@ final class OuterViewScreenshots: XCTestCase {
         setupSnapshot(app)
         app.launch()
 
-        let isMode4 = app.launchArguments.contains("-OuterViewInnerPortrait")
+        let isMode4 = app.launchArguments.contains(where: { $0.contains("-OuterViewInnerPortrait") }) ||
+            ProcessInfo.processInfo.arguments.contains(where: { $0.contains("-OuterViewInnerPortrait") })
+        let isLandscape = app.launchArguments.contains(where: { $0.contains("-landscape") }) ||
+            ProcessInfo.processInfo.arguments.contains(where: { $0.contains("-landscape") })
+
+        if isLandscape {
+            XCUIDevice.shared.orientation = .landscapeLeft
+            sleep(1)
+        } else {
+            XCUIDevice.shared.orientation = .portrait
+            sleep(1)
+        }
 
         let startPageText = app.staticTexts["Favorites"]
         XCTAssertTrue(startPageText.waitForExistence(timeout: 10))
@@ -85,11 +96,11 @@ final class OuterViewScreenshots: XCTestCase {
         XCTAssertNotNil(hittableOverviewDone)
         hittableOverviewDone?.tap()
 
-        let isRegularPlacement = (app.launchArguments.contains("-OuterViewInnerDisplay") || app.windows.firstMatch.frame.width > 500) && !isMode4
+        let isRegularPlacement = (app.launchArguments.contains(where: { $0.contains("-OuterViewInnerDisplay") }) || app.windows.firstMatch.frame.width > 500) && !isMode4
 
         let browsingSettled = app.staticTexts["Swift (programming language)"].firstMatch
         XCTAssertTrue(browsingSettled.waitForExistence(timeout: 10))
-        if isRegularPlacement {
+        if isRegularPlacement, !isLandscape {
             XCUIDevice.shared.orientation = .landscapeLeft
             let landscapeSettled = app.staticTexts["Swift (programming language)"].firstMatch
             XCTAssertTrue(landscapeSettled.waitForExistence(timeout: 10))
