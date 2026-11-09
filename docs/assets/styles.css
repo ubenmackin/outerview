@@ -9,8 +9,8 @@
   --line: rgba(10, 31, 68, 0.14);
   --accent-ink: #ffffff;
   --muted: #5c6b84;
-  --radius: 16px;
-  --content-width: 960px;
+  --radius: 20px;
+  --content-width: 1120px;
 }
 
 *,
@@ -90,6 +90,19 @@ header p {
   color: var(--navy);
 }
 
+.brand-mark {
+  display: inline-block;
+  margin-right: 0.4rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 8px;
+  background: var(--navy);
+  color: #ffffff;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  vertical-align: baseline;
+}
+
 header nav {
   display: flex;
   gap: 1rem;
@@ -107,6 +120,11 @@ header nav a:hover {
 
 .hero {
   padding-top: 3.5rem;
+  padding-bottom: 2.5rem;
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+  background: linear-gradient(180deg, #e8effe 0%, #f5f8fd 62%, rgba(245, 248, 253, 0) 100%);
+  border-radius: var(--radius);
 }
 
 .hero h1 {
@@ -118,6 +136,50 @@ header nav a:hover {
   margin-top: 1rem;
   font-size: clamp(1.05rem, 1vw + 0.9rem, 1.3rem);
   color: var(--muted);
+}
+
+.hero .eyebrow {
+  margin-top: 0;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--navy);
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.hero-actions a {
+  display: inline-block;
+  background: var(--navy);
+  color: var(--accent-ink);
+  font-weight: 600;
+  font-size: 1rem;
+  text-decoration: none;
+  padding: 0.7rem 1.3rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+.hero-actions a:last-child {
+  background: transparent;
+  color: var(--navy);
+  border-color: var(--line);
+}
+
+.hero-actions a:hover {
+  background: var(--navy-deep);
+  color: #ffffff;
+}
+
+.hero-actions a:last-child:hover {
+  background: var(--card);
+  color: var(--navy);
 }
 
 .feature-grid {
@@ -132,6 +194,7 @@ header nav a:hover {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 1.25rem;
+  box-shadow: 0 8px 24px rgba(10, 31, 68, 0.08);
 }
 
 #features article h3 {
@@ -146,8 +209,9 @@ header nav a:hover {
 
 #screenshots {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 1rem;
+  align-items: start;
 }
 
 #screenshots h2 {
@@ -159,14 +223,23 @@ header nav a:hover {
 }
 
 #screenshots figure {
+  width: 100%;
+  max-width: 300px;
+  margin: 0 auto;
+  justify-self: center;
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 28px;
   overflow: hidden;
+  box-shadow: 0 12px 32px rgba(10, 31, 68, 0.12);
 }
 
 #screenshots .shot-wide {
   grid-column: 1 / -1;
+  max-width: 680px;
+  width: 100%;
+  margin: 0 auto;
+  justify-self: center;
 }
 
 #screenshots figure img {
@@ -271,6 +344,49 @@ footer a {
   header p,
   header nav a,
   a {
+    color: var(--ink);
+  }
+
+  .brand-mark {
+    background: var(--ink);
+    color: var(--navy-deep);
+  }
+
+  .hero {
+    background: linear-gradient(180deg, #13264d 0%, #060f22 62%, rgba(6, 15, 34, 0) 100%);
+  }
+
+  .hero h1 {
+    color: var(--ink);
+  }
+
+  .hero p {
+    color: var(--muted);
+  }
+
+  .hero .eyebrow {
+    color: var(--ink);
+  }
+
+  .hero-actions a {
+    background: var(--ink);
+    color: var(--navy-deep);
+    border-color: transparent;
+  }
+
+  .hero-actions a:hover {
+    background: #ffffff;
+    color: var(--navy-deep);
+  }
+
+  .hero-actions a:last-child {
+    background: transparent;
+    color: var(--ink);
+    border-color: var(--line);
+  }
+
+  .hero-actions a:last-child:hover {
+    background: var(--card);
     color: var(--ink);
   }
 

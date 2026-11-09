@@ -429,6 +429,8 @@ final class BrowserRootViewController: UIViewController {
     let downloadsContainer = UIView()
     var downloadsHosting: UIViewController?
     var isDownloadsVisible = false
+    /// Retained prompt so the confirmation stays observable while UIKit settles.
+    var activeClearAllAlert: UIAlertController?
 
     let libraryOverlay = OverlayCardView()
     let settingsOverlay = OverlayCardView()
