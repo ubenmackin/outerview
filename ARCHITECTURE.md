@@ -67,7 +67,8 @@ Sources/
 │   ├── Persistence/      # SwiftData database + stores (bookmark, history, tab, recent searches, reading list, site zoom)
 │   ├── URLHandling/      # URL normalizer, search suggestions engine, Google Suggest, favicon service
 │   ├── Downloads/        # Background URLSession service plus WKDownload private path writing to Documents/Downloads
-│   └── Import/           # Netscape HTML bookmark parser & importer
+│   ├── Import/           # Netscape HTML bookmark parser & importer
+│   └── Security/         # Biometric private-tab gate plus WKContentRuleList content blocker
 └── Settings/             # Browser preferences, search engine, data clearance, downloads sheet, zoom reset
 ```
 
@@ -135,6 +136,10 @@ Sources/
 - **`ReadingListStore`**: URL-deduped (earliest wins, empty-title refresh), 2000-entry cap with prune-oldest, read-state flags, ordering, and clearance.
 - **`DownloadsManager`**: `@MainActor` row plus progress plus destination owner writing to `Documents/Downloads` (exposed in Files via UIFileSharingEnabled); sanitized names with `name (2).ext` collision handling; row state (inProgress/finished/failed) with cancel/delete plus batched clear; Clear All on both the sheet toolbar and the rail path is gated behind an explicit confirmation prompt (`promptClearAllDownloads`/`.confirmationDialog`) before `deleteAll()` runs; aggregate overallProgress for the address-bar ring; folder export to the Files app. Transfer ownership splits: standard tabs via `BackgroundDownloadService` (background `URLSession`), private tabs via in-process `WKDownload`.
 - **`BackgroundDownloadService`**: Singleton background `URLSession` (`com.volcrypt.OuterView.downloads`, non-discretionary, launch events) for standard tabs; wake handling via `DownloadBackgroundDelegate` storing the handler and the session delegate popping it in finish-events exactly once.
+
+### 4.7 Security: Private-Tab Gate & Content Blocking
+- **`BiometricAuthService`** (`Sources/Services/Security/BiometricAuthService.swift`): `@MainActor` Face ID / Touch ID / passcode evaluator (`LAContext`, `.deviceOwnerAuthentication`) guarding private tabs behind the `BiometricAuthenticating` protocol for test injection. Private entry is single-gated via `requestPrivateMode(authenticatedApply:)`; backgrounding with any private tab sets `isPrivateSessionLocked`, and scene activation with private content visible requires "Unlock Private Browsing" authentication. Failure, cancellation, or no enrolled biometrics/passcode fails closed to standard mode, and the lock clears so standard browsing never re-prompts. The gate defaults on: `shouldRequireBiometricsForPrivateMode` reads `SettingsViewModel.requireBiometricsDefaultsKey` (`requireBiometricsForPrivateTabs`) with a `?? true` fallback.
+- **`ContentBlockerService`**: Native `WKContentRuleList` blocker compiled once through `WKContentRuleListStore` (identifier `OuterViewContentBlockerRules`) from 16 built-in third-party rules covering major ad and tracking networks (DoubleClick, Google Analytics/Tag Manager/Ads, AppNexus, ScoreCardResearch, Quantserve, Criteo, Advertising.com, Taboola, Outbrain, Hotjar, Twitter analytics) plus popups and popunders. Compilation is single-flight (concurrent callers park on the in-flight compile; failures re-check the store before giving up). `TabPool` tracks every `WKUserContentController` and installs the compiled rules on creation with the flag defaulting on (`SettingsViewModel.blockTrackersDefaultsKey`, `blockTrackersAndAds`, `?? true`); `applyContentBlockerEnabled` is the single live toggle owner, fanning the flag out to both shared configurations plus every live page with no restart, and toggles serialize through a chain so rapid flips apply in order.
 
 ---
 
