@@ -392,6 +392,9 @@ extension BrowserRootViewController {
     }
 
     private func applyCompactPillViews(state: ChromeState, animated: Bool) {
+        if pillView.superview !== view {
+            applyChromePlacement(for: .compact)
+        }
         let updatePillGeometry = { [weak self] in
             guard let self else { return }
             self.updateCompactPillGeometry(state: state)

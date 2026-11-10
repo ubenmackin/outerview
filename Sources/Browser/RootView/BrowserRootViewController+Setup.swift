@@ -208,10 +208,15 @@ extension BrowserRootViewController {
         )
         verticalTabBarTrailingConstraint = trailing
         verticalTabBarLeadingConstraint = leading
+        let bottom = verticalTabBarView.bottomAnchor.constraint(
+            equalTo: pillView.topAnchor,
+            constant: -16
+        )
+        verticalTabBarBottomConstraint = bottom
 
         NSLayoutConstraint.activate([
             verticalTabBarView.widthAnchor.constraint(equalToConstant: VerticalTabBarView.barWidth),
-            verticalTabBarView.bottomAnchor.constraint(equalTo: pillView.topAnchor, constant: -16),
+            bottom,
             verticalTabBarView.topAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.topAnchor, constant: 16)
         ])
 
@@ -327,6 +332,12 @@ extension BrowserRootViewController {
         pillBottomTrailingConstraint = pillView.trailingAnchor.constraint(
             equalTo: bottomTrailingStack.leadingAnchor, constant: -8
         )
+        bottomLeadingCenterYConstraint = bottomLeadingStack.centerYAnchor.constraint(
+            equalTo: pillView.centerYAnchor
+        )
+        bottomTrailingCenterYConstraint = bottomTrailingStack.centerYAnchor.constraint(
+            equalTo: pillView.centerYAnchor
+        )
 
         NSLayoutConstraint.activate([
             pillBottomConstraint,
@@ -334,10 +345,10 @@ extension BrowserRootViewController {
             pillLeadingConstraint,
             pillTrailingConstraint,
             bottomLeadingStack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-            bottomLeadingStack.centerYAnchor.constraint(equalTo: pillView.centerYAnchor),
+            bottomLeadingCenterYConstraint,
             bottomLeadingStack.heightAnchor.constraint(equalToConstant: SystemToolbarMapper.bottomBarHeight),
             bottomTrailingStack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
-            bottomTrailingStack.centerYAnchor.constraint(equalTo: pillView.centerYAnchor),
+            bottomTrailingCenterYConstraint,
             bottomTrailingStack.heightAnchor.constraint(equalToConstant: SystemToolbarMapper.bottomBarHeight)
         ])
         pillView.onPillTap = { [weak self] in self?.handlePillTap() }
