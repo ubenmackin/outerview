@@ -179,6 +179,68 @@ final class Phase2FeaturesTests: XCTestCase {
         XCTAssertFalse(restoreAction.attributes.contains(.disabled))
     }
 
+    // MARK: - Background Open Tab Tests
+
+    func testElementContextOpenInNewTabKeepsSelectionForeground() throws {
+        let (root, _) = try makeRoot()
+        let url = try XCTUnwrap(URL(string: "https://example.com/test"))
+        let previousCount = root.tabs.count
+        let previousSelected = try XCTUnwrap(root.selectedTabID)
+        // The index is pinned before the open; inserting one slot later never
+        // shifts the selected tab's own position.
+        let previousIndex = try XCTUnwrap(root.tabs.firstIndex(where: { $0.id == previousSelected }))
+
+        root.makeElementContextActions().openInNewTab(url)
+
+        XCTAssertEqual(root.tabs.count, previousCount + 1)
+        XCTAssertEqual(root.selectedTabID, previousSelected)
+        guard let openedTab = root.tabs.first(where: { $0.id != previousSelected }) else {
+            XCTFail("Background tab not found")
+            return
+        }
+        XCTAssertEqual(root.tabs.firstIndex(where: { $0.id == openedTab.id }), previousIndex + 1)
+        XCTAssertEqual(openedTab.url, url)
+        XCTAssertFalse(openedTab.isPrivate)
+    }
+
+    func testElementContextOpenInNewTabInheritsPrivateScope() throws {
+        let (root, _) = try makeRoot()
+        root.createNewTab(isPrivate: true)
+        let privateID = try XCTUnwrap(root.selectedTabID)
+        let url = try XCTUnwrap(URL(string: "https://example.com/private"))
+        guard let selectedTab = root.tabs.first(where: { $0.id == privateID }) else {
+            XCTFail("Private tab not found")
+            return
+        }
+        XCTAssertTrue(selectedTab.isPrivate)
+
+        root.makeElementContextActions().openInNewTab(url)
+
+        XCTAssertEqual(root.selectedTabID, privateID)
+        guard let openedTab = root.tabs.first(where: { $0.url == url }) else {
+            XCTFail("Private background tab not found")
+            return
+        }
+        XCTAssertTrue(openedTab.isPrivate)
+    }
+
+    func testElementContextOpenInNewTabRefreshesOverviewWithoutSelection() throws {
+        let (root, _) = try makeRoot()
+        let previousSelected = try XCTUnwrap(root.selectedTabID)
+        root.setOverviewVisible(true)
+        let url = try XCTUnwrap(URL(string: "https://example.com/card"))
+
+        root.makeElementContextActions().openInNewTab(url)
+
+        XCTAssertTrue(root.isOverviewVisible)
+        XCTAssertEqual(root.selectedTabID, previousSelected)
+        guard let openedTab = root.tabs.first(where: { $0.url == url }) else {
+            XCTFail("Background tab not found")
+            return
+        }
+        XCTAssertTrue(root.overviewItems().map(\.id).contains(openedTab.id))
+    }
+
     // MARK: - Reading List Web Archive Tests
 
     func testReadingListArchiveManagerSaveAndLifecycle() {

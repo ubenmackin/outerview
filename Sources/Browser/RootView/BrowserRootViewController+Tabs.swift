@@ -119,6 +119,7 @@ extension BrowserRootViewController {
             if isOverviewVisible {
                 overviewController.setItems(overviewItems(), selectedID: selectedTabID)
             }
+            updateTabStrip()
             return
         }
         selectTab(id: record.id)
