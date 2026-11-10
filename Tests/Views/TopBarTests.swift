@@ -410,11 +410,24 @@ final class TopBarTests: XCTestCase {
         let database = try OuterViewDatabase(inMemory: true)
         let root = BrowserRootViewController(database: database)
         let parent = UIViewController()
-        TestWindow.attach(parent, frame: CGRect(x: 0, y: 0, width: 669, height: 951))
+        let window = TestWindow.attach(parent, frame: CGRect(x: 0, y: 0, width: 669, height: 951))
         parent.addChild(root)
         root.traitOverrides.horizontalSizeClass = .regular
         parent.view.addSubview(root.view)
+        root.view.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            root.view.leadingAnchor.constraint(equalTo: parent.view.leadingAnchor),
+            root.view.trailingAnchor.constraint(equalTo: parent.view.trailingAnchor),
+            root.view.topAnchor.constraint(equalTo: parent.view.topAnchor),
+            root.view.bottomAnchor.constraint(equalTo: parent.view.bottomAnchor)
+        ])
         root.didMove(toParent: parent)
+        root.tabs = [
+            TabRecord(url: URL(string: "https://apple.com"), title: "Apple", isPrivate: false),
+            TabRecord(url: URL(string: "https://arstechnica.com"), title: "Ars", isPrivate: false)
+        ]
+        root.selectedTabID = root.tabs.first?.id
+        parent.view.layoutIfNeeded()
         root.view.layoutIfNeeded()
 
         XCTAssertEqual(root.interfaceMode, .duoInnerOrPadPortrait)
@@ -427,5 +440,34 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(trailingLabels, ["New Tab", "Tabs"])
 
         XCTAssertFalse(root.verticalTabBarView.showsNewTabButton)
+        XCTAssertTrue(root.bottomLeadingCenterYConstraint.isActive)
+        XCTAssertTrue(root.bottomTrailingCenterYConstraint.isActive)
+        XCTAssertTrue(root.verticalTabBarBottomConstraint.isActive)
+        XCTAssertEqual(root.bottomLeadingStack.center.y, root.pillView.center.y, accuracy: 0.5)
+        XCTAssertEqual(root.bottomTrailingStack.center.y, root.pillView.center.y, accuracy: 0.5)
+        XCTAssertEqual(root.verticalTabBarView.frame.maxY, root.pillView.frame.minY - 16, accuracy: 0.5)
+
+        // Transition to Mode 2 (Inner Landscape) and back to Mode 4 (Inner Portrait)
+        window.frame = CGRect(x: 0, y: 0, width: 951, height: 669)
+        parent.view.frame = window.bounds
+        parent.view.layoutIfNeeded()
+        root.applyStructuralLayout()
+        root.view.layoutIfNeeded()
+        XCTAssertEqual(root.interfaceMode, .duoInnerOrPadLandscape)
+        XCTAssertEqual(root.chromePlacement, .regular)
+
+        window.frame = CGRect(x: 0, y: 0, width: 669, height: 951)
+        parent.view.frame = window.bounds
+        parent.view.layoutIfNeeded()
+        root.applyStructuralLayout()
+        root.view.layoutIfNeeded()
+        XCTAssertEqual(root.interfaceMode, .duoInnerOrPadPortrait)
+        XCTAssertEqual(root.chromePlacement, .compact)
+        XCTAssertTrue(root.bottomLeadingCenterYConstraint.isActive)
+        XCTAssertTrue(root.bottomTrailingCenterYConstraint.isActive)
+        XCTAssertTrue(root.verticalTabBarBottomConstraint.isActive)
+        XCTAssertEqual(root.bottomLeadingStack.center.y, root.pillView.center.y, accuracy: 0.5)
+        XCTAssertEqual(root.bottomTrailingStack.center.y, root.pillView.center.y, accuracy: 0.5)
+        XCTAssertEqual(root.verticalTabBarView.frame.maxY, root.pillView.frame.minY - 16, accuracy: 0.5)
     }
 }

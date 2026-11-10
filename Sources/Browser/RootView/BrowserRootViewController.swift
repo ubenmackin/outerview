@@ -290,96 +290,9 @@ final class BrowserRootViewController: UIViewController {
         railView.isHidden = isRegular || isNonDuo || isPortrait
 
         if isRegular {
-            bottomLeadingStack.isHidden = true
-            bottomTrailingStack.isHidden = true
-            verticalTabBarView.isHidden = true
-            updateToolbarVisibility(for: chromeController.state)
-            if pillView.superview !== topBarView.pillSlotView {
-                NSLayoutConstraint.deactivate([
-                    pillBottomConstraint,
-                    pillLeadingConstraint,
-                    pillTrailingConstraint,
-                    pillCenterXConstraint,
-                    pillWidthConstraint
-                ])
-                pillBottomLeadingConstraint?.isActive = false
-                pillBottomTrailingConstraint?.isActive = false
-                pillView.removeFromSuperview()
-                pillView.translatesAutoresizingMaskIntoConstraints = false
-                topBarView.pillSlotView.addSubview(pillView)
-                pillSlotCenterXConstraint.isActive = false
-                pillSlotWidthConstraint.isActive = false
-                NSLayoutConstraint.activate([
-                    pillSlotLeadingConstraint,
-                    pillSlotTrailingConstraint,
-                    pillSlotCenterYConstraint
-                ])
-            } else {
-                pillBottomConstraint.isActive = false
-                pillLeadingConstraint.isActive = false
-                pillTrailingConstraint.isActive = false
-                pillBottomLeadingConstraint?.isActive = false
-                pillBottomTrailingConstraint?.isActive = false
-                pillCenterXConstraint.isActive = false
-                pillWidthConstraint.isActive = false
-                pillSlotCenterYConstraint.isActive = true
-            }
-            updateRegularPillGeometry()
+            applyRegularChromePlacement()
         } else {
-            topBarAnimator?.stopAnimation(false)
-            topBarAnimator?.finishAnimation(at: .current)
-            topBarAnimator = nil
-            if pillView.superview !== view {
-                NSLayoutConstraint.deactivate([
-                    pillSlotLeadingConstraint,
-                    pillSlotTrailingConstraint,
-                    pillSlotCenterYConstraint,
-                    pillSlotCenterXConstraint,
-                    pillSlotWidthConstraint,
-                    pillSlotMinLeadingConstraint,
-                    pillSlotMaxTrailingConstraint
-                ])
-                pillView.removeFromSuperview()
-                pillView.translatesAutoresizingMaskIntoConstraints = false
-                view.addSubview(pillView)
-            } else {
-                pillSlotLeadingConstraint.isActive = false
-                pillSlotTrailingConstraint.isActive = false
-                pillSlotCenterYConstraint.isActive = false
-                pillSlotCenterXConstraint.isActive = false
-                pillSlotWidthConstraint.isActive = false
-                pillSlotMinLeadingConstraint.isActive = false
-                pillSlotMaxTrailingConstraint.isActive = false
-            }
-            let isMinified = chromeController.state.pill == .minified
-            pillBottomConstraint.isActive = true
-            pillHeightConstraint.isActive = true
-            if isNonDuo || isPortrait {
-                pillLeadingConstraint.isActive = false
-                pillTrailingConstraint.isActive = false
-                pillBottomLeadingConstraint?.isActive = !isMinified
-                pillBottomTrailingConstraint?.isActive = !isMinified
-                pillCenterXConstraint.isActive = isMinified
-                pillWidthConstraint.isActive = isMinified
-                if isNonDuo {
-                    applyNonDuoChromeVisibility()
-                } else {
-                    applyPortraitChromeVisibility()
-                }
-            } else {
-                bottomLeadingStack.isHidden = true
-                bottomTrailingStack.isHidden = true
-                verticalTabBarView.isHidden = true
-                pillBottomLeadingConstraint?.isActive = false
-                pillBottomTrailingConstraint?.isActive = false
-                pillLeadingConstraint.isActive = !isMinified
-                pillTrailingConstraint.isActive = !isMinified
-                pillCenterXConstraint.isActive = isMinified
-                pillWidthConstraint.isActive = isMinified
-            }
-            if isMinified {
-                pillWidthConstraint.constant = AddressBarView.widthForBounds(pillReferenceWidth)
-            }
+            applyCompactChromePlacement(isNonDuo: isNonDuo, isPortrait: isPortrait)
         }
         overviewController.isRegular = (placement == .regular)
         // Rail stays hidden in Mode 4, so overview commands use the inline bar like Mode 3.
@@ -394,6 +307,110 @@ final class BrowserRootViewController: UIViewController {
         updateStartPageTop()
         refreshStatusBarAppearanceIfNeeded()
         bringChromeToFront()
+    }
+
+    private func applyRegularChromePlacement() {
+        bottomLeadingStack.isHidden = true
+        bottomTrailingStack.isHidden = true
+        verticalTabBarView.isHidden = true
+        updateToolbarVisibility(for: chromeController.state)
+        if pillView.superview !== topBarView.pillSlotView {
+            NSLayoutConstraint.deactivate([
+                pillBottomConstraint,
+                pillLeadingConstraint,
+                pillTrailingConstraint,
+                pillCenterXConstraint,
+                pillWidthConstraint
+            ])
+            pillBottomLeadingConstraint?.isActive = false
+            pillBottomTrailingConstraint?.isActive = false
+            bottomLeadingCenterYConstraint?.isActive = false
+            bottomTrailingCenterYConstraint?.isActive = false
+            verticalTabBarBottomConstraint?.isActive = false
+            pillView.removeFromSuperview()
+            pillView.translatesAutoresizingMaskIntoConstraints = false
+            topBarView.pillSlotView.addSubview(pillView)
+            pillSlotCenterXConstraint.isActive = false
+            pillSlotWidthConstraint.isActive = false
+            NSLayoutConstraint.activate([
+                pillSlotLeadingConstraint,
+                pillSlotTrailingConstraint,
+                pillSlotCenterYConstraint
+            ])
+        } else {
+            pillBottomConstraint.isActive = false
+            pillLeadingConstraint.isActive = false
+            pillTrailingConstraint.isActive = false
+            pillBottomLeadingConstraint?.isActive = false
+            pillBottomTrailingConstraint?.isActive = false
+            bottomLeadingCenterYConstraint?.isActive = false
+            bottomTrailingCenterYConstraint?.isActive = false
+            verticalTabBarBottomConstraint?.isActive = false
+            pillCenterXConstraint.isActive = false
+            pillWidthConstraint.isActive = false
+            pillSlotCenterYConstraint.isActive = true
+        }
+        updateRegularPillGeometry()
+    }
+
+    private func applyCompactChromePlacement(isNonDuo: Bool, isPortrait: Bool) {
+        topBarAnimator?.stopAnimation(false)
+        topBarAnimator?.finishAnimation(at: .current)
+        topBarAnimator = nil
+        if pillView.superview !== view {
+            NSLayoutConstraint.deactivate([
+                pillSlotLeadingConstraint,
+                pillSlotTrailingConstraint,
+                pillSlotCenterYConstraint,
+                pillSlotCenterXConstraint,
+                pillSlotWidthConstraint,
+                pillSlotMinLeadingConstraint,
+                pillSlotMaxTrailingConstraint
+            ])
+            pillView.removeFromSuperview()
+            pillView.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(pillView)
+        } else {
+            pillSlotLeadingConstraint.isActive = false
+            pillSlotTrailingConstraint.isActive = false
+            pillSlotCenterYConstraint.isActive = false
+            pillSlotCenterXConstraint.isActive = false
+            pillSlotWidthConstraint.isActive = false
+            pillSlotMinLeadingConstraint.isActive = false
+            pillSlotMaxTrailingConstraint.isActive = false
+        }
+        let isMinified = chromeController.state.pill == .minified
+        pillBottomConstraint.isActive = true
+        pillHeightConstraint.isActive = true
+        bottomLeadingCenterYConstraint?.isActive = true
+        bottomTrailingCenterYConstraint?.isActive = true
+        verticalTabBarBottomConstraint?.isActive = true
+        if isNonDuo || isPortrait {
+            pillLeadingConstraint.isActive = false
+            pillTrailingConstraint.isActive = false
+            pillBottomLeadingConstraint?.isActive = !isMinified
+            pillBottomTrailingConstraint?.isActive = !isMinified
+            pillCenterXConstraint.isActive = isMinified
+            pillWidthConstraint.isActive = isMinified
+            if isNonDuo {
+                applyNonDuoChromeVisibility()
+            } else {
+                applyPortraitChromeVisibility()
+            }
+        } else {
+            bottomLeadingStack.isHidden = true
+            bottomTrailingStack.isHidden = true
+            verticalTabBarView.isHidden = true
+            pillBottomLeadingConstraint?.isActive = false
+            pillBottomTrailingConstraint?.isActive = false
+            pillLeadingConstraint.isActive = !isMinified
+            pillTrailingConstraint.isActive = !isMinified
+            pillCenterXConstraint.isActive = isMinified
+            pillWidthConstraint.isActive = isMinified
+        }
+        if isMinified {
+            pillWidthConstraint.constant = AddressBarView.widthForBounds(pillReferenceWidth)
+        }
     }
 
     // MARK: - Layers
@@ -508,6 +525,9 @@ final class BrowserRootViewController: UIViewController {
     var pillTrailingConstraint: NSLayoutConstraint!
     var pillBottomLeadingConstraint: NSLayoutConstraint!
     var pillBottomTrailingConstraint: NSLayoutConstraint!
+    var bottomLeadingCenterYConstraint: NSLayoutConstraint!
+    var bottomTrailingCenterYConstraint: NSLayoutConstraint!
+    var verticalTabBarBottomConstraint: NSLayoutConstraint!
     var pillWidthConstraint: NSLayoutConstraint!
     var pillCenterXConstraint: NSLayoutConstraint!
     var pillSlotLeadingConstraint: NSLayoutConstraint!
