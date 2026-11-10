@@ -364,7 +364,7 @@ extension BrowserRootViewController {
     /// to a root-level capability, so pages never reach into stores directly.
     func makeElementContextActions() -> ElementContextActions {
         ElementContextActions(
-            openInNewTab: { [weak self] url in self?.openInNewTab(url: url) },
+            openInNewTab: { [weak self] url in self?.openInNewTab(url: url, background: true, isPrivate: nil) },
             addToReadingList: { [weak self] url in self?.addReadingListEntry(url: url) },
             copyLink: { [weak self] url in self?.copyElementURLToPasteboard(url) },
             share: { [weak self] url in self?.shareElementURL(url) },
