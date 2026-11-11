@@ -301,4 +301,10 @@ final class WebPageControllerTests: XCTestCase {
         XCTAssertEqual(blankTotal, 0)
         await controller.clearFind()
     }
+
+    @MainActor
+    func testBackForwardNavigationGesturesEnabledOnInit() {
+        let controller = WebPageController(configuration: WKWebViewConfiguration())
+        XCTAssertTrue(controller.webView.allowsBackForwardNavigationGestures)
+    }
 }

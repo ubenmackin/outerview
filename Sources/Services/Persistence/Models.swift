@@ -102,6 +102,11 @@ final class TabRecord {
     var lastActiveAt: Date
     var groupId: UUID?
 
+    /// Link-opened lineage: the id of the tab the user was viewing when this
+    /// tab was created from a link. Set only by the two link-open creation
+    /// sites; never scrubbed on close (readers fail closed when it is gone).
+    var parentTabID: UUID?
+
     init(
         id: UUID = UUID(),
         url: URL? = nil,
@@ -109,7 +114,8 @@ final class TabRecord {
         isPrivate: Bool,
         createdAt: Date = Date(),
         lastActiveAt: Date = Date(),
-        groupId: UUID? = nil
+        groupId: UUID? = nil,
+        parentTabID: UUID? = nil
     ) {
         self.id = id
         self.url = url
@@ -118,6 +124,7 @@ final class TabRecord {
         self.createdAt = createdAt
         self.lastActiveAt = lastActiveAt
         self.groupId = groupId
+        self.parentTabID = parentTabID
     }
 }
 

@@ -101,7 +101,7 @@ extension BrowserRootViewController {
     /// New tabs inherit the selected tab's privacy so private links stay private.
     func openInNewTab(url: URL, background: Bool = false, isPrivate: Bool? = nil) {
         let resolvedIsPrivate = isPrivate ?? resolvedScopeIsPrivate()
-        let record = TabRecord(url: url, isPrivate: resolvedIsPrivate)
+        let record = TabRecord(url: url, isPrivate: resolvedIsPrivate, parentTabID: selectedTabID)
         let insertIndex: Int =
             if let selected = selectedTabID, let index = tabs.firstIndex(where: { $0.id == selected }) {
                 index + 1
@@ -423,7 +423,9 @@ extension BrowserRootViewController {
         }
     }
 
-    private func currentHorizontalIncomingView() -> UIView? {
+    /// Shared incoming-layer read: pill switches and the left-edge child
+    /// close both reveal the live layer underneath a moving snapshot.
+    func currentHorizontalIncomingView() -> UIView? {
         if !startPageContainer.isHidden {
             return startPageContainer
         }

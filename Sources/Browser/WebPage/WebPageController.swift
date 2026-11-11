@@ -165,6 +165,8 @@ final class WebPageController: NSObject {
 
     init(configuration: WKWebViewConfiguration) {
         webView = WKWebView(frame: .zero, configuration: configuration)
+        // WebKit owns the interactive transition for back/forward edge swipes.
+        webView.allowsBackForwardNavigationGestures = true
         super.init()
         webView.isInspectable = true
         // Full-bleed content: no automatic insets; Mode 3 parks below
