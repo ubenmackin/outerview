@@ -60,30 +60,14 @@ extension AddressEditorView: UITableViewDataSource, UITableViewDelegate {
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "SuggestionCell", for: indexPath)
+        guard let cell = tableView.dequeueReusableCell(
+            withIdentifier: SuggestionCell.reuseIdentifier,
+            for: indexPath
+        ) as? SuggestionCell else {
+            return UITableViewCell(style: .default, reuseIdentifier: nil)
+        }
         guard let suggestion = suggestion(at: indexPath) else { return cell }
-        let viewModel = SuggestionRowViewModel.make(for: suggestion, engine: searchEngine)
-        var content = UIListContentConfiguration.subtitleCell()
-        content.image = UIImage(systemName: viewModel.systemImageName)
-        content.imageProperties.tintColor = .secondaryLabel
-        content.text = viewModel.primary
-        content.textProperties.font = .preferredFont(forTextStyle: .body)
-        content.textProperties.color = .label
-        let isGoogleSuggest = if case .googleSuggest = suggestion.kind {
-            true
-        } else {
-            false
-        }
-        if !isGoogleSuggest, !viewModel.secondary.isEmpty {
-            content.secondaryText = viewModel.secondary
-            content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.secondaryTextProperties.color = .secondaryLabel
-            content.textToSecondaryTextVerticalPadding = 2
-        } else {
-            content.secondaryText = nil
-        }
-        content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20)
-        cell.contentConfiguration = content
+        cell.configure(for: suggestion, engine: searchEngine, isPrivate: isPrivateMode)
         cell.backgroundColor = .clear
         cell.accessibilityTraits = .button
         cell.accessibilityHint = "Double tap to select suggestion"
@@ -134,8 +118,27 @@ extension AddressEditorView: UITextFieldDelegate {
         updateVisibleContent()
     }
 
+    func textField(
+        _ textField: UITextField,
+        shouldChangeCharactersIn range: NSRange,
+        replacementString string: String
+    ) -> Bool {
+        let currentLength = (textField.text as NSString?)?.length ?? 0
+        if string.isEmpty {
+            clearInlineCompletionState()
+        } else if range.location + range.length != currentLength {
+            clearInlineCompletionState()
+        }
+        return true
+    }
+
+    func textFieldDidChangeSelection(_: UITextField) {
+        didChangeFieldSelection()
+    }
+
     func textFieldShouldClear(_ textField: UITextField) -> Bool {
         textField.text = ""
+        clearInlineCompletionState()
         clearInputError()
         isTypingMode = false
         updateRegularLeadingIcon()
@@ -145,6 +148,7 @@ extension AddressEditorView: UITextFieldDelegate {
     }
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        clearInlineCompletionState()
         onSubmit?(textField.text ?? "")
         return true
     }
