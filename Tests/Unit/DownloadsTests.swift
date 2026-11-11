@@ -1,7 +1,4 @@
-//
-//  DownloadsTests.swift
-//  OuterView
-//
+// Downloads — Row plus destination plus header and error-matrix tests.
 
 @testable import OuterView
 import UIKit
@@ -394,6 +391,83 @@ final class DownloadsTests: XCTestCase {
         root.updateDownloadProgress()
         XCTAssertFalse(root.pillView.isDownloadRingVisible)
         XCTAssertEqual(root.pillView.actionAccessibilityLabel, "Reload page")
+    }
+
+    func testHTTPErrorReasonMatrix() throws {
+        let url = try XCTUnwrap(URL(string: "https://ipv4.download.thinkbroadband.com/100MB.zip"))
+        XCTAssertNil(DownloadsManager.httpErrorReason(for: nil))
+        let plainResponse = URLResponse(url: url, mimeType: "application/zip", expectedContentLength: 100, textEncodingName: nil)
+        XCTAssertNil(DownloadsManager.httpErrorReason(for: plainResponse))
+
+        for successCode in [200, 204, 206] {
+            let response = HTTPURLResponse(url: url, statusCode: successCode, httpVersion: "HTTP/1.1", headerFields: nil)
+            XCTAssertNil(DownloadsManager.httpErrorReason(for: response))
+        }
+
+        for errorCode in [400, 403, 404, 500, 503] {
+            let response = HTTPURLResponse(url: url, statusCode: errorCode, httpVersion: "HTTP/1.1", headerFields: nil)
+            XCTAssertEqual(
+                DownloadsManager.httpErrorReason(for: response),
+                "Download failed (HTTP \(errorCode))"
+            )
+        }
+    }
+
+    func testFailDownloadReleasesUnwrittenDestinationReservation() throws {
+        let (manager, root) = try makeManager()
+        defer { tearDownDirectory(root) }
+
+        let destination = manager.nextDestinationURL(for: "100MB.zip")
+        XCTAssertEqual(destination.lastPathComponent, "100MB.zip")
+        let id = manager.registerRow(name: destination.lastPathComponent, fileURL: destination)
+
+        // While in flight, the next destination for the same name must diverge.
+        let whileActive = manager.nextDestinationURL(for: "100MB.zip")
+        XCTAssertEqual(whileActive.lastPathComponent, "100MB (2).zip")
+
+        // Failing before a file lands frees the reservation so a retry reuses the original name.
+        manager.failDownload(id: id, reason: "Download failed (HTTP 403)")
+        let row = try XCTUnwrap(manager.rows.first(where: { $0.id == id }))
+        XCTAssertEqual(row.state, .failed("Download failed (HTTP 403)"))
+        XCTAssertNil(row.fileURL)
+
+        let retried = manager.nextDestinationURL(for: "100MB.zip")
+        XCTAssertEqual(retried.lastPathComponent, "100MB.zip")
+    }
+
+    func testPreparedDownloadRequestAttachesBrowserUserAgentAndDowngradeSafeReferer() throws {
+        let targetURL = try XCTUnwrap(URL(string: "https://ipv4.download.thinkbroadband.com/100MB.zip"))
+        let pageURL = try XCTUnwrap(URL(string: "https://user:secret@www.thinkbroadband.com/download#files"))
+        let base = URLRequest(url: targetURL)
+
+        // Mobile default populates Safari mobile User-Agent and strips credentials/fragment from Referer.
+        let mobileRequest = WebPageController.preparedDownloadRequest(
+            base: base,
+            customUserAgent: nil,
+            pageURL: pageURL,
+            cookies: []
+        )
+        XCTAssertEqual(mobileRequest.value(forHTTPHeaderField: "User-Agent"), WebPageController.mobileUserAgent)
+        XCTAssertEqual(mobileRequest.value(forHTTPHeaderField: "Referer"), "https://www.thinkbroadband.com/download")
+
+        // Desktop mode overrides User-Agent with the desktop Safari string.
+        let desktopRequest = WebPageController.preparedDownloadRequest(
+            base: base,
+            customUserAgent: WebPageController.desktopUserAgent,
+            pageURL: pageURL,
+            cookies: []
+        )
+        XCTAssertEqual(desktopRequest.value(forHTTPHeaderField: "User-Agent"), WebPageController.desktopUserAgent)
+
+        // HTTPS page navigating to an HTTP download target suppresses Referer.
+        let insecureTarget = try XCTUnwrap(URL(string: "http://ipv4.download.thinkbroadband.com/100MB.zip"))
+        let downgradedRequest = WebPageController.preparedDownloadRequest(
+            base: URLRequest(url: insecureTarget),
+            customUserAgent: nil,
+            pageURL: pageURL,
+            cookies: []
+        )
+        XCTAssertNil(downgradedRequest.value(forHTTPHeaderField: "Referer"))
     }
 
     private func findDownloadsButton(in view: UIView) -> UIButton? {

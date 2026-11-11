@@ -183,8 +183,10 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
         totalBytesWritten: Int64,
         totalBytesExpectedToWrite: Int64
     ) {
-        // Unknown totals cannot yield a fraction, so they leave the current value.
-        guard totalBytesExpectedToWrite > 0 else { return }
+        // Unknown totals or non-2xx responses never advance the progress ring.
+        guard totalBytesExpectedToWrite > 0,
+              DownloadsManager.httpErrorReason(for: downloadTask.response) == nil
+        else { return }
         let key = ObjectIdentifier(downloadTask)
         let fraction = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
         Task { @MainActor [weak self] in
@@ -200,6 +202,14 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
     ) {
         let key = ObjectIdentifier(downloadTask)
         let fallback = downloadTask.response?.suggestedFilename ?? "download"
+        if let reason = DownloadsManager.httpErrorReason(for: downloadTask.response) {
+            // Drop non-2xx error bodies before staging so HTTP failures never save as files.
+            cleanupItem(at: location)
+            Task { [weak self] in
+                await self?.failHTTPResponse(taskKey: key, fallbackName: fallback, reason: reason)
+            }
+            return
+        }
         // Stage synchronously off MainActor so the temp file survives the async handoff.
         let staging = FileManager.default.temporaryDirectory.appendingPathComponent("ov-download-\(UUID().uuidString)")
         do {
@@ -246,6 +256,26 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
             let domain = (error as NSError).domain
             let isCancelled = domain == NSURLErrorDomain && code == NSURLErrorCancelled
             manager.failDownload(id: rowID, reason: isCancelled ? "Cancelled" : error.localizedDescription)
+        }
+    }
+
+    /// Clears mappings and surfaces an HTTP status failure on the mapped or relaunched row.
+    @MainActor
+    private func failHTTPResponse(taskKey: ObjectIdentifier, fallbackName: String, reason: String) {
+        let rowID = taskIDs[taskKey]
+        let reserved = rowID.flatMap { names[$0] } ?? fallbackName
+        defer { clearMapping(taskKey: taskKey, rowID: rowID) }
+        let manager = effectiveManager ?? ensureManagerForBackgroundWake()
+        if let rowID {
+            if let index = manager.rows.firstIndex(where: { $0.id == rowID }),
+               manager.rows[index].state == .inProgress
+            {
+                manager.failDownload(id: rowID, reason: reason)
+            }
+        } else {
+            let clean = DownloadsManager.sanitizedFileName(reserved)
+            let newID = manager.registerRow(name: clean, fileURL: nil)
+            manager.failDownload(id: newID, reason: reason)
         }
     }
 
