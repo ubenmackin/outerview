@@ -1,4 +1,5 @@
 // Chrome — Address editing surface with compact inline dismiss and regular popover.
+// swiftlint:disable file_length type_body_length
 import os
 import UIKit
 
@@ -50,6 +51,8 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
             }
         }
     }
+
+    var isPrivateMode: Bool = false
 
     private(set) var suggestions: [Suggestion] = []
     private(set) var suggestionSections: [SuggestionSection] = []
@@ -113,6 +116,8 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
 
     private var initialLoadedText: String = ""
     var isTypingMode: Bool = false
+    private var pendingInlineCompletion: InlineCompletion?
+    private var isApplyingInline: Bool = false
 
     override init(frame: CGRect) {
         favoritesFlowLayout.scrollDirection = .vertical
@@ -209,7 +214,8 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
 
     @discardableResult
     override func resignFirstResponder() -> Bool {
-        textField.resignFirstResponder()
+        clearInlineCompletionState()
+        return textField.resignFirstResponder()
     }
 
     func reloadContent() {
@@ -231,6 +237,7 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         initialLoadedText = text ?? ""
         textField.text = text
         isTypingMode = false
+        clearInlineCompletionState()
         clearInputError()
         favoritesCollectionView.reloadData()
         updateRegularLeadingIcon()
@@ -287,6 +294,49 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         regularErrorLabel.isHidden = true
         updateInputErrorConstraints()
         updateVisibleContent()
+    }
+
+    func applyInlineCompletion(_ completion: InlineCompletion, forTypedPrefix typed: String) {
+        isApplyingInline = true
+        defer { isApplyingInline = false }
+        textField.text = completion.text
+        // UITextInput offsets are UTF-16; Character counts split emoji surrogates.
+        let prefixLength = min((typed as NSString).length, (completion.text as NSString).length)
+        if let start = textField.position(from: textField.beginningOfDocument, offset: prefixLength),
+           let selection = textField.textRange(from: start, to: textField.endOfDocument)
+        {
+            textField.selectedTextRange = selection
+        }
+        pendingInlineCompletion = completion
+        leadingIconImageView.image = FaviconService.shared.cachedFaviconOrMonogram(
+            for: completion.sourceURL,
+            size: 20,
+            isPrivate: isPrivateMode
+        )
+        leadingIconImageView.tintColor = nil
+    }
+
+    func clearInlineCompletionState() {
+        pendingInlineCompletion = nil
+        updateRegularLeadingIcon()
+    }
+
+    func didChangeFieldSelection() {
+        if isApplyingInline {
+            return
+        }
+        guard let pending = pendingInlineCompletion else {
+            return
+        }
+        // Keep the programmatic suffix selection; caret moves collapse or leave the end.
+        guard let current = textField.text, current == pending.text,
+              let selected = textField.selectedTextRange,
+              textField.offset(from: selected.start, to: selected.end) > 0,
+              textField.offset(from: selected.end, to: textField.endOfDocument) == 0
+        else {
+            clearInlineCompletionState()
+            return
+        }
     }
 
     var fieldText: String {
@@ -351,6 +401,14 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
 
     var isTypingModeForTesting: Bool {
         isTypingMode
+    }
+
+    var pendingInlineCompletionForTesting: InlineCompletion? {
+        pendingInlineCompletion
+    }
+
+    var isApplyingInlineForTesting: Bool {
+        isApplyingInline
     }
 
     var panelFrame: CGRect {
@@ -491,7 +549,7 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         suggestionsTableView.estimatedRowHeight = 60
         suggestionsTableView.dataSource = self
         suggestionsTableView.delegate = self
-        suggestionsTableView.register(UITableViewCell.self, forCellReuseIdentifier: "SuggestionCell")
+        suggestionsTableView.register(SuggestionCell.self, forCellReuseIdentifier: SuggestionCell.reuseIdentifier)
         contentAreaContainer.addSubview(suggestionsTableView)
 
         textField.translatesAutoresizingMaskIntoConstraints = false
@@ -506,8 +564,14 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
         textField.delegate = self
         textField.addAction(UIAction { [weak self] _ in
             guard let self else { return }
+            if self.isApplyingInline {
+                return
+            }
             self.clearInputError()
             let currentText = self.textField.text ?? ""
+            if currentText.isEmpty {
+                self.clearInlineCompletionState()
+            }
             self.isTypingMode = !currentText.isEmpty
             self.updateRegularLeadingIcon()
             self.updateVisibleContent()
@@ -783,9 +847,22 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     }
 
     func updateRegularLeadingIcon() {
+        if let completion = pendingInlineCompletion {
+            leadingIconImageView.image = FaviconService.shared.cachedFaviconOrMonogram(
+                for: completion.sourceURL,
+                size: 20,
+                isPrivate: isPrivateMode
+            )
+            leadingIconImageView.tintColor = nil
+            return
+        }
         let trimmed = (textField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if !isTypingMode, !trimmed.isEmpty, let url = activePageURL {
-            leadingIconImageView.image = FaviconService.shared.cachedFaviconOrMonogram(for: url, size: 20)
+            leadingIconImageView.image = FaviconService.shared.cachedFaviconOrMonogram(
+                for: url,
+                size: 20,
+                isPrivate: isPrivateMode
+            )
             leadingIconImageView.tintColor = nil
         } else {
             let config = UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
@@ -851,6 +928,7 @@ final class AddressEditorView: UIView, ChromePlacementDriven {
     }
 
     @objc private func handleDone() {
+        clearInlineCompletionState()
         textField.resignFirstResponder()
         onDone?()
     }
@@ -969,3 +1047,5 @@ struct SuggestionSection: Equatable, Sendable {
     let title: String
     let items: [Suggestion]
 }
+
+// swiftlint:enable file_length type_body_length

@@ -1,7 +1,4 @@
-//
-//  SuggestionEngineTests.swift
-//  OuterView
-//
+// URLHandling — Suggestion ranking plus inline completion tests.
 
 @testable import OuterView
 import XCTest
@@ -399,6 +396,155 @@ final class SuggestionEngineTests: XCTestCase {
         XCTAssertEqual(tabVM.primary, "Cool Math")
         XCTAssertEqual(tabVM.secondary, "Switch to Tab • coolmathgames.com")
         XCTAssertEqual(tabVM.systemImageName, "square.on.square")
+    }
+
+    func testInlineCompletionTabsBeatBookmarks() {
+        // Both hosts share the prefix; tabs rank first by pipeline order.
+        let tabURL = url("https://example.com/tab")
+        let tabs = [SuggestionTab(id: UUID(), title: "Tab Page", url: tabURL)]
+        let bookmarks = [bookmark("Bookmark Page", "https://example.com/bookmark")]
+        let result = SuggestionEngine.inlineCompletion(
+            for: "exam",
+            tabs: tabs,
+            bookmarks: bookmarks,
+            recents: []
+        )
+        XCTAssertEqual(result?.sourceURL, tabURL)
+    }
+
+    func testInlineCompletionBookmarksBeatHistory() {
+        // Both hosts share the prefix; bookmarks outrank history recents.
+        let bookmarkURL = url("https://example.com/")
+        let bookmarks = [bookmark("Bookmark Page", "https://example.com/")]
+        let recents = [
+            history(
+                "History Page",
+                "https://example.org/archive",
+                visitedAt: Date(timeIntervalSince1970: 200)
+            )
+        ]
+        let result = SuggestionEngine.inlineCompletion(
+            for: "exam",
+            tabs: [],
+            bookmarks: bookmarks,
+            recents: recents
+        )
+        XCTAssertEqual(result?.sourceURL, bookmarkURL)
+    }
+
+    func testInlineCompletionNewestHistoryWins() {
+        // Both hosts share the prefix; newest visit wins regardless of input order.
+        let older = history(
+            "Older Page",
+            "https://alpha-old.example.com/",
+            visitedAt: Date(timeIntervalSince1970: 100)
+        )
+        let newer = history(
+            "Newer Page",
+            "https://alpha-new.example.com/",
+            visitedAt: Date(timeIntervalSince1970: 200)
+        )
+        let storedOldestFirst = SuggestionEngine.inlineCompletion(
+            for: "alpha",
+            tabs: [],
+            bookmarks: [],
+            recents: [older, newer]
+        )
+        XCTAssertEqual(storedOldestFirst?.sourceURL, url("https://alpha-new.example.com/"))
+        let storedNewestFirst = SuggestionEngine.inlineCompletion(
+            for: "alpha",
+            tabs: [],
+            bookmarks: [],
+            recents: [newer, older]
+        )
+        XCTAssertEqual(storedNewestFirst?.sourceURL, url("https://alpha-new.example.com/"))
+    }
+
+    func testInlineCompletionTitleOnlyReturnsNil() {
+        // Titles never drive inline completion; only host plus schemeless forms do.
+        let titleOnly = SuggestionEngine.inlineCompletion(
+            for: "alpha",
+            tabs: [],
+            bookmarks: [bookmark("Alpha Title Only", "https://example.com/")],
+            recents: []
+        )
+        XCTAssertNil(titleOnly)
+    }
+
+    func testInlineCompletionAbsoluteURLOnlyReturnsNil() {
+        // A scheme-only prefix has no schemeless suffix to append, so skip.
+        let schemeOnly = SuggestionEngine.inlineCompletion(
+            for: "https",
+            tabs: [],
+            bookmarks: [bookmark("Example", "https://example.com/")],
+            recents: []
+        )
+        XCTAssertNil(schemeOnly)
+    }
+
+    func testInlineCompletionPrefixOnlyGatingRejectsContainsInPath() {
+        let pathOnly = SuggestionEngine.inlineCompletion(
+            for: "deep-path",
+            tabs: [],
+            bookmarks: [],
+            recents: [history("Unrelated", "https://example.com/deep-path")]
+        )
+        XCTAssertNil(pathOnly)
+        let hostContains = SuggestionEngine.inlineCompletion(
+            for: "xample",
+            tabs: [],
+            bookmarks: [bookmark("Other", "https://example.com/")],
+            recents: []
+        )
+        XCTAssertNil(hostContains)
+    }
+
+    func testInlineCompletionSpaceQueryReturnsNil() {
+        // Spaces never appear in URL forms; the guard rejects before matching.
+        let tabURL = url("https://apple.example.com/")
+        let tabs = [SuggestionTab(id: UUID(), title: "Apple Page", url: tabURL)]
+        let bookmarks = [bookmark("Apple Page", "https://apple.example.com/pie")]
+        let result = SuggestionEngine.inlineCompletion(
+            for: "apple pie",
+            tabs: tabs,
+            bookmarks: bookmarks,
+            recents: []
+        )
+        XCTAssertNil(result)
+    }
+
+    func testInlineCompletionEmptyQueryReturnsNil() {
+        let bookmarks = [bookmark("Example", "https://example.com/")]
+        XCTAssertNil(
+            SuggestionEngine.inlineCompletion(for: "", tabs: [], bookmarks: bookmarks, recents: [])
+        )
+        XCTAssertNil(
+            SuggestionEngine.inlineCompletion(for: "   ", tabs: [], bookmarks: bookmarks, recents: [])
+        )
+    }
+
+    func testInlineCompletionOverlongInputReturnsNil() {
+        // Length cap rejects before any host prefix could match.
+        let longHost = String(repeating: "a", count: 2060) + ".example.com"
+        let longURL = url("https://\(longHost)/")
+        let overlong = String(repeating: "a", count: 2049)
+        let bookmarks = [SuggestionBookmark(title: "Long Host", url: longURL, isFavorite: false)]
+        XCTAssertNil(
+            SuggestionEngine.inlineCompletion(for: overlong, tabs: [], bookmarks: bookmarks, recents: [])
+        )
+    }
+
+    func testInlineCompletionPreservesTypedCasing() {
+        let bookmarkURL = url("https://example.com/")
+        let result = SuggestionEngine.inlineCompletion(
+            for: "EXA",
+            tabs: [],
+            bookmarks: [bookmark("Example", "https://example.com/")],
+            recents: []
+        )
+        XCTAssertEqual(result?.text, "EXAmple.com/")
+        XCTAssertEqual(result?.sourceURL, bookmarkURL)
+        XCTAssertEqual(result?.displayHost, "example.com")
     }
 
     @MainActor

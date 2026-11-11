@@ -199,6 +199,7 @@ extension BrowserRootViewController {
     func configureEditor(text: String, engine: SearchEngine) {
         let activeURL = peekActivePage()?.snapshot.url
         let favorites = StartPageViewModel.sortedFavorites(bookmarkStore?.fetchFavorites() ?? [])
+        editorView.isPrivateMode = tabs.first(where: { $0.id == selectedTabID })?.isPrivate ?? false
         editorView.configure(
             text: text,
             suggestions: [],
@@ -319,6 +320,7 @@ extension BrowserRootViewController {
             let activeIsPrivate = tabs.first(where: { $0.id == selectedTabID })?.isPrivate ?? false
             if activeIsPrivate {
                 editorView.setSuggestions([])
+                editorView.clearInlineCompletionState()
                 return
             }
             let recentQueries = (recentSearchStore?.fetchRecents() ?? []).map(\.query)
@@ -333,6 +335,7 @@ extension BrowserRootViewController {
                 )
                 editorView.setSuggestions(emptySuggestions)
             }
+            editorView.clearInlineCompletionState()
             return
         }
 
@@ -362,9 +365,26 @@ extension BrowserRootViewController {
         )
         editorView.setSuggestions(localSuggestions)
 
+        // Inline fills only from the same local snapshots; remote rows never drive the field.
+        let inline = SuggestionEngine.inlineCompletion(for: query, tabs: tabSnapshots, bookmarks: bookmarkSnapshots, recents: historySnapshots)
+        let appliedInlineText: String?
+        if trimmed.contains(" ") {
+            // Multi-word input skips field fill while list rows still rank normally.
+            editorView.clearInlineCompletionState()
+            appliedInlineText = nil
+        } else if let completion = inline, completion.text.count > trimmed.count,
+                  completion.text.lowercased().hasPrefix(trimmed.lowercased())
+        {
+            editorView.applyInlineCompletion(completion, forTypedPrefix: trimmed)
+            appliedInlineText = completion.text
+        } else {
+            editorView.clearInlineCompletionState()
+            appliedInlineText = nil
+        }
+
         // 2. Debounced background fetch for per-engine remote suggestions
         let engine = currentSearchEngine()
-        suggestionTask = Task { [weak self] in
+        suggestionTask = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(nanoseconds: 120_000_000)
             } catch {
@@ -375,6 +395,18 @@ extension BrowserRootViewController {
             let remoteSuggestions = await GoogleSuggestService.shared.fetchSuggestions(for: trimmed, engine: engine)
             guard !Task.isCancelled, !remoteSuggestions.isEmpty else { return }
 
+            // Typed staleness compares against the applied fill so the suffix never looks like drift.
+            let currentTrimmed = self.editorFieldText().trimmingCharacters(in: .whitespacesAndNewlines)
+            let isStillCurrent = if let appliedInlineText {
+                currentTrimmed == appliedInlineText || currentTrimmed == trimmed
+            } else {
+                currentTrimmed == trimmed
+            }
+            guard isStillCurrent else {
+                self.editorView.clearInlineCompletionState()
+                return
+            }
+
             let mergedSuggestions = SuggestionEngine.suggestions(
                 for: query,
                 currentURL: currentURL,
@@ -384,6 +416,16 @@ extension BrowserRootViewController {
                 recents: historySnapshots
             )
             guard !Task.isCancelled else { return }
+            let latestTrimmed = self.editorFieldText().trimmingCharacters(in: .whitespacesAndNewlines)
+            let isStillLatest = if let appliedInlineText {
+                latestTrimmed == appliedInlineText || latestTrimmed == trimmed
+            } else {
+                latestTrimmed == trimmed
+            }
+            guard isStillLatest else {
+                self.editorView.clearInlineCompletionState()
+                return
+            }
             self.editorView.setSuggestions(mergedSuggestions)
         }
     }

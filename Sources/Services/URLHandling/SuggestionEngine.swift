@@ -1,7 +1,4 @@
-//
-//  SuggestionEngine.swift
-//  OuterView
-//
+// URLHandling — Multi-source suggestion ranking plus inline completion.
 
 import Foundation
 
@@ -64,11 +61,17 @@ struct SuggestionHistoryItem: Hashable, Sendable {
     let visitedAt: Date
 }
 
-/// Synchronous pure ranker for the address bar's suggestion list; callers own
-/// any debounce timing. Stage order: open tab matches, exact/prefix bookmark rows,
-/// Google suggestions, title/host contains bookmarks (≤ 4), history contains rows (≤ 4, newest first),
-/// then the always-present search row and, when a page is open, the page-find row,
-/// all capped at 12 rows total.
+/// Inline autocompletion value. Text is the schemeless URL with the user's
+/// typed casing preserved over the matched prefix.
+struct InlineCompletion: Hashable, Sendable {
+    let text: String
+    let sourceURL: URL
+    let displayHost: String
+}
+
+/// Synchronous pure ranker for the address bar list; callers own debounce timing.
+/// Stage order: tabs, prefix bookmarks, Google, contains (≤ 4), history (≤ 4 newest),
+/// plus search and page-find rows, capped at 12 total.
 enum SuggestionEngine: Sendable {
     private enum Limits {
         static let maxRows = 12
@@ -131,6 +134,43 @@ enum SuggestionEngine: Sendable {
         appendHistoryMatches(recents: recents, needle: needle, budget: budget, kinds: &kinds)
 
         return (kinds + trailing).map { Suggestion(kind: $0) }
+    }
+
+    nonisolated static func inlineCompletion(
+        for query: String,
+        tabs: [SuggestionTab],
+        bookmarks: [SuggestionBookmark],
+        recents: [SuggestionHistoryItem]
+    ) -> InlineCompletion? {
+        let typed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typed.isEmpty else { return nil }
+        let needle = typed.lowercased()
+        guard !needle.contains(" "), needle.count <= 2048 else { return nil }
+
+        for tab in tabs {
+            guard isInlinePrefixMatch(url: tab.url, needle: needle) else { continue }
+            if let completion = makeInlineCompletion(typed: typed, needle: needle, url: tab.url) {
+                return completion
+            }
+        }
+        for bookmark in bookmarks {
+            guard isInlinePrefixMatch(url: bookmark.url, needle: needle) else { continue }
+            if let completion = makeInlineCompletion(typed: typed, needle: needle, url: bookmark.url) {
+                return completion
+            }
+        }
+        let ordered = Array(recents.prefix(200)).enumerated().sorted {
+            $0.element.visitedAt != $1.element.visitedAt
+                ? $0.element.visitedAt > $1.element.visitedAt
+                : $0.offset < $1.offset
+        }.map(\.element)
+        for entry in ordered {
+            guard isInlinePrefixMatch(url: entry.url, needle: needle) else { continue }
+            if let completion = makeInlineCompletion(typed: typed, needle: needle, url: entry.url) {
+                return completion
+            }
+        }
+        return nil
     }
 
     private static func appendOpenTabMatches(
@@ -265,6 +305,31 @@ enum SuggestionEngine: Sendable {
 
     private static func isContainsMatch(title: String, url: URL, needle: String) -> Bool {
         title.lowercased().contains(needle) || HostFormatter.host(of: url).lowercased().contains(needle)
+    }
+
+    private static func isInlinePrefixMatch(url: URL, needle: String) -> Bool {
+        let host = HostFormatter.host(of: url).lowercased()
+        if !host.isEmpty, host.hasPrefix(needle) {
+            return true
+        }
+        if schemelessString(of: url).lowercased().hasPrefix(needle) {
+            return true
+        }
+        return url.absoluteString.lowercased().hasPrefix(needle)
+    }
+
+    private static func makeInlineCompletion(typed: String, needle: String, url: URL) -> InlineCompletion? {
+        let schemeless = schemelessString(of: url)
+        // Only schemeless forms complete; scheme-only or title-only prefix
+        // wins have no schemeless suffix to append, so skip the candidate.
+        guard schemeless.lowercased().hasPrefix(needle) else { return nil }
+        // dropFirst clamps past the end, so a shorter candidate yields just the typed prefix.
+        let suffix = String(schemeless.dropFirst(min(typed.count, schemeless.count)))
+        return InlineCompletion(
+            text: typed + suffix,
+            sourceURL: url,
+            displayHost: HostFormatter.host(of: url)
+        )
     }
 
     private static func schemelessString(of url: URL) -> String {
