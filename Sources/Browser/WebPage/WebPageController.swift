@@ -508,12 +508,23 @@ extension WebPageController: WKNavigationDelegate {
             if !isPrivateTab {
                 if let service = backgroundService {
                     let response = navigationResponse.response
-                    let isCurrent = pendingActionGeneration == documentGeneration
-                    let original = isCurrent && pendingActionRequest?.url == responseURL ? pendingActionRequest : nil
+                    let isCurrent = pendingActionGeneration == documentGeneration || pendingActionGeneration == documentGeneration + 1
+                    var resolved: URLRequest = if isCurrent, let pending = pendingActionRequest, pending.url == responseURL {
+                        pending
+                    } else {
+                        URLRequest(url: responseURL)
+                    }
+                    if isCurrent, let pending = pendingActionRequest, pending.url != responseURL {
+                        for field in ["Referer", "User-Agent"] {
+                            if let value = pending.value(forHTTPHeaderField: field) {
+                                resolved.setValue(value, forHTTPHeaderField: field)
+                            }
+                        }
+                    }
                     clearPendingAction()
                     startStandardTransfer(
                         to: service,
-                        request: original ?? URLRequest(url: responseURL),
+                        request: resolved,
                         suggestedName: response.suggestedFilename ?? responseURL.lastPathComponent
                     )
                     decisionHandler(.cancel)
@@ -693,6 +704,7 @@ extension WebPageController: WKNavigationDelegate {
         // Captured upfront so deallocation during fetch still surfaces a row.
         let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
         let agent = webView.customUserAgent
+        let pageURL = webView.url
         Task { @MainActor [weak self] in
             // Tests skip the store callback so the handoff never waits forever.
             let all: [HTTPCookie] =
@@ -703,22 +715,29 @@ extension WebPageController: WKNavigationDelegate {
                         cookieStore.getAllCookies { continuation.resume(returning: $0) }
                     }
                 }
-            var request = base
-            if let url = base.url {
-                let matching = Self.matchingCookies(all, for: url)
-                let header = HTTPCookie.requestHeaderFields(with: matching)
-                for (field, value) in header {
-                    request.setValue(value, forHTTPHeaderField: field)
-                }
-            }
-            if let agent {
-                request.setValue(agent, forHTTPHeaderField: "User-Agent")
-            }
+            let request = Self.preparedDownloadRequest(
+                base: base,
+                customUserAgent: agent,
+                pageURL: pageURL,
+                cookies: all
+            )
             guard service.start(request: request, suggestedName: fallback, reusing: rowID) != nil else {
                 self?.failClosedStandardDownload(suggestedName: fallback, reusing: rowID)
                 return
             }
         }
+    }
+
+    /// Attaches matching cookies, browser User-Agent, and downgrade-safe Referer for daemon transfers.
+    nonisolated static func preparedDownloadRequest(
+        base: URLRequest,
+        customUserAgent: String?,
+        pageURL: URL?,
+        cookies: [HTTPCookie]
+    ) -> URLRequest {
+        DownloadsManager.preparedRequest(
+            base: base, customUserAgent: customUserAgent, defaultUserAgent: mobileUserAgent, pageURL: pageURL, cookies: cookies
+        )
     }
 
     /// Fail-closed surface for unwired standard downloads: never foreground.
@@ -739,31 +758,6 @@ extension WebPageController: WKNavigationDelegate {
             lastErrorCode = nil
             finishRefreshing()
             refreshSnapshot()
-        }
-    }
-
-    /// Cookies matching host plus path plus secure, for the daemon request.
-    nonisolated static func matchingCookies(_ all: [HTTPCookie], for url: URL) -> [HTTPCookie] {
-        guard let host = url.host?.lowercased() else {
-            return []
-        }
-        let path = url.path.isEmpty ? "/" : url.path
-        let isSecure = url.scheme?.lowercased() == "https"
-        return all.filter { cookie in
-            let domain = cookie.domain.lowercased().trimmingCharacters(in: .init(charactersIn: "."))
-            guard host == domain || host.hasSuffix("." + domain) else {
-                return false
-            }
-            if cookie.isSecure, !isSecure {
-                return false
-            }
-            let cookiePath = cookie.path.isEmpty ? "/" : cookie.path
-            if path == cookiePath {
-                return true
-            }
-            // Boundary check so /private never matches /private-evil per RFC6265.
-            let prefix = cookiePath.hasSuffix("/") ? cookiePath : cookiePath + "/"
-            return path.hasPrefix(prefix)
         }
     }
 }
@@ -863,7 +857,8 @@ extension WebPageController {
 // MARK: - Desktop Mode
 
 extension WebPageController {
-    static let desktopUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
+    nonisolated static let mobileUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+    nonisolated static let desktopUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
 
     func toggleDesktopMode() {
         isDesktopMode.toggle()

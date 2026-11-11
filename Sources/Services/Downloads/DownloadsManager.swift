@@ -1,7 +1,4 @@
-//
-//  DownloadsManager.swift
-//  OuterView
-//
+// Downloads — row plus destination plus transfer owner for standard and private downloads.
 
 import Foundation
 import Observation
@@ -157,6 +154,85 @@ final class DownloadsManager: NSObject {
         ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file)
     }
 
+    /// Non-2xx HTTP status codes surface a failure reason so error pages never save as files.
+    nonisolated static func httpErrorReason(for response: URLResponse?) -> String? {
+        guard let http = response as? HTTPURLResponse,
+              !(200 ..< 300).contains(http.statusCode)
+        else {
+            return nil
+        }
+        return "Download failed (HTTP \(http.statusCode))"
+    }
+
+    /// Attaches matching cookies, browser User-Agent, and downgrade-safe Referer for daemon transfers.
+    nonisolated static func preparedRequest(
+        base: URLRequest,
+        customUserAgent: String?,
+        defaultUserAgent: String,
+        pageURL: URL?,
+        cookies: [HTTPCookie]
+    ) -> URLRequest {
+        var request = base
+        if let url = base.url {
+            let matching = matchingCookies(cookies, for: url)
+            if !matching.isEmpty {
+                for (field, value) in HTTPCookie.requestHeaderFields(with: matching) {
+                    request.setValue(value, forHTTPHeaderField: field)
+                }
+            }
+            if request.value(forHTTPHeaderField: "Referer") == nil,
+               let referer = sanitizedReferer(from: pageURL, targetURL: url)
+            {
+                request.setValue(referer, forHTTPHeaderField: "Referer")
+            }
+        }
+        if let customUserAgent, !customUserAgent.isEmpty {
+            request.setValue(customUserAgent, forHTTPHeaderField: "User-Agent")
+        } else if request.value(forHTTPHeaderField: "User-Agent") == nil {
+            request.setValue(defaultUserAgent, forHTTPHeaderField: "User-Agent")
+        }
+        return request
+    }
+
+    /// Cookies matching host plus path plus secure, for the daemon request.
+    nonisolated static func matchingCookies(_ all: [HTTPCookie], for url: URL) -> [HTTPCookie] {
+        guard let host = url.host?.lowercased() else { return [] }
+        let path = url.path.isEmpty ? "/" : url.path
+        let isSecure = url.scheme?.lowercased() == "https"
+        return all.filter { cookie in
+            let domain = cookie.domain.lowercased().trimmingCharacters(in: .init(charactersIn: "."))
+            guard host == domain || host.hasSuffix("." + domain) else { return false }
+            if cookie.isSecure, !isSecure {
+                return false
+            }
+            let cookiePath = cookie.path.isEmpty ? "/" : cookie.path
+            if path == cookiePath {
+                return true
+            }
+            // Boundary check so /private never matches /private-evil per RFC6265.
+            let prefix = cookiePath.hasSuffix("/") ? cookiePath : cookiePath + "/"
+            return path.hasPrefix(prefix)
+        }
+    }
+
+    /// Strips credentials and fragments and enforces no-referrer-when-downgrade.
+    nonisolated static func sanitizedReferer(from pageURL: URL?, targetURL: URL) -> String? {
+        guard let pageURL,
+              let sourceScheme = pageURL.scheme?.lowercased(),
+              sourceScheme == "http" || sourceScheme == "https",
+              let targetScheme = targetURL.scheme?.lowercased(),
+              targetScheme == "http" || targetScheme == "https",
+              !(sourceScheme == "https" && targetScheme == "http"),
+              var components = URLComponents(url: pageURL, resolvingAgainstBaseURL: false)
+        else {
+            return nil
+        }
+        components.user = nil
+        components.password = nil
+        components.fragment = nil
+        return components.url?.absoluteString
+    }
+
     nonisolated static func isAttachmentResponse(_ response: URLResponse) -> Bool {
         guard let http = response as? HTTPURLResponse,
               let disposition = http.value(forHTTPHeaderField: "Content-Disposition")
@@ -293,6 +369,13 @@ final class DownloadsManager: NSObject {
     func failDownload(id: UUID, reason: String?) {
         guard let index = rows.firstIndex(where: { $0.id == id }) else { return }
         rows[index].state = .failed(reason)
+        if let fileURL = destinations[id] ?? rows[index].fileURL,
+           !fileManager.fileExists(atPath: fileURL.path)
+        {
+            // Release reservation when no file landed on disk so retries reuse the original name.
+            destinations[id] = nil
+            rows[index].fileURL = nil
+        }
     }
 
     func cancel(id: UUID) {
@@ -396,7 +479,23 @@ extension DownloadsManager: WKDownloadDelegate {
         completionHandler: @escaping @MainActor @Sendable (URL?) -> Void
     ) {
         let clean = Self.sanitizedFileName(suggestedFilename.isEmpty ? (response.suggestedFilename ?? "download") : suggestedFilename)
-        if let id = downloadIDs[ObjectIdentifier(download)] {
+        let key = ObjectIdentifier(download)
+        if let reason = Self.httpErrorReason(for: response) {
+            // Reject HTTP error responses so WKDownload never writes an error page to disk.
+            if let id = downloadIDs[key] {
+                failDownload(id: id, reason: reason)
+                observations[id]?.invalidate()
+                observations[id] = nil
+                downloads[id] = nil
+                downloadIDs[key] = nil
+            } else {
+                let id = registerRow(name: clean, fileURL: nil)
+                failDownload(id: id, reason: reason)
+            }
+            completionHandler(nil)
+            return
+        }
+        if let id = downloadIDs[key] {
             let destination = uniqueDestination(for: clean, excluding: id)
             destinations[id] = destination
             if let index = rows.firstIndex(where: { $0.id == id }) {
