@@ -551,6 +551,10 @@ final class BrowserRootViewController: UIViewController {
     /// the instance so gestures never outlive the controller via a global.
     var horizontalSwitchSession: HorizontalSwitchSession?
     var horizontalSwitchAnimator: UIViewPropertyAnimator?
+    /// Live left-edge child-close session plus its settle animator, stored
+    /// on the instance for the same reason as the pill-switch pair above.
+    var edgeCloseSession: EdgeCloseSession?
+    var edgeCloseAnimator: UIViewPropertyAnimator?
     var overviewDragAnimator: UIViewPropertyAnimator?
     var overviewDragAnchorY: CGFloat = 0
     var lastStatusBarHidden: Bool?
@@ -701,6 +705,7 @@ final class BrowserRootViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
         setupHierarchy()
+        installEdgeCloseGesture()
         wireLibraryInlineCommands()
         setupStartPageContent()
         applyChromePlacement()

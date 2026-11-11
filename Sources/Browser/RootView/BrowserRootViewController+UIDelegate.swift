@@ -13,7 +13,7 @@ extension BrowserRootViewController: WebPageUIDelegateHandler {
         let isPrivate = controller.isPrivateTab
         configuration.allowsInlineMediaPlayback = true
         configuration.allowsPictureInPictureMediaPlayback = true
-        let record = TabRecord(isPrivate: isPrivate, groupId: isPrivate ? nil : overviewController.selectedGroupID)
+        let record = TabRecord(isPrivate: isPrivate, groupId: isPrivate ? nil : overviewController.selectedGroupID, parentTabID: selectedTabID)
         let newPage = WebPageController(configuration: configuration)
         tabPool.create(id: record.id, isPrivate: isPrivate, page: newPage)
 

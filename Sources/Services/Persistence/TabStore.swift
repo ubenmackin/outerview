@@ -216,6 +216,7 @@ final class TabStore {
             existing.title = sanitizedTitle
             existing.lastActiveAt = tab.lastActiveAt
             existing.groupId = tab.groupId
+            existing.parentTabID = tab.parentTabID
         } else {
             context.insert(
                 TabRecord(
@@ -225,7 +226,8 @@ final class TabStore {
                     isPrivate: false,
                     createdAt: tab.createdAt,
                     lastActiveAt: tab.lastActiveAt,
-                    groupId: tab.groupId
+                    groupId: tab.groupId,
+                    parentTabID: tab.parentTabID
                 )
             )
         }
