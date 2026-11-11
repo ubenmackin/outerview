@@ -298,7 +298,7 @@ final class InterfaceModeTests: XCTestCase {
         XCTAssertEqual(root.topBarView.currentHeightConstant, TopBarView.remnantHeight)
     }
 
-    func testNonDuoPhoneTopInsetMatchesContentReservation() {
+    func testTopInsetMode3ParksMode4EdgeToEdge() {
         let expanded = ChromeState(rail: .visible, pill: .expanded)
         let collapsed = ChromeState(rail: .hidden, pill: .minified)
         // Mode 3 parks below the status cluster: inset equals safeAreaTop.
@@ -324,19 +324,32 @@ final class InterfaceModeTests: XCTestCase {
                 CGFloat(top)
             )
         }
-        // Mode 4 (portrait inner/iPad) matches safeAreaTop like Mode 3
-        XCTAssertEqual(
-            BrowserRootViewController.topContentInset(
-                for: .compact,
-                state: expanded,
-                stripVisible: false,
-                interfaceMode: .duoInnerOrPadPortrait,
-                safeAreaTop: 59
-            ),
-            59
-        )
+        // Mode 4 (portrait inner/iPad) is edge-to-edge under the status
+        // cluster: inset stays 0 in every state regardless of safeAreaTop.
+        for top in [47, 59] {
+            XCTAssertEqual(
+                BrowserRootViewController.topContentInset(
+                    for: .compact,
+                    state: expanded,
+                    stripVisible: false,
+                    interfaceMode: .duoInnerOrPadPortrait,
+                    safeAreaTop: CGFloat(top)
+                ),
+                0
+            )
+            XCTAssertEqual(
+                BrowserRootViewController.topContentInset(
+                    for: .compact,
+                    state: collapsed,
+                    stripVisible: false,
+                    interfaceMode: .duoInnerOrPadPortrait,
+                    safeAreaTop: CGFloat(top)
+                ),
+                0
+            )
+        }
 
-        // Duo modes ignore the cluster inset and keep prior reservations.
+        // Mode 1 duoOuter ignores the cluster inset and keeps prior reservations.
         XCTAssertEqual(
             BrowserRootViewController.topContentInset(
                 for: .compact,

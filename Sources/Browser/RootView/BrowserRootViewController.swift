@@ -81,6 +81,8 @@ final class BrowserRootViewController: UIViewController {
 
     /// Mode 3 parks web content below the status cluster: inset equals
     /// live safeAreaTop, never zero when a top inset is vended.
+    /// Mode 4 renders edge-to-edge under the status cluster: top inset
+    /// is 0 in every chrome state regardless of safeAreaTop.
     nonisolated static func topContentInset(
         for placement: ChromePlacement,
         state: ChromeState,
@@ -88,7 +90,10 @@ final class BrowserRootViewController: UIViewController {
         interfaceMode: BrowserInterfaceMode = .duoInnerOrPadLandscape,
         safeAreaTop: CGFloat = 0
     ) -> CGFloat {
-        if interfaceMode == .nonDuoPhone || interfaceMode == .duoInnerOrPadPortrait {
+        if interfaceMode == .duoInnerOrPadPortrait {
+            return 0
+        }
+        if interfaceMode == .nonDuoPhone {
             return max(0, safeAreaTop)
         }
         guard placement == .regular else { return 0 }
