@@ -306,5 +306,8 @@ final class WebPageControllerTests: XCTestCase {
     func testBackForwardNavigationGesturesEnabledOnInit() {
         let controller = WebPageController(configuration: WKWebViewConfiguration())
         XCTAssertTrue(controller.webView.allowsBackForwardNavigationGestures)
+        #if DEBUG
+            XCTAssertTrue(controller.webView.isInspectable)
+        #endif
     }
 }

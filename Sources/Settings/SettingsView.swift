@@ -27,6 +27,10 @@ struct SettingsView: View {
     @State private var showingClearTabsConfirm = false
     @State private var showingResetZoomsConfirm = false
     @State private var actionError: String?
+    #if targetEnvironment(simulator)
+        @State private var seedSummary: String?
+        @State private var showingSeedComplete = false
+    #endif
 
     init(
         viewModel: SettingsViewModel = SettingsViewModel(),
@@ -95,6 +99,9 @@ struct SettingsView: View {
             dataSection
             textZoomSection
             aboutSection
+            #if targetEnvironment(simulator)
+                seedingSection
+            #endif
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
@@ -147,6 +154,13 @@ struct SettingsView: View {
         } message: {
             actionErrorMessage
         }
+        #if targetEnvironment(simulator)
+        .alert("Seed Complete", isPresented: $showingSeedComplete) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(seedSummary ?? "")
+        }
+        #endif
     }
 
     private var iCloudSyncSection: some View {
@@ -260,6 +274,58 @@ struct SettingsView: View {
             Text(SettingsViewModel.appVersionLabel)
         }
     }
+
+    #if targetEnvironment(simulator)
+        private var seedingSection: some View {
+            Section {
+                Button("Seed iCloud Schema") {
+                    doSeedSchema()
+                }
+                Button("Remove Seeded Data", role: .destructive) {
+                    doClearSeeded()
+                }
+            } header: {
+                Text("CloudKit Seeding")
+            } footer: {
+                Text(
+                    "Simulator only. Creates one record of every synced type so CloudKit builds "
+                        + "production schema plus indexes. Seeded items carry the [CloudKit Seed] mark. "
+                        + "Seeding also writes sample values into the synced settings, overwriting the "
+                        + "eight synced settings without restoring prior values."
+                )
+            }
+        }
+
+        private func doSeedSchema() {
+            do {
+                let database = try OuterViewDatabase()
+                let report = try CloudKitSchemaSeeder.seed(
+                    database: database,
+                    defaults: .standard,
+                    keyValueStore: .default
+                )
+                seedSummary = report.summary
+                showingSeedComplete = true
+            } catch {
+                actionError = error.localizedDescription
+            }
+        }
+
+        private func doClearSeeded() {
+            do {
+                let database = try OuterViewDatabase()
+                let report = try CloudKitSchemaSeeder.clearSeeded(
+                    database: database,
+                    defaults: .standard,
+                    keyValueStore: .default
+                )
+                seedSummary = report.summary
+                showingSeedComplete = true
+            } catch {
+                actionError = error.localizedDescription
+            }
+        }
+    #endif
 
     /// Typed binding pins the error-alert overload so inference stays trivial.
     private var actionErrorBinding: Binding<Bool> {

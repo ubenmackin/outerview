@@ -78,6 +78,10 @@
 			<string>com.volcrypt.OuterView.search</string>
 		</dict>
 	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 </dict>

@@ -148,9 +148,15 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
                         completion(provider().children)
                     }
                 ])
+                // System menu owns the tap; drop the touchUpInside forwarder
+                // so one tap never fires two presentations on one layer.
+                pageMenuButton.removeAction(identifiedBy: pageMenuTapAction.identifier, for: .touchUpInside)
             } else {
                 pageMenuButton.showsMenuAsPrimaryAction = false
                 pageMenuButton.menu = nil
+                // Remove-then-add keeps reinstall idempotent across provider churn.
+                pageMenuButton.removeAction(identifiedBy: pageMenuTapAction.identifier, for: .touchUpInside)
+                pageMenuButton.addAction(pageMenuTapAction, for: .touchUpInside)
             }
         }
     }
@@ -188,6 +194,11 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
     private var cachedMinifiedHost: String?
     private var cachedMinifiedMinimumWidth: CGFloat?
     private var lockedPanAxis: PillPanAxis?
+
+    private lazy var pageMenuTapAction: UIAction = .init(
+        title: "",
+        identifier: UIAction.Identifier("com.volcrypt.OuterView.pageMenuTap")
+    ) { [weak self] _ in self?.onPageMenu?() }
 
     private let backgroundEffectView = UIVisualEffectView(effect: GlassEffect.make())
     private let contentStack = UIStackView()
@@ -299,7 +310,7 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
         )
         pageMenuButton.tintColor = .label
         pageMenuButton.accessibilityLabel = "Page menu"
-        pageMenuButton.addAction(UIAction { [weak self] _ in self?.onPageMenu?() }, for: .touchUpInside)
+        pageMenuButton.addAction(pageMenuTapAction, for: .touchUpInside)
 
         actionButton.tintColor = .label
         actionButton.accessibilityLabel = "Reload page"
