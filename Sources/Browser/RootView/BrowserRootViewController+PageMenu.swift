@@ -251,9 +251,11 @@ extension BrowserRootViewController {
         guard let url = activePage()?.snapshot.url, let host = url.host, !host.isEmpty else { return }
         let store = websiteSettingsStore
         let page = activePage()
+        let isPrivate = page?.isPrivateTab ?? true
         let settingsView = WebsiteSettingsView(
             host: host,
             store: store,
+            isPrivate: isPrivate,
             onSettingsChanged: { [weak page] newSettings in
                 guard let page else { return }
                 if page.isDesktopMode != newSettings.requestDesktopWebsite {

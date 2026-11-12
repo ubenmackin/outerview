@@ -899,7 +899,7 @@ extension WebPageController {
     func applyWebsiteSettings(for url: URL) {
         guard let host = url.host, !host.isEmpty else { return }
         if !hasPerTabDesktopOverride {
-            let desktopDefault = websiteSettingsStore?.settings(forHost: host).requestDesktopWebsite ?? false
+            let desktopDefault = websiteSettingsStore?.settings(forHost: host, isPrivate: isPrivateTab).requestDesktopWebsite ?? false
             if isDesktopMode != desktopDefault {
                 isDesktopMode = desktopDefault
                 webView.customUserAgent = desktopDefault ? Self.desktopUserAgent : nil
@@ -909,7 +909,7 @@ extension WebPageController {
 
     func applyAutomaticReaderIfNeeded() {
         guard let host = webView.url?.host, !host.isEmpty,
-              websiteSettingsStore?.settings(forHost: host).useReaderAutomatically == true,
+              websiteSettingsStore?.settings(forHost: host, isPrivate: isPrivateTab).useReaderAutomatically == true,
               !isReaderActive,
               !isReaderUnavailable
         else { return }

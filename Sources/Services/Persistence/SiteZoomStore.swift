@@ -4,15 +4,17 @@ import Foundation
 
 @MainActor
 final class SiteZoomStore {
-    static let storeKey = "siteZoom"
-    static let defaultZoom = 1.0
-    static let minimumZoom = 0.5
-    static let maximumZoom = 3.0
+    nonisolated static let storeKey = "siteZoom"
+    nonisolated static let defaultZoom = 1.0
+    nonisolated static let minimumZoom = 0.5
+    nonisolated static let maximumZoom = 3.0
 
     private let defaults: UserDefaults
+    private let syncedStore: SyncedSettingsStore
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, syncedStore: SyncedSettingsStore? = nil) {
         self.defaults = defaults
+        self.syncedStore = syncedStore ?? SyncedSettingsStore(defaults: defaults)
     }
 
     static func clamp(_ zoom: Double) -> Double {
@@ -36,15 +38,11 @@ final class SiteZoomStore {
         } else {
             current[key] = clamped
         }
-        if current.isEmpty {
-            defaults.removeObject(forKey: Self.storeKey)
-        } else {
-            defaults.set(current, forKey: Self.storeKey)
-        }
+        persist(current)
     }
 
     func clearAll() {
-        defaults.removeObject(forKey: Self.storeKey)
+        persist([:])
     }
 
     private func normalized(_ host: String?) -> String? {
@@ -52,16 +50,20 @@ final class SiteZoomStore {
         return host.lowercased()
     }
 
-    private func storedZooms() -> [String: Double] {
-        guard let raw = defaults.dictionary(forKey: Self.storeKey) else { return [:] }
-        var result: [String: Double] = [:]
-        for (key, value) in raw {
-            if let double = value as? Double {
-                result[key] = double
-            } else if let number = value as? NSNumber {
-                result[key] = number.doubleValue
-            }
+    private func persist(_ zooms: [String: Double]) {
+        if zooms.isEmpty {
+            defaults.removeObject(forKey: Self.storeKey)
+        } else {
+            defaults.set(zooms, forKey: Self.storeKey)
         }
-        return result
+        syncedStore.mirror(zooms.isEmpty ? nil : zooms, forKey: Self.storeKey)
+    }
+
+    private func storedZooms() -> [String: Double] {
+        if let remote = syncedStore.mirroredDoubleMap(forKey: Self.storeKey) {
+            return remote
+        }
+        guard let raw = defaults.dictionary(forKey: Self.storeKey) else { return [:] }
+        return SyncedSettingsStore.decodedDoubleMap(raw)
     }
 }

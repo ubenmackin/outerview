@@ -1,7 +1,4 @@
-//
-//  ReaderMode.swift
-//  OuterView
-//
+// Browser — Reader engine plus persisted theme and font size.
 
 import Foundation
 import UIKit
@@ -81,6 +78,11 @@ enum ReaderMode: Sendable {
     }
 
     static func storedTheme(defaults: UserDefaults = .standard) -> ReaderTheme {
+        if SyncedSettingsStore.isSyncEnabled(defaults: defaults),
+           let raw = mirroredString(forKey: themeDefaultsKey, defaults: defaults)
+        {
+            return ReaderTheme(rawValue: raw) ?? .light
+        }
         guard let raw = defaults.string(forKey: themeDefaultsKey),
               let theme = ReaderTheme(rawValue: raw)
         else {
@@ -90,6 +92,14 @@ enum ReaderMode: Sendable {
     }
 
     static func storedFontSize(defaults: UserDefaults = .standard) -> Int {
+        if SyncedSettingsStore.isSyncEnabled(defaults: defaults),
+           let mirrored = mirroredInt(forKey: fontSizeDefaultsKey, defaults: defaults)
+        {
+            guard mirrored != 0 else {
+                return defaultFontSize
+            }
+            return clampedFontSize(mirrored)
+        }
         let stored = defaults.integer(forKey: fontSizeDefaultsKey)
         guard stored != 0 else {
             return defaultFontSize
@@ -99,10 +109,51 @@ enum ReaderMode: Sendable {
 
     static func persist(theme: ReaderTheme, defaults: UserDefaults = .standard) {
         defaults.set(theme.rawValue, forKey: themeDefaultsKey)
+        mirror(theme.rawValue, forKey: themeDefaultsKey, defaults: defaults)
     }
 
     static func persist(fontSize: Int, defaults: UserDefaults = .standard) {
-        defaults.set(clampedFontSize(fontSize), forKey: fontSizeDefaultsKey)
+        let clamped = clampedFontSize(fontSize)
+        defaults.set(clamped, forKey: fontSizeDefaultsKey)
+        mirror(clamped, forKey: fontSizeDefaultsKey, defaults: defaults)
+    }
+
+    /// Sendable box for the defaults reference; the main-thread guard
+    /// makes the handoff into `assumeIsolated` race-free.
+    private struct UnsafeDefaultsBox: @unchecked Sendable {
+        let defaults: UserDefaults
+    }
+
+    private static func mirroredString(forKey key: String, defaults: UserDefaults) -> String? {
+        // Mirror lives on the main actor; off-main callers fail closed to local.
+        guard Thread.isMainThread else { return nil }
+        let box = UnsafeDefaultsBox(defaults: defaults)
+        return MainActor.assumeIsolated {
+            SyncedSettingsStore(defaults: box.defaults).mirroredString(forKey: key)
+        }
+    }
+
+    private static func mirroredInt(forKey key: String, defaults: UserDefaults) -> Int? {
+        // Mirror lives on the main actor; off-main callers fail closed to local.
+        guard Thread.isMainThread else { return nil }
+        let box = UnsafeDefaultsBox(defaults: defaults)
+        return MainActor.assumeIsolated {
+            SyncedSettingsStore(defaults: box.defaults).mirroredInt(forKey: key)
+        }
+    }
+
+    private static func mirror(_ value: some Sendable?, forKey key: String, defaults: UserDefaults) {
+        guard SyncedSettingsStore.isSyncEnabled(defaults: defaults) else { return }
+        let box = UnsafeDefaultsBox(defaults: defaults)
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                SyncedSettingsStore(defaults: box.defaults).mirror(value, forKey: key)
+            }
+        } else {
+            Task { @MainActor in
+                SyncedSettingsStore(defaults: box.defaults).mirror(value, forKey: key)
+            }
+        }
     }
 
     /// Decodes the extraction payload. Short or malformed payloads are not

@@ -1,4 +1,4 @@
-// Settings — Search engine, privacy, and portrait tab bar position owner.
+// Settings — Search engine, privacy, portrait tab bar, plus iCloud sync state owner.
 
 import Foundation
 import Observation
@@ -32,6 +32,13 @@ final class SettingsViewModel {
     nonisolated static let requireBiometricsDefaultsKey = "requireBiometricsForPrivateTabs"
     nonisolated static let blockTrackersDefaultsKey = "blockTrackersAndAds"
     nonisolated static let portraitTabBarPositionDefaultsKey = "portraitTabBarPosition"
+    nonisolated static let iCloudSyncEnabledDefaultsKey = "iCloudSyncEnabled"
+    nonisolated static let iCloudSignInGuidanceText =
+        "Sign in to iCloud in the Settings app to sync across devices"
+    nonisolated static let iCloudSyncFooterText =
+        "Syncs bookmarks, favorites, history, reading list, recent searches, open tabs, tab groups, "
+            + "search settings, text zoom, website settings, plus reader preferences. Private tabs never sync. "
+            + "Turning sync off takes effect on next launch."
     nonisolated static let appVersionLabel = "OuterView 0.1.0"
     nonisolated static let safariExportInstructions =
         "Export from Safari: Settings → Apps → Safari → Export → Bookmarks, then open the ZIP in Files and pick Bookmarks.html."
@@ -39,22 +46,28 @@ final class SettingsViewModel {
 
     @ObservationIgnored
     private let defaults: UserDefaults
+    @ObservationIgnored
+    private let syncedStore: SyncedSettingsStore
+    let syncMonitor: iCloudSyncMonitor
 
     var searchEngine: SearchEngine {
         didSet {
             defaults.set(searchEngine.rawValue, forKey: Self.searchEngineDefaultsKey)
+            syncedStore.mirror(searchEngine.rawValue, forKey: Self.searchEngineDefaultsKey)
         }
     }
 
     var requireBiometricsForPrivateTabs: Bool {
         didSet {
             defaults.set(requireBiometricsForPrivateTabs, forKey: Self.requireBiometricsDefaultsKey)
+            syncedStore.mirror(requireBiometricsForPrivateTabs, forKey: Self.requireBiometricsDefaultsKey)
         }
     }
 
     var blockTrackersAndAds: Bool {
         didSet {
             defaults.set(blockTrackersAndAds, forKey: Self.blockTrackersDefaultsKey)
+            syncedStore.mirror(blockTrackersAndAds, forKey: Self.blockTrackersDefaultsKey)
             // Persist only; the notification-to-root path owns live rule apply.
         }
     }
@@ -63,12 +76,38 @@ final class SettingsViewModel {
         didSet {
             guard oldValue != portraitTabBarPosition else { return }
             defaults.set(portraitTabBarPosition.rawValue, forKey: Self.portraitTabBarPositionDefaultsKey)
+            syncedStore.mirror(portraitTabBarPosition.rawValue, forKey: Self.portraitTabBarPositionDefaultsKey)
             NotificationCenter.default.post(
                 name: .portraitTabBarPositionChanged,
                 object: nil,
                 userInfo: ["position": portraitTabBarPosition.rawValue]
             )
         }
+    }
+
+    var iCloudSyncEnabled: Bool {
+        didSet {
+            defaults.set(iCloudSyncEnabled, forKey: Self.iCloudSyncEnabledDefaultsKey)
+        }
+    }
+
+    var syncStatus: iCloudSyncMonitor.Status {
+        syncMonitor.status
+    }
+
+    var syncStatusText: String {
+        // Opt-out reads as off, never as a sign-in failure.
+        guard iCloudSyncEnabled else { return "Sync off" }
+        return Self.syncStatusText(for: syncMonitor.status, failureMessage: syncMonitor.lastErrorMessage)
+    }
+
+    /// Sign-in guidance shows only when opted in but signed out.
+    var showsSignInGuidance: Bool {
+        iCloudSyncEnabled && syncMonitor.status == .waitingForSignIn
+    }
+
+    var lastSyncDate: Date? {
+        syncMonitor.lastSyncDate
     }
 
     var isDuoOrPad: Bool
@@ -137,15 +176,43 @@ final class SettingsViewModel {
         return false
     }
 
-    init(defaults: UserDefaults = .standard) {
+    nonisolated static func syncStatusText(
+        for status: iCloudSyncMonitor.Status,
+        failureMessage: String?
+    ) -> String {
+        switch status {
+        case .synced:
+            return "Synced"
+        case .syncing:
+            return "Syncing"
+        case .waitingForSignIn:
+            return "Waiting for iCloud sign-in"
+        case .failed:
+            guard let failureMessage, !failureMessage.isEmpty else { return "Sync failed" }
+            return failureMessage
+        }
+    }
+
+    init(defaults: UserDefaults = .standard, syncMonitor: iCloudSyncMonitor? = nil, syncedStore: SyncedSettingsStore? = nil) {
         self.defaults = defaults
-        let stored = defaults.string(forKey: Self.searchEngineDefaultsKey)
-        let engine = stored.flatMap(SearchEngine.init(rawValue:)) ?? .google
+        self.syncedStore = syncedStore ?? SyncedSettingsStore(defaults: defaults)
+        self.syncMonitor = syncMonitor ?? iCloudSyncMonitor.shared
+        // Pure reader: launch owns KVS pull plus account refresh.
+        let storedEngine = self.syncedStore.mirroredString(forKey: Self.searchEngineDefaultsKey)
+            ?? defaults.string(forKey: Self.searchEngineDefaultsKey)
+        let engine = storedEngine.flatMap(SearchEngine.init(rawValue:)) ?? .google
         self.searchEngine = engine
-        self.requireBiometricsForPrivateTabs = defaults.object(forKey: Self.requireBiometricsDefaultsKey) as? Bool ?? true
-        self.blockTrackersAndAds = defaults.object(forKey: Self.blockTrackersDefaultsKey) as? Bool ?? true
-        let storedPosition = defaults.string(forKey: Self.portraitTabBarPositionDefaultsKey)
+        self.requireBiometricsForPrivateTabs = self.syncedStore.mirroredBool(forKey: Self.requireBiometricsDefaultsKey)
+            ?? defaults.object(forKey: Self.requireBiometricsDefaultsKey) as? Bool
+            ?? true
+        self.blockTrackersAndAds = self.syncedStore.mirroredBool(forKey: Self.blockTrackersDefaultsKey)
+            ?? defaults.object(forKey: Self.blockTrackersDefaultsKey) as? Bool
+            ?? true
+        let storedPosition = self.syncedStore.mirroredString(forKey: Self.portraitTabBarPositionDefaultsKey)
+            ?? defaults.string(forKey: Self.portraitTabBarPositionDefaultsKey)
         self.portraitTabBarPosition = storedPosition.flatMap(PortraitTabBarPosition.init(rawValue:)) ?? .right
+        // Toggle stays local-only; a missing value means opt-in.
+        self.iCloudSyncEnabled = SyncedSettingsStore.isSyncEnabled(defaults: defaults)
         self.isDuoOrPad = Self.currentIsDuoOrPad()
     }
 

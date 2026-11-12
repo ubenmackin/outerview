@@ -1,9 +1,11 @@
-// Settings — Preferences, tabs position picker, and clearance confirmation UI.
+// Settings — Preferences, iCloud sync status, plus clearance confirmation UI.
 
 import os
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Isolated so section slices read the MainActor view model directly.
+@MainActor
 struct SettingsView: View {
     @Bindable var viewModel: SettingsViewModel
     let bookmarkStore: BookmarkStore
@@ -72,150 +74,256 @@ struct SettingsView: View {
         }
     }
 
+    private static func formattedSyncDate(_ date: Date) -> String {
+        DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short)
+    }
+
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Search Engine") {
-                    Picker("Search Engine", selection: $viewModel.searchEngine) {
-                        ForEach(SearchEngine.allCases, id: \.self) { engine in
-                            Text(engine.displayName).tag(engine)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                }
+            settingsForm
+        }
+    }
 
-                Section {
-                    Button("Import Bookmarks…") {
-                        showingImporter = true
+    /// Single Form composition over small slices keeps each piece checkable.
+    private var settingsForm: some View {
+        Form {
+            iCloudSyncSection
+            searchEngineSection
+            importSection
+            privacySection
+            tabsSection
+            dataSection
+            textZoomSection
+            aboutSection
+        }
+        .navigationTitle("Settings")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            viewModel.refreshDuoOrPad()
+        }
+        .onChange(of: horizontalSizeClass) { _, _ in
+            viewModel.refreshDuoOrPad()
+        }
+        .onChange(of: verticalSizeClass) { _, _ in
+            viewModel.refreshDuoOrPad()
+        }
+        .toolbar {
+            if inlineCommands {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        performInlineDone()
                     }
-                } footer: {
-                    Text(SettingsViewModel.safariExportInstructions)
                 }
+            }
+        }
+        .sheet(isPresented: $showingImporter) {
+            BookmarksDocumentPicker(
+                onPick: handlePickedURL,
+                onCancel: { showingImporter = false }
+            )
+        }
+        .alert("Import Complete", isPresented: $showingImportResult, presenting: importSummary) { _ in
+            Button("OK", role: .cancel) {}
+        } message: { summary in
+            Text(SettingsViewModel.formattedSummary(summary))
+        }
+        .alert("Clear History and Website Data?", isPresented: $showingClearHistoryConfirm) {
+            clearHistoryActions
+        } message: {
+            Text("This removes all browsing history, cookies, and website data.")
+        }
+        .alert("Clear All Tabs?", isPresented: $showingClearTabsConfirm) {
+            clearTabsActions
+        } message: {
+            Text("This closes all tabs and opens a single empty tab.")
+        }
+        .alert("Reset All Text Zooms?", isPresented: $showingResetZoomsConfirm) {
+            resetZoomsActions
+        } message: {
+            Text(SettingsViewModel.resetAllTextZoomsConfirmationText)
+        }
+        .alert("Something Went Wrong", isPresented: actionErrorBinding) {
+            actionErrorActions
+        } message: {
+            actionErrorMessage
+        }
+    }
 
-                Section("Privacy & Security") {
-                    Toggle("Face ID for Private Tabs", isOn: $viewModel.requireBiometricsForPrivateTabs)
-                    Toggle("Block Trackers & Ads", isOn: $viewModel.blockTrackersAndAds)
-                }
-                .onChange(of: viewModel.blockTrackersAndAds) { _, enabled in
-                    // Live toggle: root applies rules to shared plus live controllers with no restart.
-                    NotificationCenter.default.post(
-                        name: .outerViewContentBlockerChanged,
-                        object: nil,
-                        userInfo: ["enabled": enabled]
-                    )
-                }
+    private var iCloudSyncSection: some View {
+        Section {
+            Toggle("Sync with iCloud", isOn: $viewModel.iCloudSyncEnabled)
+            syncStatusRow
+            lastSyncCaption
+            if viewModel.showsSignInGuidance {
+                Text(SettingsViewModel.iCloudSignInGuidanceText)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("iCloud Sync")
+        } footer: {
+            Text(SettingsViewModel.iCloudSyncFooterText)
+        }
+    }
 
-                if viewModel.isDuoOrPad {
-                    Section("Tabs") {
-                        Picker("Portrait Tab Bar Position", selection: $viewModel.portraitTabBarPosition) {
-                            ForEach(PortraitTabBarPosition.allCases) { position in
-                                Text(position.displayName).tag(position)
-                            }
-                        }
-                    }
-                }
+    private var syncStatusRow: some View {
+        HStack {
+            Text("Status")
+            Spacer()
+            Text(viewModel.syncStatusText)
+                .foregroundStyle(.secondary)
+        }
+    }
 
-                Section("Data") {
-                    Button("Clear History and Website Data", role: .destructive) {
-                        showingClearHistoryConfirm = true
-                    }
-                    Button("Clear All Tabs", role: .destructive) {
-                        showingClearTabsConfirm = true
-                    }
-                }
+    private var lastSyncCaption: some View {
+        Text(lastSyncText)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+    }
 
-                Section("Text Zoom") {
-                    Button("Reset All Text Zooms", role: .destructive) {
-                        showingResetZoomsConfirm = true
-                    }
-                }
+    private var lastSyncText: String {
+        viewModel.lastSyncDate.map { "Last synced \(Self.formattedSyncDate($0))" }
+            ?? "Last synced never"
+    }
 
-                Section("About") {
-                    Text(SettingsViewModel.appVersionLabel)
+    private var searchEngineSection: some View {
+        Section("Search Engine") {
+            Picker("Search Engine", selection: $viewModel.searchEngine) {
+                ForEach(SearchEngine.allCases, id: \.self) { engine in
+                    Text(engine.displayName).tag(engine)
                 }
             }
-            .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .onAppear {
-                viewModel.refreshDuoOrPad()
+            .pickerStyle(.menu)
+            .labelsHidden()
+        }
+    }
+
+    private var importSection: some View {
+        Section {
+            Button("Import Bookmarks…") {
+                showingImporter = true
             }
-            .onChange(of: horizontalSizeClass) { _, _ in
-                viewModel.refreshDuoOrPad()
-            }
-            .onChange(of: verticalSizeClass) { _, _ in
-                viewModel.refreshDuoOrPad()
-            }
-            .toolbar {
-                if inlineCommands {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") {
-                            performInlineDone()
-                        }
+        } footer: {
+            Text(SettingsViewModel.safariExportInstructions)
+        }
+    }
+
+    private var privacySection: some View {
+        Section("Privacy & Security") {
+            Toggle("Face ID for Private Tabs", isOn: $viewModel.requireBiometricsForPrivateTabs)
+            Toggle("Block Trackers & Ads", isOn: $viewModel.blockTrackersAndAds)
+        }
+        .onChange(of: viewModel.blockTrackersAndAds) { _, enabled in
+            // Live toggle: root applies rules to shared plus live controllers with no restart.
+            NotificationCenter.default.post(
+                name: .outerViewContentBlockerChanged,
+                object: nil,
+                userInfo: ["enabled": enabled]
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var tabsSection: some View {
+        if viewModel.isDuoOrPad {
+            Section("Tabs") {
+                Picker("Portrait Tab Bar Position", selection: $viewModel.portraitTabBarPosition) {
+                    ForEach(PortraitTabBarPosition.allCases) { position in
+                        Text(position.displayName).tag(position)
                     }
                 }
             }
-            .sheet(isPresented: $showingImporter) {
-                BookmarksDocumentPicker(
-                    onPick: handlePickedURL,
-                    onCancel: { showingImporter = false }
-                )
+        }
+    }
+
+    private var dataSection: some View {
+        Section("Data") {
+            Button("Clear History and Website Data", role: .destructive) {
+                showingClearHistoryConfirm = true
             }
-            .alert("Import Complete", isPresented: $showingImportResult, presenting: importSummary) { _ in
-                Button("OK", role: .cancel) {}
-            } message: { summary in
-                Text(SettingsViewModel.formattedSummary(summary))
+            Button("Clear All Tabs", role: .destructive) {
+                showingClearTabsConfirm = true
             }
-            .alert("Clear History and Website Data?", isPresented: $showingClearHistoryConfirm) {
-                Button("Clear", role: .destructive) {
-                    Task { @MainActor in
-                        do {
-                            try await viewModel.clearHistoryAndWebsiteData(historyStore: historyStore)
-                            onDidClearHistory?()
-                        } catch {
-                            actionError = error.localizedDescription
-                        }
-                    }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This removes all browsing history, cookies, and website data.")
+        }
+    }
+
+    private var textZoomSection: some View {
+        Section("Text Zoom") {
+            Button("Reset All Text Zooms", role: .destructive) {
+                showingResetZoomsConfirm = true
             }
-            .alert("Clear All Tabs?", isPresented: $showingClearTabsConfirm) {
-                Button("Clear", role: .destructive) {
-                    do {
-                        try viewModel.clearAllTabs(tabStore: tabStore)
-                        onDidClearTabs?()
-                    } catch {
-                        actionError = error.localizedDescription
-                    }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This closes all tabs and opens a single empty tab.")
-            }
-            .alert("Reset All Text Zooms?", isPresented: $showingResetZoomsConfirm) {
-                Button("Reset", role: .destructive) {
-                    viewModel.resetAllTextZooms(siteZoomStore: siteZoomStore)
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text(SettingsViewModel.resetAllTextZoomsConfirmationText)
-            }
-            .alert("Something Went Wrong", isPresented: Binding(
-                get: { actionError != nil },
-                set: {
-                    if !$0 {
-                        actionError = nil
-                    }
-                }
-            )) {
-                Button("OK", role: .cancel) {
+        }
+    }
+
+    private var aboutSection: some View {
+        Section("About") {
+            Text(SettingsViewModel.appVersionLabel)
+        }
+    }
+
+    /// Typed binding pins the error-alert overload so inference stays trivial.
+    private var actionErrorBinding: Binding<Bool> {
+        Binding(
+            get: { actionError != nil },
+            set: {
+                if !$0 {
                     actionError = nil
                 }
-            } message: {
-                Text(actionError ?? "")
             }
+        )
+    }
+
+    private var actionErrorMessage: Text {
+        Text(actionError ?? "")
+    }
+
+    private var actionErrorActions: some View {
+        Button("OK", role: .cancel) {
+            actionError = nil
+        }
+    }
+
+    @ViewBuilder
+    private var clearHistoryActions: some View {
+        Button("Clear", role: .destructive) {
+            confirmClearHistory()
+        }
+        Button("Cancel", role: .cancel) {}
+    }
+
+    @ViewBuilder
+    private var clearTabsActions: some View {
+        Button("Clear", role: .destructive) {
+            confirmClearTabs()
+        }
+        Button("Cancel", role: .cancel) {}
+    }
+
+    @ViewBuilder
+    private var resetZoomsActions: some View {
+        Button("Reset", role: .destructive) {
+            viewModel.resetAllTextZooms(siteZoomStore: siteZoomStore)
+        }
+        Button("Cancel", role: .cancel) {}
+    }
+
+    private func confirmClearHistory() {
+        Task { @MainActor in
+            do {
+                try await viewModel.clearHistoryAndWebsiteData(historyStore: historyStore)
+                onDidClearHistory?()
+            } catch {
+                actionError = error.localizedDescription
+            }
+        }
+    }
+
+    private func confirmClearTabs() {
+        do {
+            try viewModel.clearAllTabs(tabStore: tabStore)
+            onDidClearTabs?()
+        } catch {
+            actionError = error.localizedDescription
         }
     }
 

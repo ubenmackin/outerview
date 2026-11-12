@@ -14,6 +14,14 @@ targets:
         buildPhase: resources
     dependencies:
       - sdk: AppIntents.framework
+    entitlements:
+      path: Support/OuterView.entitlements
+      properties:
+        com.apple.developer.icloud-container-identifiers:
+          - iCloud.com.volcrypt.OuterView
+        com.apple.developer.icloud-services:
+          - CloudKit
+        com.apple.developer.ubiquity-kvstore-identifier: LYYD96F2J8.com.volcrypt.OuterView
     settings:
       base:
         SWIFT_VERSION: "6.0"
@@ -33,6 +41,8 @@ targets:
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.utilities"
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UIBackgroundModes:
+          - remote-notification
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         PRODUCT_NAME: OuterView
         GENERATE_INFOPLIST_FILE: YES
