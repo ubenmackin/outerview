@@ -58,6 +58,10 @@ final class PageMenuModelTests: XCTestCase {
         return nil
     }
 
+    private func childActionTitles(_ menu: UIMenu) -> [String] {
+        menu.children.compactMap { ($0 as? UIAction)?.title }
+    }
+
     func testNewFieldsDefault() {
         let model = PageMenuModel(url: nil)
         XCTAssertFalse(model.canAddToReadingList)
@@ -135,9 +139,16 @@ final class PageMenuModelTests: XCTestCase {
         let titles = flattenedTitles(root.makePageMenu(model: model))
         XCTAssertEqual(titles, [
             "Back", "Forward", "Reload", "Share",
-            "Add Bookmark", "Add to Favorites", "Add to Reading List", "Show Reader",
-            "Find on Page", "Text Zoom", "Zoom In", "Zoom Out", "Reset", "Request Desktop Website", "Website Settings…", "Print", "Save as PDF", "Downloads",
-            "Open Start Page", "Settings…"
+            "Website Settings…",
+            "Settings…",
+            "Downloads",
+            "Request Desktop Website",
+            "Text Zoom", "Zoom In", "Zoom Out", "Reset",
+            "Find on Page",
+            "Show Reader",
+            "Add to Reading List",
+            "Save", "Add Bookmark", "Add to Favorites",
+            "Print and PDF", "Print", "Save as PDF"
         ])
     }
 
@@ -155,9 +166,15 @@ final class PageMenuModelTests: XCTestCase {
         XCTAssertFalse(titles.contains("Hide Reader"))
         XCTAssertEqual(titles, [
             "Back", "Forward", "Reload", "Share",
-            "Add Bookmark", "Add to Favorites", "Add to Reading List",
-            "Find on Page", "Text Zoom", "Zoom In", "Zoom Out", "Reset", "Request Desktop Website", "Website Settings…", "Print", "Save as PDF", "Downloads",
-            "Open Start Page", "Settings…"
+            "Website Settings…",
+            "Settings…",
+            "Downloads",
+            "Request Desktop Website",
+            "Text Zoom", "Zoom In", "Zoom Out", "Reset",
+            "Find on Page",
+            "Add to Reading List",
+            "Save", "Add Bookmark", "Add to Favorites",
+            "Print and PDF", "Print", "Save as PDF"
         ])
     }
 
@@ -182,6 +199,57 @@ final class PageMenuModelTests: XCTestCase {
         XCTAssertFalse(titles.contains("Add to Reading List"))
         XCTAssertFalse(titles.contains("Show Reader"))
         XCTAssertFalse(titles.contains("Request Desktop Website"))
+    }
+
+    func testSaveSubmenuChildSequence() throws {
+        let root = try makeRoot()
+        let model = try PageMenuModel(
+            url: pageURL(),
+            canAddToReadingList: true,
+            isInReadingList: false,
+            isReaderAvailable: true,
+            canOpenDownloads: true
+        )
+        let menu = root.makePageMenu(model: model)
+        let saveMenu = try XCTUnwrap(submenu(named: "Save", in: menu))
+        XCTAssertEqual(childActionTitles(saveMenu), ["Add Bookmark", "Add to Favorites"])
+
+        let flippedMenu = try root.makePageMenu(model: PageMenuModel(
+            url: pageURL(),
+            isFavorite: true,
+            canAddToReadingList: true,
+            isInReadingList: true,
+            isReaderAvailable: true,
+            canOpenDownloads: true
+        ))
+        let flippedSave = try XCTUnwrap(submenu(named: "Save", in: flippedMenu))
+        XCTAssertEqual(childActionTitles(flippedSave), ["Add Bookmark", "Remove from Favorites"])
+    }
+
+    func testPrintAndPDFSubmenuChildSequence() throws {
+        let root = try makeRoot()
+        let model = try PageMenuModel(
+            url: pageURL(),
+            canAddToReadingList: true,
+            isReaderAvailable: true,
+            canOpenDownloads: true
+        )
+        let menu = root.makePageMenu(model: model)
+        let printMenu = try XCTUnwrap(submenu(named: "Print and PDF", in: menu))
+        XCTAssertEqual(childActionTitles(printMenu), ["Print", "Save as PDF"])
+    }
+
+    func testTextZoomSubmenuChildSequence() throws {
+        let root = try makeRoot()
+        let model = try PageMenuModel(
+            url: pageURL(),
+            canAddToReadingList: true,
+            isReaderAvailable: true,
+            canOpenDownloads: true
+        )
+        let menu = root.makePageMenu(model: model)
+        let zoomMenu = try XCTUnwrap(submenu(named: "Text Zoom", in: menu))
+        XCTAssertEqual(childActionTitles(zoomMenu), ["Zoom In", "Zoom Out", "Reset"])
     }
 
     func testZoomDisabledWithoutPage() throws {
@@ -213,12 +281,28 @@ final class PageMenuModelTests: XCTestCase {
         let actions = Dictionary(
             uniqueKeysWithValues: allActions(menu).map { ($0.title, $0) }
         )
-        for title in ["Add to Reading List", "Show Reader", "Zoom In", "Zoom Out", "Reset", "Request Desktop Website", "Print", "Downloads"] {
+        for title in [
+            "Add Bookmark",
+            "Add to Favorites",
+            "Add to Reading List",
+            "Show Reader",
+            "Zoom In",
+            "Zoom Out",
+            "Reset",
+            "Request Desktop Website",
+            "Print",
+            "Save as PDF",
+            "Downloads"
+        ] {
             let action = try XCTUnwrap(actions[title], title)
             XCTAssertFalse(action.accessibilityLabel?.isEmpty ?? true, title)
         }
         let zoomMenu = try XCTUnwrap(submenu(named: "Text Zoom", in: menu))
         XCTAssertFalse(zoomMenu.accessibilityLabel?.isEmpty ?? true)
+        let saveMenu = try XCTUnwrap(submenu(named: "Save", in: menu))
+        XCTAssertFalse(saveMenu.accessibilityLabel?.isEmpty ?? true)
+        let printMenu = try XCTUnwrap(submenu(named: "Print and PDF", in: menu))
+        XCTAssertFalse(printMenu.accessibilityLabel?.isEmpty ?? true)
     }
 
     func testPrintActionEnabledWithLoadablePage() throws {
@@ -227,10 +311,14 @@ final class PageMenuModelTests: XCTestCase {
         let actionsWithPage = Dictionary(uniqueKeysWithValues: allActions(menuWithPage).map { ($0.title, $0) })
         let printWithPage = try XCTUnwrap(actionsWithPage["Print"])
         XCTAssertFalse(printWithPage.attributes.contains(.disabled))
+        let pdfWithPage = try XCTUnwrap(actionsWithPage["Save as PDF"])
+        XCTAssertFalse(pdfWithPage.attributes.contains(.disabled))
 
         let menuWithoutPage = root.makePageMenu(model: PageMenuModel(url: nil))
         let actionsWithoutPage = Dictionary(uniqueKeysWithValues: allActions(menuWithoutPage).map { ($0.title, $0) })
         let printWithoutPage = try XCTUnwrap(actionsWithoutPage["Print"])
         XCTAssertTrue(printWithoutPage.attributes.contains(.disabled))
+        let pdfWithoutPage = try XCTUnwrap(actionsWithoutPage["Save as PDF"])
+        XCTAssertTrue(pdfWithoutPage.attributes.contains(.disabled))
     }
 }

@@ -57,10 +57,10 @@ struct PageMenuModel: Equatable, Sendable {
         self.textZoom = textZoom
         self.canOpenDownloads = canOpenDownloads
         self.isDesktopMode = isDesktopMode
-        self.canToggleDesktopMode = canToggleDesktopMode || hasLoadableURL
+        self.canToggleDesktopMode = canToggleDesktopMode && hasLoadableURL
         // Print stays disabled without a loadable URL even if requested.
         self.canPrint = canPrint && hasLoadableURL
-        self.canEditWebsiteSettings = canEditWebsiteSettings || hasLoadableURL
+        self.canEditWebsiteSettings = canEditWebsiteSettings && hasLoadableURL
     }
 
     /// Toggle label for the reading-list row, flipping with membership.
