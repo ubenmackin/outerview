@@ -12,6 +12,7 @@ extension BrowserRootViewController {
     func wirePage(_ page: WebPageController, for id: UUID) {
         page.contextActions = elementContextActions
         page.siteZoomStore = siteZoomStore
+        page.websiteSettingsStore = websiteSettingsStore
         page.downloadsManager = downloadsManager
         page.isPrivateTab = tabs.first(where: { $0.id == id })?.isPrivate ?? true
         page.backgroundService = BackgroundDownloadService.shared

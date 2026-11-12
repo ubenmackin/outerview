@@ -34,7 +34,8 @@ extension BrowserRootViewController {
             canOpenDownloads: true,
             isDesktopMode: isDesktop,
             canToggleDesktopMode: hasPage,
-            canPrint: hasPage
+            canPrint: hasPage,
+            canEditWebsiteSettings: hasPage
         )
     }
 
@@ -207,6 +208,14 @@ extension BrowserRootViewController {
             self?.toggleDesktopModeFromMenu()
         }
         desktopAction.accessibilityLabel = model.desktopModeTitle
+        let websiteSettingsAction = UIAction(
+            title: "Website Settings…",
+            image: UIImage(systemName: "gearshape"),
+            attributes: model.canEditWebsiteSettings ? [] : .disabled
+        ) { [weak self] _ in
+            self?.presentWebsiteSettings()
+        }
+        websiteSettingsAction.accessibilityLabel = "Website Settings"
         let printAction = UIAction(
             title: "Print",
             image: UIImage(systemName: "printer"),
@@ -227,6 +236,7 @@ extension BrowserRootViewController {
             findAction,
             zoomMenu,
             desktopAction,
+            websiteSettingsAction,
             printAction,
             pdfAction,
             downloadsAction
@@ -235,6 +245,38 @@ extension BrowserRootViewController {
 
     func toggleDesktopModeFromMenu() {
         activePage()?.toggleDesktopMode()
+    }
+
+    func presentWebsiteSettings() {
+        guard let url = activePage()?.snapshot.url, let host = url.host, !host.isEmpty else { return }
+        let store = websiteSettingsStore
+        let page = activePage()
+        let settingsView = WebsiteSettingsView(
+            host: host,
+            store: store,
+            onSettingsChanged: { [weak page] newSettings in
+                guard let page else { return }
+                if page.isDesktopMode != newSettings.requestDesktopWebsite {
+                    page.setDesktopMode(newSettings.requestDesktopWebsite)
+                }
+                if newSettings.useReaderAutomatically, !page.isReaderActive {
+                    Task { @MainActor in
+                        await page.enterReaderAutomaticallyIfNeeded()
+                    }
+                }
+            },
+            onDone: { [weak self] in
+                self?.dismiss(animated: true)
+            }
+        )
+        let hosting = UIHostingController(rootView: settingsView)
+        hosting.modalPresentationStyle = .pageSheet
+        if let sheet = hosting.sheetPresentationController {
+            sheet.detents = [.medium(), .large()]
+            sheet.prefersGrabberVisible = true
+            sheet.preferredCornerRadius = 28
+        }
+        present(hosting, animated: shouldAnimateModalSheets)
     }
 
     private func makeNavMenu() -> UIMenu {

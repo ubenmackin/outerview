@@ -97,6 +97,9 @@ final class WebPageController: NSObject {
     /// Whether desktop website mode is currently forced on this page.
     private(set) var isDesktopMode = false
 
+    /// Whether the user has temporarily overridden desktop mode for this tab session.
+    private(set) var hasPerTabDesktopOverride = false
+
     /// Shared download pipeline; nil in unit tests without a pipeline.
     weak var downloadsManager: DownloadsManager?
 
@@ -120,6 +123,9 @@ final class WebPageController: NSObject {
 
     /// Per-site text zoom; nil in unit tests without a store reads as 1.0.
     var siteZoomStore: SiteZoomStore?
+
+    /// Per-site website settings (desktop mode, automatic reader); nil in unwired tests.
+    var websiteSettingsStore: WebsiteSettingsStore?
 
     /// Clears the carried method/body so a stale POST never bleeds forward.
     private func clearPendingAction() {
@@ -204,6 +210,7 @@ final class WebPageController: NSObject {
             rejectUnsupportedScheme(url)
             return
         }
+        applyWebsiteSettings(for: url)
         webView.load(URLRequest(url: url))
     }
 
@@ -328,35 +335,6 @@ final class WebPageController: NSObject {
         )
     }
 
-    /// Resolves the long-pressed element to a context kind. Links are taken
-    /// straight from the delegate's element info; anything else consults the
-    /// DOM tracker, and an unknown target yields no menu (WebKit default).
-    private func contextElementKind(for elementInfo: WKContextMenuElementInfo) async -> ElementContextKind? {
-        if let linkURL = elementInfo.linkURL {
-            return .link(url: linkURL)
-        }
-        guard let payload = await contextMenuPayload() else { return nil }
-        let linkSource = payload["link"].flatMap {
-            ElementContextMenu.absoluteURL(for: $0, baseURL: webView.url)
-        }
-        return ElementContextMenu.kind(
-            linkURL: linkSource,
-            imageURLString: payload["image"],
-            baseURL: webView.url
-        )
-    }
-
-    private func contextMenuPayload() async -> [String: String]? {
-        do {
-            let result = try await webView.evaluateJavaScript("window.__outerviewContextMenuPayload || null")
-            return result as? [String: String]
-        } catch {
-            Logger(subsystem: "com.volcrypt.OuterView", category: "WebPage")
-                .error("contextMenuPayload failed: \(error.localizedDescription, privacy: .public)")
-            return nil
-        }
-    }
-
     private func makePublishingObservation(for keyPath: KeyPath<WKWebView, some Any>) -> NSKeyValueObservation {
         webView.observe(keyPath) { [weak self] _, _ in
             Task { @MainActor [weak self] in self?.refreshSnapshot() }
@@ -473,6 +451,13 @@ extension WebPageController: WKNavigationDelegate {
             rejectUnsupportedScheme(navigationAction.request.url)
             decisionHandler(.cancel)
             return
+        }
+        if let targetURL = navigationAction.request.url,
+           let targetHost = targetURL.host,
+           targetHost != webView.url?.host
+        {
+            hasPerTabDesktopOverride = false
+            applyWebsiteSettings(for: targetURL)
         }
         // Remember the original request so the response path keeps method/body.
         pendingActionRequest = navigationAction.request
@@ -600,6 +585,7 @@ extension WebPageController: WKNavigationDelegate {
         finishRefreshing()
         applySiteZoom()
         refreshSnapshot()
+        applyAutomaticReaderIfNeeded()
     }
 
     func webView(_: WKWebView, didFail _: WKNavigation!, withError error: Error) {
@@ -824,6 +810,23 @@ extension WebPageController {
                 .error("setReaderFontSize failed: \(error.localizedDescription, privacy: .public)")
         }
     }
+
+    /// Extracts the first 1-2 sentences of body text from the web page for Reading List preview.
+    func extractPreviewSnippet() async -> String? {
+        let generation = documentGeneration
+        do {
+            let result = try await webView.evaluateJavaScript(ReaderMode.extractionScript())
+            guard !Task.isCancelled, generation == documentGeneration,
+                  let json = result as? String,
+                  let snippet = ReaderMode.previewSnippet(from: json)
+            else { return nil }
+            return snippet
+        } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "WebPage")
+                .error("extractPreviewSnippet failed: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
 }
 
 // MARK: - Site Zoom
@@ -854,13 +857,14 @@ extension WebPageController {
     }
 }
 
-// MARK: - Desktop Mode
+// MARK: - Desktop Mode & Website Settings
 
 extension WebPageController {
     nonisolated static let mobileUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
     nonisolated static let desktopUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
 
     func toggleDesktopMode() {
+        hasPerTabDesktopOverride = true
         isDesktopMode.toggle()
         if isDesktopMode {
             webView.customUserAgent = Self.desktopUserAgent
@@ -869,122 +873,44 @@ extension WebPageController {
         }
         reload()
     }
-}
 
-// MARK: - WKUIDelegate
-
-extension WebPageController: WKUIDelegate {
-    func webView(
-        _: WKWebView,
-        createWebViewWith configuration: WKWebViewConfiguration,
-        for navigationAction: WKNavigationAction,
-        windowFeatures: WKWindowFeatures
-    ) -> WKWebView? {
-        uiDelegateHandler?.webPageController(
-            self,
-            createWebViewWith: configuration,
-            for: navigationAction,
-            windowFeatures: windowFeatures
-        )
+    func setDesktopMode(_ enabled: Bool) {
+        hasPerTabDesktopOverride = false
+        guard isDesktopMode != enabled else { return }
+        isDesktopMode = enabled
+        if isDesktopMode {
+            webView.customUserAgent = Self.desktopUserAgent
+        } else {
+            webView.customUserAgent = nil
+        }
+        reload()
     }
 
-    func webViewDidClose(_: WKWebView) {
-        uiDelegateHandler?.webPageControllerDidClose(self)
-    }
-
-    func webView(
-        _: WKWebView,
-        runJavaScriptAlertPanelWithMessage message: String,
-        initiatedByFrame frame: WKFrameInfo,
-        completionHandler: @escaping @MainActor @Sendable () -> Void
-    ) {
-        guard let handler = uiDelegateHandler else {
-            completionHandler()
-            return
-        }
-        Task { @MainActor in
-            await handler.webPageController(self, runJavaScriptAlertPanelWithMessage: message, initiatedByFrame: frame)
-            completionHandler()
-        }
-    }
-
-    func webView(
-        _: WKWebView,
-        runJavaScriptConfirmPanelWithMessage message: String,
-        initiatedByFrame frame: WKFrameInfo,
-        completionHandler: @escaping @MainActor @Sendable (Bool) -> Void
-    ) {
-        guard let handler = uiDelegateHandler else {
-            completionHandler(false)
-            return
-        }
-        Task { @MainActor in
-            let result = await handler.webPageController(self, runJavaScriptConfirmPanelWithMessage: message, initiatedByFrame: frame)
-            completionHandler(result)
-        }
-    }
-
-    func webView(
-        _: WKWebView,
-        runJavaScriptTextInputPanelWithPrompt prompt: String,
-        defaultText: String?,
-        initiatedByFrame frame: WKFrameInfo,
-        completionHandler: @escaping @MainActor @Sendable (String?) -> Void
-    ) {
-        guard let handler = uiDelegateHandler else {
-            completionHandler(nil)
-            return
-        }
-        Task { @MainActor in
-            let result = await handler.webPageController(self, runJavaScriptTextInputPanelWithPrompt: prompt, defaultText: defaultText, initiatedByFrame: frame)
-            completionHandler(result)
-        }
-    }
-
-    func webView(
-        _: WKWebView,
-        contextMenuConfigurationForElement elementInfo: WKContextMenuElementInfo,
-        completionHandler: @escaping @MainActor @Sendable (UIContextMenuConfiguration?) -> Void
-    ) {
-        guard contextActions != nil else {
-            completionHandler(nil)
-            return
-        }
-        // Resolving the JS payload happens asynchronously while the menu is
-        // being assembled; an unknown element leaves WebKit's default menu up.
-        Task { [weak self] in
-            guard let self,
-                  let actions = self.contextActions,
-                  let kind = await self.contextElementKind(for: elementInfo)
-            else {
-                completionHandler(nil)
-                return
+    func applyWebsiteSettings(for url: URL) {
+        guard let host = url.host, !host.isEmpty else { return }
+        if !hasPerTabDesktopOverride {
+            let desktopDefault = websiteSettingsStore?.settings(forHost: host).requestDesktopWebsite ?? false
+            if isDesktopMode != desktopDefault {
+                isDesktopMode = desktopDefault
+                webView.customUserAgent = desktopDefault ? Self.desktopUserAgent : nil
             }
-            let menu = ElementContextMenu.menu(for: kind, actions: actions)
-            completionHandler(
-                UIContextMenuConfiguration(
-                    identifier: nil,
-                    previewProvider: nil,
-                    actionProvider: { _ in menu }
-                )
-            )
         }
     }
 
-    /// Extracts the first 1-2 sentences of body text from the web page for Reading List preview.
-    func extractPreviewSnippet() async -> String? {
-        let generation = documentGeneration
-        do {
-            let result = try await webView.evaluateJavaScript(ReaderMode.extractionScript())
-            guard !Task.isCancelled, generation == documentGeneration,
-                  let json = result as? String,
-                  let snippet = ReaderMode.previewSnippet(from: json)
-            else { return nil }
-            return snippet
-        } catch {
-            Logger(subsystem: "com.volcrypt.OuterView", category: "WebPage")
-                .error("extractPreviewSnippet failed: \(error.localizedDescription, privacy: .public)")
-            return nil
+    func applyAutomaticReaderIfNeeded() {
+        guard let host = webView.url?.host, !host.isEmpty,
+              websiteSettingsStore?.settings(forHost: host).useReaderAutomatically == true,
+              !isReaderActive,
+              !isReaderUnavailable
+        else { return }
+        Task { @MainActor [weak self] in
+            await self?.enterReaderAutomaticallyIfNeeded()
         }
+    }
+
+    @discardableResult
+    func enterReaderAutomaticallyIfNeeded() async -> Bool {
+        guard !isReaderActive, !isReaderUnavailable else { return false }
+        return await toggleReader()
     }
 }

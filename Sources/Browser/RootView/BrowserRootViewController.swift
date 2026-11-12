@@ -606,6 +606,8 @@ final class BrowserRootViewController: UIViewController {
     /// Shared per-site text zoom; every page receives it at the same wiring
     /// site so zoom persists across tabs and relaunch.
     let siteZoomStore = SiteZoomStore()
+    /// Shared per-host website settings (desktop mode, auto reader).
+    let websiteSettingsStore = WebsiteSettingsStore()
     /// Shared download pipeline; every page reports into it at the same
     /// wiring site so navigation-driven downloads always land.
     let downloadsManager = DownloadsManager()
