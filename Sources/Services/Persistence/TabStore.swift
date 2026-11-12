@@ -1,7 +1,4 @@
-//
-//  TabStore.swift
-//  OuterView
-//
+// Persistence — Tab strip plus group store; private tabs never persist.
 
 import Foundation
 import os
@@ -53,6 +50,13 @@ final class TabStore {
     /// are dropped.
     func upsertTab(_ tab: TabRecord) throws {
         guard !tab.isPrivate else { return }
+        // Cap precedes the insert so overflow rows never reach CloudKit.
+        if try record(id: tab.id) == nil {
+            let order = try snapshotOrder()
+            if !order.contains(tab.id), order.count >= Limits.records {
+                return
+            }
+        }
         try insertOrUpdate(tab)
         try ensureSnapshotContains(tab.id)
         try context.save()
@@ -65,7 +69,9 @@ final class TabStore {
             context.delete(record)
         }
         if let snapshot = try snapshotRow() {
-            snapshot.tabIds = snapshot.tabIds.filter { $0 != id }
+            let order = Self.decodeOrder(of: snapshot).filter { $0 != id }
+            snapshot.tabIds = order
+            snapshot.tabIdsEncoded = Self.encodeOrder(order)
             if snapshot.selectedTabId == id {
                 snapshot.selectedTabId = nil
             }
@@ -82,7 +88,7 @@ final class TabStore {
     /// Updates the selection without touching the strip order.
     func select(id: UUID) throws {
         try writeSnapshot(
-            tabIds: snapshotRow()?.tabIds ?? [],
+            tabIds: snapshotOrder(),
             selectedTabId: id
         )
     }
@@ -92,10 +98,12 @@ final class TabStore {
     /// order plus the selection.
     func saveSession(tabs: [TabRecord], selected: UUID?) throws {
         let persistable = tabs.filter { !$0.isPrivate }
-        for tab in persistable {
+        // Cap precedes the insert so overflow rows never reach CloudKit.
+        let capped = Array(persistable.prefix(Limits.records))
+        for tab in capped {
             try insertOrUpdate(tab)
         }
-        try writeSnapshot(tabIds: persistable.map(\.id), selectedTabId: selected)
+        try writeSnapshot(tabIds: capped.map(\.id), selectedTabId: selected)
     }
 
     /// Restores the strip in saved order. Ids without a persisted row and a
@@ -110,12 +118,13 @@ final class TabStore {
             return ([], nil)
         }
         guard let snapshot else { return ([], nil) }
+        let orderedIds: [UUID] = Self.decodeOrder(of: snapshot)
         var byID: [UUID: TabRecord] = [:]
         for record in allRecords() {
             byID[record.id] = record
         }
         var didScrub = false
-        let tabs = snapshot.tabIds.compactMap { byID[$0] }.map { record -> TabRecord in
+        let tabs = orderedIds.compactMap { byID[$0] }.map { record -> TabRecord in
             // Rows written before the scheme allowlist may still hold a
             // rejected URL; scrub them so restore never reloads it.
             if let url = record.url, !URLNormalizer.isLoadable(url) {
@@ -193,6 +202,27 @@ final class TabStore {
 
     // MARK: - Private
 
+    private static func encodeOrder(_ ids: [UUID]) -> String {
+        ids.map(\.uuidString).joined(separator: ",")
+    }
+
+    private static func decodeOrder(_ encoded: String) -> [UUID] {
+        encoded.split(separator: ",").compactMap { UUID(uuidString: String($0)) }
+    }
+
+    /// Single order source: encoded wins when present, legacy pre-migration only.
+    private static func decodeOrder(of snapshot: TabSession) -> [UUID] {
+        // Encoded order wins when present; empty means a pre-migration row
+        // that still reads the legacy array field.
+        snapshot.tabIdsEncoded.isEmpty ? snapshot.tabIds : decodeOrder(snapshot.tabIdsEncoded)
+    }
+
+    /// Convenience over decodeOrder(of:) for the current snapshot row.
+    private func snapshotOrder() throws -> [UUID] {
+        guard let snapshot = try snapshotRow() else { return [] }
+        return Self.decodeOrder(of: snapshot)
+    }
+
     private static func normalizedGroupName(_ name: String) throws -> String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw TabStoreError.invalidGroupName }
@@ -235,14 +265,31 @@ final class TabStore {
 
     private func ensureSnapshotContains(_ id: UUID) throws {
         if let snapshot = try snapshotRow() {
-            guard !snapshot.tabIds.contains(id) else { return }
-            snapshot.tabIds += [id]
+            var order = Self.decodeOrder(of: snapshot)
+            guard !order.contains(id) else {
+                if snapshot.tabIdsEncoded.isEmpty {
+                    snapshot.tabIdsEncoded = Self.encodeOrder(order)
+                }
+                return
+            }
+            guard order.count < Limits.records else { return }
+            order.append(id)
+            snapshot.tabIds = order
+            snapshot.tabIdsEncoded = Self.encodeOrder(order)
             return
         }
-        context.insert(TabSession(id: Self.sessionRowID, tabIds: [id], selectedTabId: nil))
+        context.insert(
+            TabSession(
+                id: Self.sessionRowID,
+                tabIds: [id],
+                selectedTabId: nil,
+                tabIdsEncoded: Self.encodeOrder([id])
+            )
+        )
     }
 
     private func writeSnapshot(tabIds: [UUID], selectedTabId: UUID?) throws {
+        let capped = Array(tabIds.prefix(Limits.records))
         let snapshot: TabSession
         if let existing = try snapshotRow() {
             snapshot = existing
@@ -250,10 +297,11 @@ final class TabStore {
             snapshot = TabSession(id: Self.sessionRowID, tabIds: [], selectedTabId: nil)
             context.insert(snapshot)
         }
-        snapshot.tabIds = tabIds
+        snapshot.tabIds = capped
+        snapshot.tabIdsEncoded = Self.encodeOrder(capped)
         // Private or missing selections never persist: only an id present in
         // the filtered strip survives the write.
-        snapshot.selectedTabId = selectedTabId.flatMap { tabIds.contains($0) ? $0 : nil }
+        snapshot.selectedTabId = selectedTabId.flatMap { capped.contains($0) ? $0 : nil }
         try context.save()
     }
 

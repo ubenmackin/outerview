@@ -5,6 +5,7 @@ import SwiftUI
 public struct WebsiteSettingsView: View {
     public let host: String
     public let store: WebsiteSettingsStore
+    public let isPrivate: Bool
     public var onSettingsChanged: ((WebsiteSettings) -> Void)?
     public var onDone: (() -> Void)?
 
@@ -14,14 +15,16 @@ public struct WebsiteSettingsView: View {
     public init(
         host: String,
         store: WebsiteSettingsStore,
+        isPrivate: Bool,
         onSettingsChanged: ((WebsiteSettings) -> Void)? = nil,
         onDone: (() -> Void)? = nil
     ) {
         self.host = host
         self.store = store
+        self.isPrivate = isPrivate
         self.onSettingsChanged = onSettingsChanged
         self.onDone = onDone
-        _settings = State(initialValue: store.settings(forHost: host))
+        _settings = State(initialValue: store.settings(forHost: host, isPrivate: isPrivate))
     }
 
     public var body: some View {
@@ -55,7 +58,7 @@ public struct WebsiteSettingsView: View {
                 }
             }
             .onChange(of: settings) { _, newSettings in
-                store.updateSettings(newSettings, forHost: host)
+                store.updateSettings(newSettings, forHost: host, isPrivate: isPrivate)
                 onSettingsChanged?(newSettings)
             }
         }

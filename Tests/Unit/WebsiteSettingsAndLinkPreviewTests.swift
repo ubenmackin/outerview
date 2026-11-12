@@ -29,30 +29,30 @@ final class WebsiteSettingsAndLinkPreviewTests: XCTestCase {
         let defaults = try makeDefaults()
         let store = WebsiteSettingsStore(defaults: defaults)
 
-        let settings = store.settings(forHost: "example.com")
+        let settings = store.settings(forHost: "example.com", isPrivate: false)
         XCTAssertFalse(settings.requestDesktopWebsite)
         XCTAssertFalse(settings.useReaderAutomatically)
         XCTAssertTrue(settings.isDefault)
 
-        XCTAssertTrue(store.settings(forHost: nil).isDefault)
-        XCTAssertTrue(store.settings(forHost: "").isDefault)
+        XCTAssertTrue(store.settings(forHost: nil, isPrivate: false).isDefault)
+        XCTAssertTrue(store.settings(forHost: "", isPrivate: false).isDefault)
     }
 
     func testWebsiteSettingsStoreSetAndPersist() throws {
         let defaults = try makeDefaults()
         let store = WebsiteSettingsStore(defaults: defaults)
 
-        store.setRequestDesktopWebsite(true, forHost: "EXAMPLE.COM")
-        store.setUseReaderAutomatically(true, forHost: "example.com")
+        store.setRequestDesktopWebsite(true, forHost: "EXAMPLE.COM", isPrivate: false)
+        store.setUseReaderAutomatically(true, forHost: "example.com", isPrivate: false)
 
-        let stored = store.settings(forHost: "example.com")
+        let stored = store.settings(forHost: "example.com", isPrivate: false)
         XCTAssertTrue(stored.requestDesktopWebsite)
         XCTAssertTrue(stored.useReaderAutomatically)
         XCTAssertFalse(stored.isDefault)
 
         // Fresh store instance reads same persisted data
         let store2 = WebsiteSettingsStore(defaults: defaults)
-        let reloaded = store2.settings(forHost: "example.com")
+        let reloaded = store2.settings(forHost: "example.com", isPrivate: false)
         XCTAssertTrue(reloaded.requestDesktopWebsite)
         XCTAssertTrue(reloaded.useReaderAutomatically)
     }
@@ -61,10 +61,10 @@ final class WebsiteSettingsAndLinkPreviewTests: XCTestCase {
         let defaults = try makeDefaults()
         let store = WebsiteSettingsStore(defaults: defaults)
 
-        store.setRequestDesktopWebsite(true, forHost: "example.com")
+        store.setRequestDesktopWebsite(true, forHost: "example.com", isPrivate: false)
         XCTAssertNotNil(defaults.data(forKey: WebsiteSettingsStore.storeKey))
 
-        store.setRequestDesktopWebsite(false, forHost: "example.com")
+        store.setRequestDesktopWebsite(false, forHost: "example.com", isPrivate: false)
         XCTAssertNil(defaults.data(forKey: WebsiteSettingsStore.storeKey))
     }
 
@@ -72,12 +72,121 @@ final class WebsiteSettingsAndLinkPreviewTests: XCTestCase {
         let defaults = try makeDefaults()
         let store = WebsiteSettingsStore(defaults: defaults)
 
-        store.setRequestDesktopWebsite(true, forHost: "a.com")
-        store.setUseReaderAutomatically(true, forHost: "b.com")
+        store.setRequestDesktopWebsite(true, forHost: "a.com", isPrivate: false)
+        store.setUseReaderAutomatically(true, forHost: "b.com", isPrivate: false)
         store.clearAll()
 
-        XCTAssertTrue(store.settings(forHost: "a.com").isDefault)
-        XCTAssertTrue(store.settings(forHost: "b.com").isDefault)
+        XCTAssertTrue(store.settings(forHost: "a.com", isPrivate: false).isDefault)
+        XCTAssertTrue(store.settings(forHost: "b.com", isPrivate: false).isDefault)
+    }
+
+    func testPrivateWritesStayEphemeralAndInvisibleToStandardReads() throws {
+        let defaults = try makeDefaults()
+        let store = WebsiteSettingsStore(defaults: defaults)
+
+        store.setRequestDesktopWebsite(true, forHost: "private.example", isPrivate: true)
+        XCTAssertTrue(store.settings(forHost: "private.example", isPrivate: true).requestDesktopWebsite)
+        XCTAssertTrue(store.settings(forHost: "private.example", isPrivate: false).isDefault)
+        XCTAssertNil(defaults.data(forKey: WebsiteSettingsStore.storeKey))
+
+        store.setRequestDesktopWebsite(true, forHost: "public.example", isPrivate: false)
+        XCTAssertTrue(store.settings(forHost: "public.example", isPrivate: false).requestDesktopWebsite)
+        XCTAssertTrue(store.settings(forHost: "public.example", isPrivate: true).isDefault)
+
+        store.setUseReaderAutomatically(true, forHost: "PRIVATE.example", isPrivate: true)
+        let ephemeral = store.settings(forHost: "private.example", isPrivate: true)
+        XCTAssertTrue(ephemeral.requestDesktopWebsite)
+        XCTAssertTrue(ephemeral.useReaderAutomatically)
+        XCTAssertTrue(store.settings(forHost: "private.example", isPrivate: false).isDefault)
+    }
+
+    func testPrivateWritesNeverReachDefaultsOrKVSMirror() throws {
+        let defaults = try makeDefaults()
+        let kvs = WebsiteSettingsMockKeyValueStore()
+        let synced = SyncedSettingsStore(
+            defaults: defaults,
+            keyValueStore: kvs,
+            notificationCenter: NotificationCenter()
+        )
+        let store = WebsiteSettingsStore(defaults: defaults, syncedStore: synced)
+
+        store.setRequestDesktopWebsite(true, forHost: "ephemeral.example", isPrivate: true)
+        store.setUseReaderAutomatically(true, forHost: "ephemeral2.example", isPrivate: true)
+        store.updateSettings(
+            WebsiteSettings(requestDesktopWebsite: true, useReaderAutomatically: true),
+            forHost: "ephemeral3.example",
+            isPrivate: true
+        )
+
+        XCTAssertNil(defaults.data(forKey: WebsiteSettingsStore.storeKey))
+        XCTAssertNil(kvs.storage[WebsiteSettingsStore.storeKey])
+        XCTAssertNil(synced.mirroredData(forKey: WebsiteSettingsStore.storeKey))
+
+        store.setRequestDesktopWebsite(true, forHost: "standard.example", isPrivate: false)
+        XCTAssertNotNil(defaults.data(forKey: WebsiteSettingsStore.storeKey))
+        XCTAssertNotNil(kvs.storage[WebsiteSettingsStore.storeKey])
+    }
+
+    func testClearAllWipesEphemeral() throws {
+        let defaults = try makeDefaults()
+        let store = WebsiteSettingsStore(defaults: defaults)
+
+        store.setRequestDesktopWebsite(true, forHost: "private.example", isPrivate: true)
+        store.setUseReaderAutomatically(true, forHost: "other-private.example", isPrivate: true)
+        store.setRequestDesktopWebsite(true, forHost: "public.example", isPrivate: false)
+        store.clearAll()
+
+        XCTAssertTrue(store.settings(forHost: "private.example", isPrivate: true).isDefault)
+        XCTAssertTrue(store.settings(forHost: "other-private.example", isPrivate: true).isDefault)
+        XCTAssertTrue(store.settings(forHost: "public.example", isPrivate: false).isDefault)
+        XCTAssertNil(defaults.data(forKey: WebsiteSettingsStore.storeKey))
+    }
+
+    func testEphemeralFIFOEvictionBeyondCap() throws {
+        let defaults = try makeDefaults()
+        let store = WebsiteSettingsStore(defaults: defaults)
+        XCTAssertEqual(WebsiteSettingsStore.maxEphemeralHosts, 128)
+
+        for index in 0 ..< (WebsiteSettingsStore.maxEphemeralHosts + 1) {
+            store.setRequestDesktopWebsite(true, forHost: "host\(index).example", isPrivate: true)
+        }
+
+        XCTAssertTrue(store.settings(forHost: "host0.example", isPrivate: true).isDefault)
+        XCTAssertTrue(store.settings(forHost: "host1.example", isPrivate: true).requestDesktopWebsite)
+        XCTAssertTrue(store.settings(forHost: "host128.example", isPrivate: true).requestDesktopWebsite)
+        XCTAssertTrue(store.settings(forHost: "host0.example", isPrivate: false).isDefault)
+        XCTAssertNil(defaults.data(forKey: WebsiteSettingsStore.storeKey))
+    }
+
+    func testFreshPageDefaultsToPrivateTab() throws {
+        let page = WebPageController(configuration: WKWebViewConfiguration())
+        XCTAssertTrue(page.isPrivateTab)
+
+        // Fail-closed: wiring a page for an unknown tab resolves to private.
+        let root = try makeRoot()
+        let unwired = WebPageController(configuration: WKWebViewConfiguration())
+        unwired.isPrivateTab = false
+        root.wirePage(unwired, for: UUID())
+        XCTAssertTrue(unwired.isPrivateTab)
+    }
+
+    func testApplyWebsiteSettingsRespectsPrivacyScope() throws {
+        let defaults = try makeDefaults()
+        let store = WebsiteSettingsStore(defaults: defaults)
+        let url = try XCTUnwrap(URL(string: "https://example.com/page"))
+        store.setRequestDesktopWebsite(true, forHost: url.host, isPrivate: false)
+
+        let privatePage = WebPageController(configuration: WKWebViewConfiguration())
+        privatePage.websiteSettingsStore = store
+        privatePage.isPrivateTab = true
+        privatePage.applyWebsiteSettings(for: url)
+        XCTAssertFalse(privatePage.isDesktopMode)
+
+        let standardPage = WebPageController(configuration: WKWebViewConfiguration())
+        standardPage.websiteSettingsStore = store
+        standardPage.isPrivateTab = false
+        standardPage.applyWebsiteSettings(for: url)
+        XCTAssertTrue(standardPage.isDesktopMode)
     }
 
     // MARK: - Desktop Mode Convergence Tests
@@ -86,10 +195,11 @@ final class WebsiteSettingsAndLinkPreviewTests: XCTestCase {
         let defaults = try makeDefaults()
         let store = WebsiteSettingsStore(defaults: defaults)
         let url = try XCTUnwrap(URL(string: "https://desktop.example/article"))
-        store.setRequestDesktopWebsite(true, forHost: url.host)
+        store.setRequestDesktopWebsite(true, forHost: url.host, isPrivate: false)
 
         let page = WebPageController(configuration: WKWebViewConfiguration())
         page.websiteSettingsStore = store
+        page.isPrivateTab = false
 
         page.load(url)
 
@@ -111,11 +221,12 @@ final class WebsiteSettingsAndLinkPreviewTests: XCTestCase {
         let store = WebsiteSettingsStore(defaults: defaults)
         let urlA = try XCTUnwrap(URL(string: "https://a.example/page"))
         let urlB = try XCTUnwrap(URL(string: "https://b.example/other"))
-        store.setRequestDesktopWebsite(true, forHost: urlA.host)
-        store.setRequestDesktopWebsite(true, forHost: urlB.host)
+        store.setRequestDesktopWebsite(true, forHost: urlA.host, isPrivate: false)
+        store.setRequestDesktopWebsite(true, forHost: urlB.host, isPrivate: false)
 
         let page = WebPageController(configuration: WKWebViewConfiguration())
         page.websiteSettingsStore = store
+        page.isPrivateTab = false
 
         page.load(urlA)
         XCTAssertTrue(page.effectiveDesktopMode)
@@ -135,10 +246,11 @@ final class WebsiteSettingsAndLinkPreviewTests: XCTestCase {
         let defaults = try makeDefaults()
         let store = WebsiteSettingsStore(defaults: defaults)
         let baseURL = try XCTUnwrap(URL(string: "https://same-host.example/page"))
-        store.setRequestDesktopWebsite(false, forHost: baseURL.host)
+        store.setRequestDesktopWebsite(false, forHost: baseURL.host, isPrivate: false)
 
         let page = WebPageController(configuration: WKWebViewConfiguration())
         page.websiteSettingsStore = store
+        page.isPrivateTab = false
 
         // Commit a same-host document locally so the host check sees it.
         page.webView.loadHTMLString("<html><body>fixture</body></html>", baseURL: baseURL)
@@ -413,5 +525,29 @@ private final class LinkPreviewTouchStub: UITouch {
 
     override var view: UIView? {
         stubView
+    }
+}
+
+private final class WebsiteSettingsMockKeyValueStore: NSUbiquitousKeyValueStore {
+    var storage: [String: Any] = [:]
+
+    override func object(forKey key: String) -> Any? {
+        storage[key]
+    }
+
+    override func set(_ value: Any?, forKey key: String) {
+        if let value {
+            storage[key] = value
+        } else {
+            storage.removeValue(forKey: key)
+        }
+    }
+
+    override func removeObject(forKey key: String) {
+        storage.removeValue(forKey: key)
+    }
+
+    override func synchronize() -> Bool {
+        true
     }
 }

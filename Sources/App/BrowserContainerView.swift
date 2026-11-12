@@ -1,7 +1,4 @@
-//
-//  BrowserContainerView.swift
-//  OuterView
-//
+// App — SwiftUI bridge hosting the browser root.
 
 import SwiftUI
 
@@ -22,10 +19,26 @@ struct BrowserContainerView: UIViewControllerRepresentable {
     }
 
     func makeUIViewController(context: Context) -> BrowserChromeHostViewController {
+        Self.activateSyncIfNeeded()
         let browserRoot = BrowserRootViewController()
         let host = BrowserChromeHostViewController(browserRoot: browserRoot)
         context.coordinator.controller = browserRoot
         return host
+    }
+
+    /// Launch owns KVS backfill/pull plus account refresh so sync runs
+    /// without opening Settings; the settings model only reads.
+    @MainActor
+    private static func activateSyncIfNeeded() {
+        guard !AppEnvironment.isTestHost, SyncedSettingsStore.isSyncEnabled() else { return }
+        let monitor = iCloudSyncMonitor.shared
+        let store = SyncedSettingsStore.shared
+        store.onSyncSucceeded = { [weak monitor] in monitor?.noteImportSucceeded() }
+        // Refresh first so account state (syncing) precedes the KVS stamp (synced).
+        Task { @MainActor [monitor, store] in
+            await monitor.refreshAccountStatus()
+            store.startSync()
+        }
     }
 
     func updateUIViewController(_ host: BrowserChromeHostViewController, context: Context) {

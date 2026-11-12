@@ -6,13 +6,13 @@ import SwiftData
 /// Persisted bookmark; URL-based dedupe keeps the earliest row.
 @Model
 final class Bookmark {
-    var id: UUID
-    var title: String
-    var url: URL
-    var addedAt: Date
-    var isFavorite: Bool
+    var id: UUID = UUID()
+    var title: String = ""
+    var url: URL = URL(string: "about:blank") ?? URL(filePath: "/")
+    var addedAt: Date = Date()
+    var isFavorite: Bool = false
     var folderId: UUID?
-    var sortOrder: Int
+    var sortOrder: Int = 0
 
     init(
         id: UUID = UUID(),
@@ -36,11 +36,11 @@ final class Bookmark {
 /// Persisted folder for organizing bookmarks hierarchically.
 @Model
 final class BookmarkFolder {
-    var id: UUID
-    var title: String
+    var id: UUID = UUID()
+    var title: String = ""
     var parentId: UUID?
-    var createdAt: Date
-    var sortOrder: Int
+    var createdAt: Date = Date()
+    var sortOrder: Int = 0
     var isFavorite: Bool = false
 
     init(
@@ -63,9 +63,9 @@ final class BookmarkFolder {
 /// Persisted search query entered by the user in the address bar.
 @Model
 final class RecentSearch {
-    var id: UUID
-    var query: String
-    var searchedAt: Date
+    var id: UUID = UUID()
+    var query: String = ""
+    var searchedAt: Date = Date()
 
     init(id: UUID = UUID(), query: String, searchedAt: Date = Date()) {
         self.id = id
@@ -77,10 +77,10 @@ final class RecentSearch {
 /// Persisted page visit; one row per visit, no URL dedupe.
 @Model
 final class HistoryEntry {
-    var id: UUID
-    var title: String
-    var url: URL
-    var visitedAt: Date
+    var id: UUID = UUID()
+    var title: String = ""
+    var url: URL = URL(string: "about:blank") ?? URL(filePath: "/")
+    var visitedAt: Date = Date()
 
     init(id: UUID = UUID(), title: String, url: URL, visitedAt: Date) {
         self.id = id
@@ -94,12 +94,12 @@ final class HistoryEntry {
 /// persisted copy is therefore always non-private.
 @Model
 final class TabRecord {
-    var id: UUID
+    var id: UUID = UUID()
     var url: URL?
     var title: String?
-    var isPrivate: Bool
-    var createdAt: Date
-    var lastActiveAt: Date
+    var isPrivate: Bool = false
+    var createdAt: Date = Date()
+    var lastActiveAt: Date = Date()
     var groupId: UUID?
 
     /// Link-opened lineage: the id of the tab the user was viewing when this
@@ -133,9 +133,9 @@ final class TabRecord {
 final class TabGroup {
     static let maxNameLength = 32
 
-    var id: UUID
-    var name: String
-    var createdAt: Date
+    var id: UUID = UUID()
+    var name: String = ""
+    var createdAt: Date = Date()
 
     init(id: UUID = UUID(), name: String, createdAt: Date = Date()) {
         self.id = id
@@ -149,14 +149,18 @@ final class TabGroup {
 /// so strip order and the selected tab live here across relaunches.
 @Model
 final class TabSession {
-    var id: UUID
-    var tabIds: [UUID]
+    var id: UUID = UUID()
+    var tabIds: [UUID] = []
     var selectedTabId: UUID?
+    /// Comma-joined uuidStrings in strip order; the array-backed store type
+    /// does not sync through CloudKit, so this string is the synced order.
+    var tabIdsEncoded: String = ""
 
-    init(id: UUID, tabIds: [UUID] = [], selectedTabId: UUID? = nil) {
+    init(id: UUID, tabIds: [UUID] = [], selectedTabId: UUID? = nil, tabIdsEncoded: String = "") {
         self.id = id
         self.tabIds = tabIds
         self.selectedTabId = selectedTabId
+        self.tabIdsEncoded = tabIdsEncoded
     }
 }
 
@@ -166,12 +170,12 @@ final class ReadingListItem {
     static let maxTitleLength = 200
     static let maxPreviewLength = 400
 
-    var id: UUID
-    var title: String
-    var url: URL
-    var addedAt: Date
-    var isRead: Bool
-    var sortIndex: Int
+    var id: UUID = UUID()
+    var title: String = ""
+    var url: URL = URL(string: "about:blank") ?? URL(filePath: "/")
+    var addedAt: Date = Date()
+    var isRead: Bool = false
+    var sortIndex: Int = 0
     var previewText: String?
 
     init(
