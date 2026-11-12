@@ -154,6 +154,11 @@ public final class SyncedSettingsStore {
         return keyValueStore.synchronize()
     }
 
+    func mirroredKeyCount() -> Int {
+        guard !isTestIsolated, isSyncEnabled else { return 0 }
+        return Self.syncedKeys.filter { keyValueStore.object(forKey: $0) != nil }.count
+    }
+
     @discardableResult
     private func pullRemoteValues() -> Bool {
         guard !isTestIsolated, isSyncEnabled else { return false }
