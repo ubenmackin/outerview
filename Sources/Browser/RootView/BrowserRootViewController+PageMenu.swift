@@ -20,7 +20,7 @@ extension BrowserRootViewController {
         }
         let readerActive = page?.isReaderActive ?? false
         let readerBlocked = page?.isReaderUnavailable ?? false
-        let isDesktop = page?.isDesktopMode ?? false
+        let isDesktop = page?.effectiveDesktopMode ?? false
         return PageMenuModel(
             url: url,
             canGoBack: snapshot?.canGoBack ?? false,

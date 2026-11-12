@@ -100,6 +100,11 @@ final class WebPageController: NSObject {
     /// Whether the user has temporarily overridden desktop mode for this tab session.
     private(set) var hasPerTabDesktopOverride = false
 
+    /// Effective state for menu labels; always mirrors the applied mode.
+    var effectiveDesktopMode: Bool {
+        isDesktopMode
+    }
+
     /// Shared download pipeline; nil in unit tests without a pipeline.
     weak var downloadsManager: DownloadsManager?
 
@@ -209,6 +214,11 @@ final class WebPageController: NSObject {
         guard URLNormalizer.isLoadable(url) else {
             rejectUnsupportedScheme(url)
             return
+        }
+        if let targetHost = url.host,
+           targetHost != webView.url?.host
+        {
+            hasPerTabDesktopOverride = false
         }
         applyWebsiteSettings(for: url)
         webView.load(URLRequest(url: url))

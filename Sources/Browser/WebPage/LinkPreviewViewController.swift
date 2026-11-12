@@ -3,7 +3,7 @@ import UIKit
 import WebKit
 
 @MainActor
-public final class LinkPreviewViewController: UIViewController {
+public final class LinkPreviewViewController: UIViewController, UIGestureRecognizerDelegate {
     public static let isPreviewHiddenDefaultsKey = "linkPreviewHidden"
 
     public static let expandedSize = CGSize(width: 360, height: 420)
@@ -27,8 +27,8 @@ public final class LinkPreviewViewController: UIViewController {
 
     private let headerView = UIView()
     private let domainLabel = UILabel()
-    private let hidePreviewButton = UIButton(type: .system)
-    private let showPreviewButton = UIButton(type: .system)
+    private let hidePreviewButton = PreviewHeaderButton(type: .system)
+    private let showPreviewButton = PreviewHeaderButton(type: .system)
     private let separatorView = UIView()
 
     private let previewContainer = UIView()
@@ -192,7 +192,17 @@ public final class LinkPreviewViewController: UIViewController {
         view.addGestureRecognizer(swipeUp)
 
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
+        tap.delegate = self
+        tap.cancelsTouchesInView = false
         view.addGestureRecognizer(tap)
+    }
+
+    /// Header touches toggle preview state; only body taps open the link.
+    public func gestureRecognizer(_: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        if touch.view?.isDescendant(of: headerView) == true {
+            return false
+        }
+        return true
     }
 
     public func setPreviewHidden(_ hidden: Bool) {
@@ -277,5 +287,17 @@ public final class LinkPreviewViewController: UIViewController {
 
         webView = wv
         wv.load(URLRequest(url: url))
+    }
+}
+
+/// Expands small header buttons to a 44pt minimum touch target.
+@MainActor
+final class PreviewHeaderButton: UIButton {
+    var minimumHitArea = CGSize(width: 44, height: 44)
+
+    override func point(inside point: CGPoint, with _: UIEvent?) -> Bool {
+        let dx = max(0, (minimumHitArea.width - bounds.width) / 2)
+        let dy = max(0, (minimumHitArea.height - bounds.height) / 2)
+        return bounds.insetBy(dx: -dx, dy: -dy).contains(point)
     }
 }
