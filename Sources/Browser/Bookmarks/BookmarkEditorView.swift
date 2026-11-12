@@ -7,6 +7,7 @@ enum BookmarkEditorTarget {
     case addBookmark(title: String, url: URL)
     case editBookmark(Bookmark)
     case editFolder(BookmarkFolder)
+    case addFolderForTabs(defaultTitle: String, tabs: [(title: String, url: URL)])
 }
 
 @MainActor
@@ -47,14 +48,21 @@ final class BookmarkEditorModel {
             } else {
                 self.selectedLocation = .root
             }
+
+        case let .addFolderForTabs(defaultTitle, _):
+            self.title = defaultTitle
+            self.urlString = ""
+            self.selectedLocation = .root
         }
     }
 
     var isFolderMode: Bool {
-        if case .editFolder = target {
-            return true
+        switch target {
+        case .editFolder, .addFolderForTabs:
+            true
+        case .addBookmark, .editBookmark:
+            false
         }
-        return false
     }
 
     var isValid: Bool {
@@ -107,6 +115,26 @@ final class BookmarkEditorModel {
             case let .folder(parentId):
                 try bookmarkStore.updateFolder(id: folder.id, title: trimmedTitle, parentId: parentId)
             }
+
+        case let .addFolderForTabs(_, tabs):
+            let parentId: UUID? = switch selectedLocation {
+            case let .folder(fid): fid
+            case .root, .favorites: nil
+            }
+            let isFav: Bool = selectedLocation == .favorites
+            let folder = try bookmarkStore.createFolder(
+                title: trimmedTitle,
+                parentId: parentId,
+                isFavorite: isFav
+            )
+            for (tabTitle, tabURL) in tabs {
+                try bookmarkStore.add(
+                    title: tabTitle,
+                    url: tabURL,
+                    isFavorite: isFav,
+                    folderId: folder.id
+                )
+            }
         }
     }
 }
@@ -129,6 +157,8 @@ struct BookmarkEditorView: View {
             "Edit Bookmark"
         case .editFolder:
             "Edit Folder"
+        case let .addFolderForTabs(_, tabs):
+            "Add Bookmarks for \(tabs.count) Tabs"
         }
     }
 

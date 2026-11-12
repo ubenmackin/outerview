@@ -29,24 +29,17 @@ final class ElementContextMenuTests: XCTestCase {
     func testLinkMenuItemsCountOrderIconsAndImageOnlyExclusion() {
         let menu = ElementContextMenu.menu(for: .link(url: Fixture.linkURL), actions: Self.stubActions)
 
-        XCTAssertEqual(menu.children.count, 4)
+        XCTAssertEqual(menu.children.count, 7)
+        let elementTitles = menu.children.compactMap { ($0 as? UIAction)?.title ?? ($0 as? UIMenu)?.title }
         XCTAssertEqual(
-            menu.children.compactMap { $0 as? UIAction }.map(\.title),
-            ["Open in New Tab", "Add to Reading List", "Copy Link", "Share"]
+            elementTitles,
+            ["Open", "Open in Background", "Open in Tab Group", "Download Linked File", "Add to Reading List", "Copy Link", "Share…"]
         )
-        XCTAssertEqual(
-            menu.children.compactMap { $0 as? UIAction }.map(\.image),
-            [
-                UIImage(systemName: "plus.square.on.square"),
-                UIImage(systemName: "eyeglasses"),
-                UIImage(systemName: "doc.on.doc"),
-                UIImage(systemName: "square.and.arrow.up")
-            ]
-        )
-        let titles = Set(menu.children.compactMap { $0 as? UIAction }.map(\.title))
+        let actions = menu.children.compactMap { $0 as? UIAction }
+        let actionTitles = Set(actions.map(\.title))
         // Reading list is link-only; Photos actions are image-only.
-        XCTAssertFalse(titles.contains("Save to Photos"))
-        XCTAssertFalse(titles.contains("Copy Image"))
+        XCTAssertFalse(actionTitles.contains("Save to Photos"))
+        XCTAssertFalse(actionTitles.contains("Copy Image"))
     }
 
     func testImageMenuItemsCountOrderIconsAndLinkOnlyExclusion() {

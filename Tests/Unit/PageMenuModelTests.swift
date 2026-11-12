@@ -136,7 +136,7 @@ final class PageMenuModelTests: XCTestCase {
         XCTAssertEqual(titles, [
             "Back", "Forward", "Reload", "Share",
             "Add Bookmark", "Add to Favorites", "Add to Reading List", "Show Reader",
-            "Find on Page", "Text Zoom", "Zoom In", "Zoom Out", "Reset", "Request Desktop Website", "Print", "Save as PDF", "Downloads",
+            "Find on Page", "Text Zoom", "Zoom In", "Zoom Out", "Reset", "Request Desktop Website", "Website Settings…", "Print", "Save as PDF", "Downloads",
             "Open Start Page", "Settings…"
         ])
     }
@@ -156,7 +156,7 @@ final class PageMenuModelTests: XCTestCase {
         XCTAssertEqual(titles, [
             "Back", "Forward", "Reload", "Share",
             "Add Bookmark", "Add to Favorites", "Add to Reading List",
-            "Find on Page", "Text Zoom", "Zoom In", "Zoom Out", "Reset", "Request Desktop Website", "Print", "Save as PDF", "Downloads",
+            "Find on Page", "Text Zoom", "Zoom In", "Zoom Out", "Reset", "Request Desktop Website", "Website Settings…", "Print", "Save as PDF", "Downloads",
             "Open Start Page", "Settings…"
         ])
     }

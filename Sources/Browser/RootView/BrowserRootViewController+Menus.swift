@@ -43,6 +43,61 @@ extension BrowserRootViewController {
         return UIMenu(title: "", children: actions)
     }
 
+    // MARK: - Bookmarks Button Long-Press Menu
+
+    func makeBookmarksButtonMenu() -> UIMenu {
+        let snapshot = activePage()?.snapshot
+        let hasPage = snapshot?.url.map(URLNormalizer.isLoadable) ?? false
+        let isForcedStart = selectedTabID.map { forcedStartPageTabs.contains($0) } ?? false
+        let canBookmarkActive = hasPage && !isForcedStart
+
+        let readingListAction = UIAction(
+            title: "Add to Reading List",
+            image: UIImage(systemName: "eyeglasses"),
+            attributes: canBookmarkActive ? [] : [.disabled]
+        ) { [weak self] _ in
+            self?.addActivePageToReadingList()
+        }
+
+        let addBookmarkAction = UIAction(
+            title: "Add Bookmark",
+            image: UIImage(systemName: "book"),
+            attributes: canBookmarkActive ? [] : [.disabled]
+        ) { [weak self] _ in
+            self?.presentAddBookmarkSheet()
+        }
+
+        var actions: [UIMenuElement] = [readingListAction, addBookmarkAction]
+
+        let isPrivate = overviewMode.isPrivate
+        let activeGroupID = overviewController.selectedGroupID
+        let scopeTabs = tabs.filter {
+            $0.isPrivate == isPrivate && (isPrivate || $0.groupId == activeGroupID)
+        }
+        let loadableTabs: [(title: String, url: URL)] = scopeTabs.compactMap { record in
+            guard let url = record.url, URLNormalizer.isLoadable(url) else { return nil }
+            let title = HostFormatter.displayTitle(url: url, title: record.title)
+            return (title, url)
+        }
+
+        if loadableTabs.count >= 2 {
+            let addMultipleAction = UIAction(
+                title: "Add Bookmarks for \(loadableTabs.count) Tabs",
+                image: UIImage(systemName: "book")
+            ) { [weak self] _ in
+                self?.presentAddBookmarksForTabsSheet(tabs: loadableTabs)
+            }
+            actions.append(addMultipleAction)
+        }
+
+        return UIMenu(title: "", children: actions)
+    }
+
+    func presentAddBookmarksForTabsSheet(tabs: [(title: String, url: URL)]) {
+        let target = BookmarkEditorTarget.addFolderForTabs(defaultTitle: "Saved Tabs", tabs: tabs)
+        presentBookmarkEditor(for: target)
+    }
+
     // MARK: - Tab Group Menu
 
     func makeTabGroupMenu() -> UIMenu {
@@ -364,13 +419,31 @@ extension BrowserRootViewController {
     /// to a root-level capability, so pages never reach into stores directly.
     func makeElementContextActions() -> ElementContextActions {
         ElementContextActions(
+            openLink: { [weak self] url in self?.loadActivePage(url) },
             openInNewTab: { [weak self] url in self?.openInNewTab(url: url, background: true, isPrivate: nil) },
+            tabGroups: overviewGroups(),
+            openInTabGroup: { [weak self] url, group in self?.openURLsInGroup([url], groupId: group.id) },
+            openInNewTabGroup: { [weak self] url, name in self?.openURLsInNewGroup([url], name: name) },
+            downloadLinkedFile: { [weak self] url in self?.downloadLinkedFile(url: url) },
             addToReadingList: { [weak self] url in self?.addReadingListEntry(url: url) },
             copyLink: { [weak self] url in self?.copyElementURLToPasteboard(url) },
             share: { [weak self] url in self?.shareElementURL(url) },
             saveToPhotos: { [weak self] url in self?.saveImageToPhotos(from: url) },
             copyImage: { [weak self] url in self?.copyElementURLToPasteboard(url) }
         )
+    }
+
+    func downloadLinkedFile(url: URL) {
+        guard URLNormalizer.isLoadable(url) else { return }
+        let fallback = url.lastPathComponent.isEmpty ? "download" : url.lastPathComponent
+        let rowID = downloadsManager.registerRow(
+            name: DownloadsManager.sanitizedFileName(fallback),
+            fileURL: nil
+        )
+        let request = URLRequest(url: url)
+        if BackgroundDownloadService.shared.start(request: request, suggestedName: fallback, reusing: rowID) == nil {
+            downloadsManager.failDownload(id: rowID, reason: "Download service unavailable")
+        }
     }
 
     private func addReadingListEntry(url: URL) {

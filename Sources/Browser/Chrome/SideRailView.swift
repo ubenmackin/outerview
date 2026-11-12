@@ -48,8 +48,18 @@ struct RailAction {
         )
     }
 
-    static func bookmarks(handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
-        RailAction(systemImageName: "book", accessibilityLabel: "Bookmarks", handler: handler)
+    static func bookmarks(
+        menuProvider: (@MainActor @Sendable () -> UIMenu?)? = nil,
+        showsMenuAsPrimaryAction: Bool = false,
+        handler: @MainActor @Sendable @escaping () -> Void
+    ) -> RailAction {
+        RailAction(
+            systemImageName: "book",
+            accessibilityLabel: "Bookmarks",
+            menuProvider: menuProvider,
+            showsMenuAsPrimaryAction: showsMenuAsPrimaryAction,
+            handler: handler
+        )
     }
 
     static func newTab(handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {

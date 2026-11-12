@@ -633,7 +633,10 @@ extension BrowserRootViewController {
         return (
             prefix: [
                 backAction,
-                .bookmarks { [weak self] in self?.openBookmarksLibrary() }
+                .bookmarks(
+                    menuProvider: { [weak self] in self?.makeBookmarksButtonMenu() },
+                    handler: { [weak self] in self?.openBookmarksLibrary() }
+                )
             ],
             suffix: [
                 .newTab { [weak self] in self?.createNewTab() },
