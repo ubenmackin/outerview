@@ -48,9 +48,9 @@ extension BrowserRootViewController {
     func makePageMenu(model: PageMenuModel) -> UIMenu {
         UIMenu(title: "", children: [
             makePaletteMenu(model: model),
-            makeSaveMenu(model: model),
+            makeAppMenu(model: model),
             makeToolMenu(model: model),
-            makeNavMenu()
+            makeSaveMenu(model: model)
         ])
     }
 
@@ -62,6 +62,7 @@ extension BrowserRootViewController {
         ) { [weak self] _ in
             self?.activePage()?.goBack()
         }
+        backAction.accessibilityLabel = "Back"
         let forwardAction = UIAction(
             title: "Forward",
             image: UIImage(systemName: "chevron.right"),
@@ -69,6 +70,7 @@ extension BrowserRootViewController {
         ) { [weak self] _ in
             self?.activePage()?.goForward()
         }
+        forwardAction.accessibilityLabel = "Forward"
         let reloadAction = UIAction(
             title: "Reload",
             image: UIImage(systemName: "arrow.clockwise"),
@@ -76,6 +78,7 @@ extension BrowserRootViewController {
         ) { [weak self] _ in
             self?.activePage()?.reload()
         }
+        reloadAction.accessibilityLabel = "Reload"
         let shareAction = UIAction(
             title: "Share",
             image: UIImage(systemName: "square.and.arrow.up"),
@@ -83,6 +86,7 @@ extension BrowserRootViewController {
         ) { [weak self] _ in
             self?.shareActivePage()
         }
+        shareAction.accessibilityLabel = "Share"
         return UIMenu(options: [.displayInline, .displayAsPalette], children: [
             backAction,
             forwardAction,
@@ -91,30 +95,40 @@ extension BrowserRootViewController {
         ])
     }
 
-    private func makeSaveMenu(model: PageMenuModel) -> UIMenu {
-        let addBookmarkAction = UIAction(
-            title: "Add Bookmark",
-            image: UIImage(systemName: "book"),
-            attributes: model.canSave ? [] : .disabled
+    private func makeAppMenu(model: PageMenuModel) -> UIMenu {
+        let websiteSettingsAction = UIAction(
+            title: "Website Settings…",
+            image: UIImage(systemName: "gearshape"),
+            attributes: model.canEditWebsiteSettings ? [] : .disabled
         ) { [weak self] _ in
-            self?.presentAddBookmarkSheet()
+            self?.presentWebsiteSettings()
         }
-        let favoriteAction = if model.isFavorite {
-            UIAction(
-                title: "Remove from Favorites",
-                image: UIImage(systemName: "star.slash"),
-                attributes: model.canSave ? [] : .disabled
+        websiteSettingsAction.accessibilityLabel = "Website Settings"
+        let settingsAction = UIAction(
+            title: "Settings…",
+            image: UIImage(systemName: "gear")
+        ) { [weak self] _ in
+            self?.presentSettings()
+        }
+        settingsAction.accessibilityLabel = "Settings"
+        return UIMenu(options: .displayInline, children: [
+            websiteSettingsAction,
+            settingsAction
+        ])
+    }
+
+    private func makeSaveMenu(model: PageMenuModel) -> UIMenu {
+        var saveChildren: [UIMenuElement] = []
+        if model.showsReaderItem {
+            let readerAction = UIAction(
+                title: model.readerTitle,
+                image: UIImage(systemName: "book.pages"),
+                attributes: model.canFind ? [] : .disabled
             ) { [weak self] _ in
-                self?.removeActivePageFromFavorites()
+                self?.toggleReaderFromMenu()
             }
-        } else {
-            UIAction(
-                title: "Add to Favorites",
-                image: UIImage(systemName: "star"),
-                attributes: model.canSave ? [] : .disabled
-            ) { [weak self] _ in
-                self?.addActivePageToFavorites()
-            }
+            readerAction.accessibilityLabel = model.readerTitle
+            saveChildren.append(readerAction)
         }
         let readingListAction = if model.isInReadingList {
             UIAction(
@@ -134,33 +148,91 @@ extension BrowserRootViewController {
             }
         }
         readingListAction.accessibilityLabel = model.readingListTitle
-        var saveChildren: [UIMenuElement] = [
-            addBookmarkAction,
-            favoriteAction,
-            readingListAction
-        ]
-        if model.showsReaderItem {
-            let readerAction = UIAction(
-                title: model.readerTitle,
-                image: UIImage(systemName: "book.pages"),
-                attributes: model.canFind ? [] : .disabled
-            ) { [weak self] _ in
-                self?.toggleReaderFromMenu()
-            }
-            readerAction.accessibilityLabel = model.readerTitle
-            saveChildren.append(readerAction)
-        }
+        saveChildren.append(readingListAction)
+        saveChildren.append(makeSaveSubmenu(model: model))
+        saveChildren.append(makePrintSubmenu(model: model))
         return UIMenu(options: .displayInline, children: saveChildren)
     }
 
-    private func makeToolMenu(model: PageMenuModel) -> UIMenu {
-        let findAction = UIAction(
-            title: "Find on Page",
-            image: UIImage(systemName: "text.magnifyingglass"),
-            attributes: model.canFind ? [] : .disabled
+    private func makeSaveSubmenu(model: PageMenuModel) -> UIMenu {
+        let addBookmarkAction = UIAction(
+            title: "Add Bookmark",
+            image: UIImage(systemName: "book"),
+            attributes: model.canSave ? [] : .disabled
         ) { [weak self] _ in
-            self?.findOnPageFromMenu()
+            self?.presentAddBookmarkSheet()
         }
+        addBookmarkAction.accessibilityLabel = "Add Bookmark"
+        let favoriteAction = if model.isFavorite {
+            UIAction(
+                title: "Remove from Favorites",
+                image: UIImage(systemName: "star.slash"),
+                attributes: model.canSave ? [] : .disabled
+            ) { [weak self] _ in
+                self?.removeActivePageFromFavorites()
+            }
+        } else {
+            UIAction(
+                title: "Add to Favorites",
+                image: UIImage(systemName: "star"),
+                attributes: model.canSave ? [] : .disabled
+            ) { [weak self] _ in
+                self?.addActivePageToFavorites()
+            }
+        }
+        favoriteAction.accessibilityLabel = favoriteAction.title
+        let submenu = UIMenu(
+            title: "Save",
+            image: UIImage(systemName: "bookmark"),
+            children: [addBookmarkAction, favoriteAction]
+        )
+        submenu.accessibilityLabel = "Save"
+        return submenu
+    }
+
+    private func makePrintSubmenu(model: PageMenuModel) -> UIMenu {
+        let printAction = UIAction(
+            title: "Print",
+            image: UIImage(systemName: "printer"),
+            attributes: model.canPrint ? [] : .disabled
+        ) { [weak self] _ in
+            self?.printActivePage()
+        }
+        printAction.accessibilityLabel = "Print"
+        let pdfAction = UIAction(
+            title: "Save as PDF",
+            image: UIImage(systemName: "doc.richtext"),
+            attributes: model.canPrint ? [] : .disabled
+        ) { [weak self] _ in
+            self?.saveActivePageAsPDF()
+        }
+        pdfAction.accessibilityLabel = "Save as PDF"
+        let submenu = UIMenu(
+            title: "Print and PDF",
+            image: UIImage(systemName: "printer"),
+            children: [printAction, pdfAction]
+        )
+        submenu.accessibilityLabel = "Print and PDF"
+        return submenu
+    }
+
+    private func makeToolMenu(model: PageMenuModel) -> UIMenu {
+        let downloadsAction = UIAction(
+            title: "Downloads",
+            image: UIImage(systemName: "arrow.down.circle"),
+            attributes: model.canOpenDownloads ? [] : .disabled
+        ) { [weak self] _ in
+            self?.presentDownloadsFromMenu()
+        }
+        downloadsAction.accessibilityLabel = "Downloads"
+        let desktopAction = UIAction(
+            title: model.desktopModeTitle,
+            image: UIImage(systemName: model.isDesktopMode ? "iphone" : "desktopcomputer"),
+            attributes: model.canToggleDesktopMode ? [] : .disabled
+        ) { [weak self] _ in
+            self?.toggleDesktopModeFromMenu()
+        }
+        desktopAction.accessibilityLabel = model.desktopModeTitle
         let zoomAttributes: UIMenuElement.Attributes = model.canFind ? [] : .disabled
         let zoomInAction = UIAction(
             title: "Zoom In",
@@ -192,54 +264,19 @@ extension BrowserRootViewController {
             children: [zoomInAction, zoomOutAction, resetZoomAction]
         )
         zoomMenu.accessibilityLabel = "Text Zoom"
-        let downloadsAction = UIAction(
-            title: "Downloads",
-            image: UIImage(systemName: "arrow.down.circle"),
-            attributes: model.canOpenDownloads ? [] : .disabled
+        let findAction = UIAction(
+            title: "Find on Page",
+            image: UIImage(systemName: "text.magnifyingglass"),
+            attributes: model.canFind ? [] : .disabled
         ) { [weak self] _ in
-            self?.presentDownloadsFromMenu()
+            self?.findOnPageFromMenu()
         }
-        downloadsAction.accessibilityLabel = "Downloads"
-        let desktopAction = UIAction(
-            title: model.desktopModeTitle,
-            image: UIImage(systemName: model.isDesktopMode ? "iphone" : "desktopcomputer"),
-            attributes: model.canToggleDesktopMode ? [] : .disabled
-        ) { [weak self] _ in
-            self?.toggleDesktopModeFromMenu()
-        }
-        desktopAction.accessibilityLabel = model.desktopModeTitle
-        let websiteSettingsAction = UIAction(
-            title: "Website Settings…",
-            image: UIImage(systemName: "gearshape"),
-            attributes: model.canEditWebsiteSettings ? [] : .disabled
-        ) { [weak self] _ in
-            self?.presentWebsiteSettings()
-        }
-        websiteSettingsAction.accessibilityLabel = "Website Settings"
-        let printAction = UIAction(
-            title: "Print",
-            image: UIImage(systemName: "printer"),
-            attributes: model.canPrint ? [] : .disabled
-        ) { [weak self] _ in
-            self?.printActivePage()
-        }
-        printAction.accessibilityLabel = "Print"
-        let pdfAction = UIAction(
-            title: "Save as PDF",
-            image: UIImage(systemName: "doc.richtext"),
-            attributes: model.canPrint ? [] : .disabled
-        ) { [weak self] _ in
-            self?.saveActivePageAsPDF()
-        }
-        pdfAction.accessibilityLabel = "Save as PDF"
+        findAction.accessibilityLabel = "Find on Page"
         return UIMenu(options: .displayInline, children: [
-            findAction,
-            zoomMenu,
+            downloadsAction,
             desktopAction,
-            websiteSettingsAction,
-            printAction,
-            pdfAction,
-            downloadsAction
+            zoomMenu,
+            findAction
         ])
     }
 
@@ -279,25 +316,6 @@ extension BrowserRootViewController {
             sheet.preferredCornerRadius = 28
         }
         present(hosting, animated: shouldAnimateModalSheets)
-    }
-
-    private func makeNavMenu() -> UIMenu {
-        let startPageAction = UIAction(
-            title: "Open Start Page",
-            image: UIImage(systemName: "square.grid.2x2")
-        ) { [weak self] _ in
-            self?.openStartPageFromMenu()
-        }
-        let settingsAction = UIAction(
-            title: "Settings…",
-            image: UIImage(systemName: "gear")
-        ) { [weak self] _ in
-            self?.presentSettings()
-        }
-        return UIMenu(options: .displayInline, children: [
-            startPageAction,
-            settingsAction
-        ])
     }
 
     func showPageMenu() {
@@ -403,11 +421,6 @@ extension BrowserRootViewController {
 
     func presentSettings() {
         presentSettingsSheet()
-    }
-
-    func openStartPageFromMenu() {
-        showStartPageForActiveTab()
-        applyBrowsingResumed(animated: true)
     }
 
     func findOnPageFromMenu() {

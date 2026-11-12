@@ -226,12 +226,13 @@ final class ChromeGeometryTests: XCTestCase {
     }
 
     @MainActor
-    func testOpenStartPageFromMenu() throws {
+    func testForcedStartPageRailFlow() throws {
         let database = try OuterViewDatabase(inMemory: true)
         let rootVC = BrowserRootViewController(database: database)
         TestWindow.attach(rootVC)
 
-        rootVC.openStartPageFromMenu()
+        // Forced start page drives the .startPage rail mode.
+        rootVC.showStartPageForActiveTab()
         XCTAssertEqual(rootVC.currentRailMode, .startPage)
 
         // Tapping into address bar while on start page preserves start page and activates editor

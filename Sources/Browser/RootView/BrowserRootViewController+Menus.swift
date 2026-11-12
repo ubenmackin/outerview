@@ -67,7 +67,26 @@ extension BrowserRootViewController {
             self?.presentAddBookmarkSheet()
         }
 
-        var actions: [UIMenuElement] = [readingListAction, addBookmarkAction]
+        let isFavorite = snapshot?.url.map { bookmarkStore?.isFavorite(url: $0) ?? false } ?? false
+        let favoriteAction = if isFavorite {
+            UIAction(
+                title: "Remove from Favorites",
+                image: UIImage(systemName: "star.slash"),
+                attributes: canBookmarkActive ? [] : [.disabled]
+            ) { [weak self] _ in
+                self?.removeActivePageFromFavorites()
+            }
+        } else {
+            UIAction(
+                title: "Add to Favorites",
+                image: UIImage(systemName: "star"),
+                attributes: canBookmarkActive ? [] : [.disabled]
+            ) { [weak self] _ in
+                self?.addActivePageToFavorites()
+            }
+        }
+
+        var actions: [UIMenuElement] = [readingListAction, addBookmarkAction, favoriteAction]
 
         let isPrivate = overviewMode.isPrivate
         let activeGroupID = overviewController.selectedGroupID
