@@ -12,7 +12,7 @@ public final class LinkPreviewViewController: UIViewController, UIGestureRecogni
 
     public let url: URL
     public let webViewConfiguration: WKWebViewConfiguration
-    public var onOpen: ((URL) -> Void)?
+    public var onOpen: (@MainActor (URL) -> Void)?
 
     private let defaults: UserDefaults
 
@@ -43,7 +43,7 @@ public final class LinkPreviewViewController: UIViewController, UIGestureRecogni
         url: URL,
         configuration: WKWebViewConfiguration = WKWebViewConfiguration(),
         defaults: UserDefaults = .standard,
-        onOpen: ((URL) -> Void)? = nil
+        onOpen: (@MainActor (URL) -> Void)? = nil
     ) {
         self.url = url
         self.webViewConfiguration = configuration

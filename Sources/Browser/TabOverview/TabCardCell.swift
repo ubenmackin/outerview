@@ -71,7 +71,7 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         return UIColor(hue: hue, saturation: 0.25, brightness: 0.92, alpha: 1.0)
     }
 
-    var onClose: (() -> Void)?
+    var onClose: (@MainActor () -> Void)?
 
     /// Internal container holding all card content. Transforming this view ensures
     /// UICollectionViewCell layout passes do not reset or conflict with swipe animations.

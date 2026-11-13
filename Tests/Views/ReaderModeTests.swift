@@ -74,6 +74,7 @@ final class ReaderModeTests: XCTestCase {
         XCTAssertTrue(ReaderMode.replaceBodyScript(theme: .light, fontSize: 29).contains("28px"))
     }
 
+    @MainActor
     func testPreferencesRoundTripThroughDefaults() throws {
         let defaults = try makeDefaults()
         XCTAssertEqual(ReaderMode.storedTheme(defaults: defaults), .light)

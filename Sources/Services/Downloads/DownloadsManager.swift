@@ -356,6 +356,8 @@ final class DownloadsManager: NSObject {
             do {
                 return try fileManager.attributesOfItem(atPath: url.path)[.size] as? Int
             } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "Downloads")
+                    .debug("Failed to read download file size: \(error.localizedDescription, privacy: .public)")
                 return nil
             }
         }()
@@ -476,7 +478,7 @@ extension DownloadsManager: WKDownloadDelegate {
         _ download: WKDownload,
         decideDestinationUsing response: URLResponse,
         suggestedFilename: String,
-        completionHandler: @escaping @MainActor @Sendable (URL?) -> Void
+        completionHandler: @escaping @MainActor (URL?) -> Void
     ) {
         let clean = Self.sanitizedFileName(suggestedFilename.isEmpty ? (response.suggestedFilename ?? "download") : suggestedFilename)
         let key = ObjectIdentifier(download)

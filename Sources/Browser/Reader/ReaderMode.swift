@@ -1,6 +1,7 @@
 // Browser — Reader engine plus persisted theme and font size.
 
 import Foundation
+import os
 import UIKit
 
 /// Reader color scheme. The raw value is what persists under "readerTheme".
@@ -77,9 +78,10 @@ enum ReaderMode: Sendable {
         min(max(size, minimumFontSize), maximumFontSize)
     }
 
+    @MainActor
     static func storedTheme(defaults: UserDefaults = .standard) -> ReaderTheme {
         if SyncedSettingsStore.isSyncEnabled(defaults: defaults),
-           let raw = mirroredString(forKey: themeDefaultsKey, defaults: defaults)
+           let raw = SyncedSettingsStore(defaults: defaults).mirroredString(forKey: themeDefaultsKey)
         {
             return ReaderTheme(rawValue: raw) ?? .light
         }
@@ -91,9 +93,10 @@ enum ReaderMode: Sendable {
         return theme
     }
 
+    @MainActor
     static func storedFontSize(defaults: UserDefaults = .standard) -> Int {
         if SyncedSettingsStore.isSyncEnabled(defaults: defaults),
-           let mirrored = mirroredInt(forKey: fontSizeDefaultsKey, defaults: defaults)
+           let mirrored = SyncedSettingsStore(defaults: defaults).mirroredInt(forKey: fontSizeDefaultsKey)
         {
             guard mirrored != 0 else {
                 return defaultFontSize
@@ -107,53 +110,23 @@ enum ReaderMode: Sendable {
         return clampedFontSize(stored)
     }
 
+    @MainActor
     static func persist(theme: ReaderTheme, defaults: UserDefaults = .standard) {
         defaults.set(theme.rawValue, forKey: themeDefaultsKey)
         mirror(theme.rawValue, forKey: themeDefaultsKey, defaults: defaults)
     }
 
+    @MainActor
     static func persist(fontSize: Int, defaults: UserDefaults = .standard) {
         let clamped = clampedFontSize(fontSize)
         defaults.set(clamped, forKey: fontSizeDefaultsKey)
         mirror(clamped, forKey: fontSizeDefaultsKey, defaults: defaults)
     }
 
-    /// Sendable box for the defaults reference; the main-thread guard
-    /// makes the handoff into `assumeIsolated` race-free.
-    private struct UnsafeDefaultsBox: @unchecked Sendable {
-        let defaults: UserDefaults
-    }
-
-    private static func mirroredString(forKey key: String, defaults: UserDefaults) -> String? {
-        // Mirror lives on the main actor; off-main callers fail closed to local.
-        guard Thread.isMainThread else { return nil }
-        let box = UnsafeDefaultsBox(defaults: defaults)
-        return MainActor.assumeIsolated {
-            SyncedSettingsStore(defaults: box.defaults).mirroredString(forKey: key)
-        }
-    }
-
-    private static func mirroredInt(forKey key: String, defaults: UserDefaults) -> Int? {
-        // Mirror lives on the main actor; off-main callers fail closed to local.
-        guard Thread.isMainThread else { return nil }
-        let box = UnsafeDefaultsBox(defaults: defaults)
-        return MainActor.assumeIsolated {
-            SyncedSettingsStore(defaults: box.defaults).mirroredInt(forKey: key)
-        }
-    }
-
-    private static func mirror(_ value: some Sendable?, forKey key: String, defaults: UserDefaults) {
+    @MainActor
+    private static func mirror(_ value: some SyncedPlistValue, forKey key: String, defaults: UserDefaults) {
         guard SyncedSettingsStore.isSyncEnabled(defaults: defaults) else { return }
-        let box = UnsafeDefaultsBox(defaults: defaults)
-        if Thread.isMainThread {
-            MainActor.assumeIsolated {
-                SyncedSettingsStore(defaults: box.defaults).mirror(value, forKey: key)
-            }
-        } else {
-            Task { @MainActor in
-                SyncedSettingsStore(defaults: box.defaults).mirror(value, forKey: key)
-            }
-        }
+        SyncedSettingsStore(defaults: defaults).mirror(value, forKey: key)
     }
 
     /// Decodes the extraction payload. Short or malformed payloads are not
@@ -169,6 +142,8 @@ enum ReaderMode: Sendable {
         do {
             article = try JSONDecoder().decode(ReaderArticle.self, from: data)
         } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "Reader")
+                .error("Reader article decode failed: \(error.localizedDescription, privacy: .public)")
             return nil
         }
         let total = article.title.count + strippedText(article.html).count
@@ -191,6 +166,8 @@ enum ReaderMode: Sendable {
         do {
             article = try JSONDecoder().decode(ReaderArticle.self, from: data)
         } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "Reader")
+                .error("Reader preview decode failed: \(error.localizedDescription, privacy: .public)")
             return nil
         }
         let text = strippedText(article.html)

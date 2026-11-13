@@ -9,8 +9,8 @@ final class FavoriteTileCell: UICollectionViewCell {
     static let tileLength: CGFloat = 76
     static let cellHeight: CGFloat = 112
 
-    var onCopyURL: (() -> Void)?
-    var onDelete: (() -> Void)?
+    var onCopyURL: (@MainActor () -> Void)?
+    var onDelete: (@MainActor () -> Void)?
 
     private let iconView = UIImageView()
     private let titleLabel = UILabel()

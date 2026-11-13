@@ -101,27 +101,27 @@ final class TopBarTests: XCTestCase {
         XCTAssertTrue(root.pillView.superview === root.view)
         XCTAssertTrue(root.topBarView.isHidden)
         XCTAssertFalse(root.railView.isHidden)
-        XCTAssertTrue(root.pillBottomConstraint.isActive)
-        XCTAssertFalse(root.pillSlotLeadingConstraint.isActive)
+        XCTAssertTrue(try XCTUnwrap(root.pillBottomConstraint).isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillSlotLeadingConstraint).isActive)
 
         root.applyChromePlacement(for: .regular)
         XCTAssertTrue(root.pillView.superview === root.topBarView.pillSlotView)
         XCTAssertFalse(root.topBarView.isHidden)
         XCTAssertTrue(root.railView.isHidden)
-        XCTAssertFalse(root.pillSlotLeadingConstraint.isActive)
-        XCTAssertFalse(root.pillSlotTrailingConstraint.isActive)
-        XCTAssertTrue(root.pillSlotCenterXConstraint.isActive)
-        XCTAssertTrue(root.pillSlotWidthConstraint.isActive)
-        XCTAssertTrue(root.pillSlotMinLeadingConstraint.isActive)
-        XCTAssertTrue(root.pillSlotMaxTrailingConstraint.isActive)
-        XCTAssertFalse(root.pillBottomConstraint.isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillSlotLeadingConstraint).isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillSlotTrailingConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.pillSlotCenterXConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.pillSlotWidthConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.pillSlotMinLeadingConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.pillSlotMaxTrailingConstraint).isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillBottomConstraint).isActive)
 
         root.applyChromePlacement(for: .compact)
         XCTAssertTrue(root.pillView.superview === root.view)
         XCTAssertTrue(root.topBarView.isHidden)
         XCTAssertFalse(root.railView.isHidden)
-        XCTAssertFalse(root.pillSlotMinLeadingConstraint.isActive)
-        XCTAssertFalse(root.pillSlotMaxTrailingConstraint.isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillSlotMinLeadingConstraint).isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillSlotMaxTrailingConstraint).isActive)
     }
 
     func testBarSpansFullWidthOnRegular() throws {
@@ -131,11 +131,11 @@ final class TopBarTests: XCTestCase {
         TestWindow.attach(root)
         root.applyChromePlacement(for: .regular)
         root.updateTopBarPinning(for: .regular)
-        XCTAssertEqual(root.topBarLeadingConstraint.constant, 0, accuracy: 0.001)
-        XCTAssertEqual(root.topBarTrailingConstraint.constant, 0, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(root.topBarLeadingConstraint).constant, 0, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(root.topBarTrailingConstraint).constant, 0, accuracy: 0.001)
         root.applyChromePlacement(for: .compact)
         root.updateTopBarPinning(for: .compact)
-        XCTAssertEqual(root.topBarTrailingConstraint.constant, 0, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(root.topBarTrailingConstraint).constant, 0, accuracy: 0.001)
     }
 
     func testAlwaysBlurBackground() {
@@ -184,33 +184,33 @@ final class TopBarTests: XCTestCase {
         root.view.layoutIfNeeded()
         root.view.layoutIfNeeded()
         root.view.layoutIfNeeded()
-        XCTAssertFalse(root.pillSlotLeadingConstraint.isActive)
-        XCTAssertFalse(root.pillSlotTrailingConstraint.isActive)
-        XCTAssertTrue(root.pillSlotCenterXConstraint.isActive)
-        XCTAssertTrue(root.pillSlotWidthConstraint.isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillSlotLeadingConstraint).isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillSlotTrailingConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.pillSlotCenterXConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.pillSlotWidthConstraint).isActive)
         let expandedSlotWidth = root.topBarView.pillSlotView.bounds.width
         let expandedExpected = BrowserRootViewController.regularPillTarget(
             slotWidth: expandedSlotWidth,
             isMinified: false,
             preferredMinifiedWidth: root.pillView.preferredMinifiedWidth()
         )
-        XCTAssertEqual(root.pillSlotWidthConstraint.constant, expandedExpected, accuracy: 0.5)
+        XCTAssertEqual(try XCTUnwrap(root.pillSlotWidthConstraint).constant, expandedExpected, accuracy: 0.5)
         let minified = root.chromeController.handle(.scroll(offsetDelta: 30))
         root.applyCommands(minified, animated: false)
         root.view.layoutIfNeeded()
         root.view.layoutIfNeeded()
         root.view.layoutIfNeeded()
-        XCTAssertFalse(root.pillSlotLeadingConstraint.isActive)
-        XCTAssertFalse(root.pillSlotTrailingConstraint.isActive)
-        XCTAssertTrue(root.pillSlotCenterXConstraint.isActive)
-        XCTAssertTrue(root.pillSlotWidthConstraint.isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillSlotLeadingConstraint).isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillSlotTrailingConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.pillSlotCenterXConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.pillSlotWidthConstraint).isActive)
         let slotWidth = root.topBarView.pillSlotView.bounds.width
         let minifiedExpected = BrowserRootViewController.regularPillTarget(
             slotWidth: slotWidth,
             isMinified: true,
             preferredMinifiedWidth: root.pillView.preferredMinifiedWidth()
         )
-        XCTAssertEqual(root.pillSlotWidthConstraint.constant, minifiedExpected, accuracy: 0.5)
+        XCTAssertEqual(try XCTUnwrap(root.pillSlotWidthConstraint).constant, minifiedExpected, accuracy: 0.5)
     }
 
     func testToolbarMirrorsRailItems() throws {
@@ -297,7 +297,7 @@ final class TopBarTests: XCTestCase {
         let preferredWidth = root.pillView.preferredMinifiedWidth()
         XCTAssertGreaterThanOrEqual(preferredWidth, TopBarView.minifiedPillMinWidth)
         XCTAssertLessThan(preferredWidth, AddressBarView.minifiedMaxWidth)
-        XCTAssertEqual(root.pillSlotWidthConstraint.constant, preferredWidth, accuracy: 0.5)
+        XCTAssertEqual(try XCTUnwrap(root.pillSlotWidthConstraint).constant, preferredWidth, accuracy: 0.5)
         let minifiedCenterInBar = root.topBarView.pillSlotView.convert(root.pillView.center, to: root.topBarView)
         XCTAssertEqual(minifiedCenterInBar.x, root.topBarView.bounds.midX, accuracy: 1.0)
     }
@@ -440,9 +440,9 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(trailingLabels, ["New Tab", "Tabs"])
 
         XCTAssertFalse(root.verticalTabBarView.showsNewTabButton)
-        XCTAssertTrue(root.bottomLeadingCenterYConstraint.isActive)
-        XCTAssertTrue(root.bottomTrailingCenterYConstraint.isActive)
-        XCTAssertTrue(root.verticalTabBarBottomConstraint.isActive)
+        XCTAssertTrue(try XCTUnwrap(root.bottomLeadingCenterYConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.bottomTrailingCenterYConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.verticalTabBarBottomConstraint).isActive)
         XCTAssertEqual(root.bottomLeadingStack.center.y, root.pillView.center.y, accuracy: 0.5)
         XCTAssertEqual(root.bottomTrailingStack.center.y, root.pillView.center.y, accuracy: 0.5)
         XCTAssertEqual(root.verticalTabBarView.frame.maxY, root.pillView.frame.minY - 16, accuracy: 0.5)
@@ -463,9 +463,9 @@ final class TopBarTests: XCTestCase {
         root.view.layoutIfNeeded()
         XCTAssertEqual(root.interfaceMode, .duoInnerOrPadPortrait)
         XCTAssertEqual(root.chromePlacement, .compact)
-        XCTAssertTrue(root.bottomLeadingCenterYConstraint.isActive)
-        XCTAssertTrue(root.bottomTrailingCenterYConstraint.isActive)
-        XCTAssertTrue(root.verticalTabBarBottomConstraint.isActive)
+        XCTAssertTrue(try XCTUnwrap(root.bottomLeadingCenterYConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.bottomTrailingCenterYConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.verticalTabBarBottomConstraint).isActive)
         XCTAssertEqual(root.bottomLeadingStack.center.y, root.pillView.center.y, accuracy: 0.5)
         XCTAssertEqual(root.bottomTrailingStack.center.y, root.pillView.center.y, accuracy: 0.5)
         XCTAssertEqual(root.verticalTabBarView.frame.maxY, root.pillView.frame.minY - 16, accuracy: 0.5)

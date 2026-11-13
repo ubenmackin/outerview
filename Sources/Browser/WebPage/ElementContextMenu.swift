@@ -15,30 +15,30 @@ enum ElementContextKind: Equatable {
 /// so disconnected pages (and unit tests) can shape menus without a browser
 /// root bundling in.
 struct ElementContextActions {
-    let openLink: (URL) -> Void
-    let openInNewTab: (URL) -> Void
+    let openLink: @MainActor (URL) -> Void
+    let openInNewTab: @MainActor (URL) -> Void
     let tabGroups: [TabGroup]
-    let openInTabGroup: (URL, TabGroup) -> Void
-    let openInNewTabGroup: (URL, String) -> Void
-    let downloadLinkedFile: (URL) -> Void
-    let addToReadingList: (URL) -> Void
-    let copyLink: (URL) -> Void
-    let share: (URL) -> Void
-    let saveToPhotos: (URL) -> Void
-    let copyImage: (URL) -> Void
+    let openInTabGroup: @MainActor (URL, TabGroup) -> Void
+    let openInNewTabGroup: @MainActor (URL, String) -> Void
+    let downloadLinkedFile: @MainActor (URL) -> Void
+    let addToReadingList: @MainActor (URL) -> Void
+    let copyLink: @MainActor (URL) -> Void
+    let share: @MainActor (URL) -> Void
+    let saveToPhotos: @MainActor (URL) -> Void
+    let copyImage: @MainActor (URL) -> Void
 
     init(
-        openLink: @escaping (URL) -> Void = { _ in },
-        openInNewTab: @escaping (URL) -> Void,
+        openLink: @MainActor @escaping (URL) -> Void = { _ in },
+        openInNewTab: @MainActor @escaping (URL) -> Void,
         tabGroups: [TabGroup] = [],
-        openInTabGroup: @escaping (URL, TabGroup) -> Void = { _, _ in },
-        openInNewTabGroup: @escaping (URL, String) -> Void = { _, _ in },
-        downloadLinkedFile: @escaping (URL) -> Void = { _ in },
-        addToReadingList: @escaping (URL) -> Void,
-        copyLink: @escaping (URL) -> Void,
-        share: @escaping (URL) -> Void,
-        saveToPhotos: @escaping (URL) -> Void,
-        copyImage: @escaping (URL) -> Void
+        openInTabGroup: @MainActor @escaping (URL, TabGroup) -> Void = { _, _ in },
+        openInNewTabGroup: @MainActor @escaping (URL, String) -> Void = { _, _ in },
+        downloadLinkedFile: @MainActor @escaping (URL) -> Void = { _ in },
+        addToReadingList: @MainActor @escaping (URL) -> Void,
+        copyLink: @MainActor @escaping (URL) -> Void,
+        share: @MainActor @escaping (URL) -> Void,
+        saveToPhotos: @MainActor @escaping (URL) -> Void,
+        copyImage: @MainActor @escaping (URL) -> Void
     ) {
         self.openLink = openLink
         self.openInNewTab = openInNewTab

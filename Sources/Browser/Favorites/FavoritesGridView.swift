@@ -9,8 +9,8 @@ import UIKit
 /// Displays user favorites as large favicon tiles in a responsive grid.
 @MainActor
 final class FavoritesGridView: UIView {
-    var onOpenURL: ((URL) -> Void)?
-    var onDeleteFavorite: ((UUID) -> Void)?
+    var onOpenURL: (@MainActor (URL) -> Void)?
+    var onDeleteFavorite: (@MainActor (UUID) -> Void)?
 
     private let bookmarkStore: BookmarkStore
     private(set) var favorites: [Bookmark] = []

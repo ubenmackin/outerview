@@ -38,12 +38,11 @@ private final class MockKeyValueStore: NSUbiquitousKeyValueStore {
 }
 
 @MainActor
-// swiftlint:disable:next type_name
-final class iCloudSyncTests: XCTestCase {
+final class CloudSyncTests: XCTestCase {
     private static let containerID = "iCloud.com.volcrypt.OuterView"
 
     private func makeDefaults() throws -> UserDefaults {
-        let name = "iCloudSyncTests.\(UUID().uuidString)"
+        let name = "CloudSyncTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         defaults.removePersistentDomain(forName: name)
         addTeardownBlock {
@@ -60,8 +59,8 @@ final class iCloudSyncTests: XCTestCase {
         defaults: UserDefaults,
         center: NotificationCenter = NotificationCenter(),
         provider: (@Sendable () async -> CKAccountStatus)? = nil
-    ) -> iCloudSyncMonitor {
-        iCloudSyncMonitor(defaults: defaults, notificationCenter: center, accountStatusProvider: provider)
+    ) -> CloudSyncMonitor {
+        CloudSyncMonitor(defaults: defaults, notificationCenter: center, accountStatusProvider: provider)
     }
 
     private func makeMirror(defaults: UserDefaults, kvs: NSUbiquitousKeyValueStore) -> SyncedSettingsStore {
@@ -82,7 +81,7 @@ final class iCloudSyncTests: XCTestCase {
     }
 
     /// Status is not Equatable, so tests compare exhaustive name snapshots instead.
-    private func statusName(_ status: iCloudSyncMonitor.Status) -> String {
+    private func statusName(_ status: CloudSyncMonitor.Status) -> String {
         switch status {
         case .waitingForSignIn:
             "waitingForSignIn"
@@ -99,7 +98,7 @@ final class iCloudSyncTests: XCTestCase {
 
     func testContainerIdentifiersMatchPrivateDatabase() {
         XCTAssertEqual(OuterViewDatabase.cloudKitContainerIdentifier, Self.containerID)
-        XCTAssertEqual(iCloudSyncMonitor.containerIdentifier, Self.containerID)
+        XCTAssertEqual(CloudSyncMonitor.containerIdentifier, Self.containerID)
     }
 
     func testOnDiskConfigurationTargetsPrivateDatabase() {
@@ -258,7 +257,7 @@ final class iCloudSyncTests: XCTestCase {
         store.set(true, forKey: SyncedSettingsStore.iCloudSyncEnabledKey)
 
         XCTAssertNil(kvs.storage[SyncedSettingsStore.iCloudSyncEnabledKey])
-        XCTAssertEqual(store.value(forKey: SyncedSettingsStore.iCloudSyncEnabledKey) as? Bool, true)
+        XCTAssertEqual(store.storedValue(forKey: SyncedSettingsStore.iCloudSyncEnabledKey, as: Bool.self), true)
     }
 
     // MARK: - Settings mirror
@@ -274,7 +273,7 @@ final class iCloudSyncTests: XCTestCase {
         // Monitor owns stamping; store only notifies.
         store.onSyncSucceeded = { monitor.noteImportSucceeded() }
 
-        XCTAssertEqual(store.value(forKey: "searchEngine") as? String, "remote-engine")
+        XCTAssertEqual(store.storedValue(forKey: "searchEngine", as: String.self), "remote-engine")
 
         store.set("fresh-engine", forKey: "searchEngine")
         XCTAssertEqual(defaults.string(forKey: "searchEngine"), "fresh-engine")
@@ -294,7 +293,7 @@ final class iCloudSyncTests: XCTestCase {
         kvs.storage["searchEngine"] = "remote-engine"
         let store = makeMirror(defaults: defaults, kvs: kvs)
 
-        XCTAssertEqual(store.value(forKey: "searchEngine") as? String, "local-engine")
+        XCTAssertEqual(store.storedValue(forKey: "searchEngine", as: String.self), "local-engine")
 
         store.set("edited-engine", forKey: "searchEngine")
         XCTAssertEqual(defaults.string(forKey: "searchEngine"), "edited-engine")
@@ -333,7 +332,7 @@ final class iCloudSyncTests: XCTestCase {
         // Every entry point fails closed to local state instead of throwing.
         store.startSync()
         store.set("edited-engine", forKey: "searchEngine")
-        XCTAssertEqual(store.value(forKey: "searchEngine") as? String, "edited-engine")
+        XCTAssertEqual(store.storedValue(forKey: "searchEngine", as: String.self), "edited-engine")
         XCTAssertFalse(store.synchronize())
         XCTAssertEqual(defaults.string(forKey: "searchEngine"), "edited-engine")
     }
@@ -341,11 +340,11 @@ final class iCloudSyncTests: XCTestCase {
     // MARK: - Sync monitor
 
     func testMonitorMapsAccountStates() {
-        XCTAssertEqual(statusName(iCloudSyncMonitor.status(for: .available)), "syncing")
-        XCTAssertEqual(statusName(iCloudSyncMonitor.status(for: .noAccount)), "waitingForSignIn")
-        XCTAssertEqual(statusName(iCloudSyncMonitor.status(for: .restricted)), "waitingForSignIn")
-        XCTAssertEqual(statusName(iCloudSyncMonitor.status(for: .couldNotDetermine)), "waitingForSignIn")
-        XCTAssertEqual(statusName(iCloudSyncMonitor.status(for: .temporarilyUnavailable)), "waitingForSignIn")
+        XCTAssertEqual(statusName(CloudSyncMonitor.status(for: .available)), "syncing")
+        XCTAssertEqual(statusName(CloudSyncMonitor.status(for: .noAccount)), "waitingForSignIn")
+        XCTAssertEqual(statusName(CloudSyncMonitor.status(for: .restricted)), "waitingForSignIn")
+        XCTAssertEqual(statusName(CloudSyncMonitor.status(for: .couldNotDetermine)), "waitingForSignIn")
+        XCTAssertEqual(statusName(CloudSyncMonitor.status(for: .temporarilyUnavailable)), "waitingForSignIn")
     }
 
     func testRefreshAccountStatusUsesInjectedProvider() async throws {
@@ -362,7 +361,7 @@ final class iCloudSyncTests: XCTestCase {
     func testMonitorClampsFailureTextTo200Chars() throws {
         let defaults = try makeDefaults()
         let monitor = makeMonitor(defaults: defaults)
-        XCTAssertEqual(iCloudSyncMonitor.maxErrorMessageLength, 200)
+        XCTAssertEqual(CloudSyncMonitor.maxErrorMessageLength, 200)
 
         let long = String(repeating: "x", count: 300)
         monitor.noteSyncFailed(long)
@@ -393,7 +392,7 @@ final class iCloudSyncTests: XCTestCase {
 
         monitor.noteImportSucceeded()
         let stamped = try XCTUnwrap(monitor.lastSyncDate)
-        let stored = try XCTUnwrap(defaults.object(forKey: iCloudSyncMonitor.lastSyncDateKey) as? Date)
+        let stored = try XCTUnwrap(defaults.object(forKey: CloudSyncMonitor.lastSyncDateKey) as? Date)
         XCTAssertEqual(stored.timeIntervalSince1970, stamped.timeIntervalSince1970, accuracy: 0.001)
 
         let restored = makeMonitor(defaults: defaults)
@@ -429,7 +428,7 @@ final class iCloudSyncTests: XCTestCase {
         }
 
         XCTAssertNotNil(monitor.lastSyncDate)
-        XCTAssertNotNil(defaults.object(forKey: iCloudSyncMonitor.lastSyncDateKey))
+        XCTAssertNotNil(defaults.object(forKey: CloudSyncMonitor.lastSyncDateKey))
     }
 
     // MARK: - Status surface

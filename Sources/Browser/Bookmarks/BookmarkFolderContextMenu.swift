@@ -5,13 +5,13 @@ import UIKit
 /// Action set driving the folder context menu on bookmarks and start page.
 @MainActor
 struct BookmarkFolderContextActions {
-    let onOpenInNewTab: (URL) -> Void
-    let onOpenURLsInBackground: ([URL]) -> Void
-    let onOpenURLsInTabGroup: ([URL], TabGroup) -> Void
-    let onOpenURLsInNewTabGroup: ([URL], String) -> Void
-    let onRequestEdit: (BookmarkFolder) -> Void
-    let onDelete: (BookmarkFolder) -> Void
-    let presentNewTabGroupPrompt: (_ defaultTitle: String, _ onSave: @escaping (String) -> Void) -> Void
+    let onOpenInNewTab: @MainActor (URL) -> Void
+    let onOpenURLsInBackground: @MainActor ([URL]) -> Void
+    let onOpenURLsInTabGroup: @MainActor ([URL], TabGroup) -> Void
+    let onOpenURLsInNewTabGroup: @MainActor ([URL], String) -> Void
+    let onRequestEdit: @MainActor (BookmarkFolder) -> Void
+    let onDelete: @MainActor (BookmarkFolder) -> Void
+    let presentNewTabGroupPrompt: @MainActor (_ defaultTitle: String, _ onSave: @MainActor @escaping (String) -> Void) -> Void
 }
 
 /// Canonical builder for bookmark folder context menus.
@@ -115,7 +115,7 @@ enum BookmarkFolderContextMenu {
     static func presentNewTabGroupAlert(
         from window: UIWindow?,
         defaultTitle: String,
-        onSave: @escaping (String) -> Void
+        onSave: @MainActor @escaping (String) -> Void
     ) {
         guard let windowScene = window?.windowScene,
               let rootVC = windowScene.keyWindow?.rootViewController

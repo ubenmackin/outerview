@@ -30,13 +30,13 @@ extension WebPageController: WKUIDelegate {
         _: WKWebView,
         runJavaScriptAlertPanelWithMessage message: String,
         initiatedByFrame frame: WKFrameInfo,
-        completionHandler: @escaping @MainActor @Sendable () -> Void
+        completionHandler: @escaping @MainActor () -> Void
     ) {
         guard let handler = uiDelegateHandler else {
             completionHandler()
             return
         }
-        Task { @MainActor in
+        Task {
             await handler.webPageController(self, runJavaScriptAlertPanelWithMessage: message, initiatedByFrame: frame)
             completionHandler()
         }
@@ -46,13 +46,13 @@ extension WebPageController: WKUIDelegate {
         _: WKWebView,
         runJavaScriptConfirmPanelWithMessage message: String,
         initiatedByFrame frame: WKFrameInfo,
-        completionHandler: @escaping @MainActor @Sendable (Bool) -> Void
+        completionHandler: @escaping @MainActor (Bool) -> Void
     ) {
         guard let handler = uiDelegateHandler else {
             completionHandler(false)
             return
         }
-        Task { @MainActor in
+        Task {
             let result = await handler.webPageController(self, runJavaScriptConfirmPanelWithMessage: message, initiatedByFrame: frame)
             completionHandler(result)
         }
@@ -63,13 +63,13 @@ extension WebPageController: WKUIDelegate {
         runJavaScriptTextInputPanelWithPrompt prompt: String,
         defaultText: String?,
         initiatedByFrame frame: WKFrameInfo,
-        completionHandler: @escaping @MainActor @Sendable (String?) -> Void
+        completionHandler: @escaping @MainActor (String?) -> Void
     ) {
         guard let handler = uiDelegateHandler else {
             completionHandler(nil)
             return
         }
-        Task { @MainActor in
+        Task {
             let result = await handler.webPageController(self, runJavaScriptTextInputPanelWithPrompt: prompt, defaultText: defaultText, initiatedByFrame: frame)
             completionHandler(result)
         }
@@ -78,7 +78,7 @@ extension WebPageController: WKUIDelegate {
     func webView(
         _: WKWebView,
         contextMenuConfigurationForElement elementInfo: WKContextMenuElementInfo,
-        completionHandler: @escaping @MainActor @Sendable (UIContextMenuConfiguration?) -> Void
+        completionHandler: @escaping @MainActor (UIContextMenuConfiguration?) -> Void
     ) {
         guard contextActions != nil else {
             completionHandler(nil)

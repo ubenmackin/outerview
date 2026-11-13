@@ -362,9 +362,9 @@ final class TabOverviewViewController: UIViewController {
     private let flowLayout = UICollectionViewFlowLayout()
     private let filterRow = UIView()
     let filterField = UITextField()
-    private var filterHeightConstraint: NSLayoutConstraint!
+    private var filterHeightConstraint: NSLayoutConstraint?
     private let inlineBar = UIToolbar()
-    private var inlineBarHeightConstraint: NSLayoutConstraint!
+    private var inlineBarHeightConstraint: NSLayoutConstraint?
     private var inlineBarTopConstraint: NSLayoutConstraint?
     let pickerBar = TabGroupPickerBar()
     private let emptyLabel = UILabel()
@@ -513,7 +513,7 @@ final class TabOverviewViewController: UIViewController {
     func setFilterVisible(_ visible: Bool) {
         isFilterVisible = visible
         filterRow.isHidden = !visible
-        filterHeightConstraint.constant = visible ? 44 : 0
+        filterHeightConstraint?.constant = visible ? 44 : 0
         if !visible {
             filterQuery = ""
             filterField.text = ""
@@ -636,20 +636,22 @@ final class TabOverviewViewController: UIViewController {
     }
 
     private func activateHierarchyConstraints() {
-        filterHeightConstraint = filterRow.heightAnchor.constraint(equalToConstant: 0)
-        inlineBarHeightConstraint = inlineBar.heightAnchor.constraint(equalToConstant: 0)
+        let filterHeight = filterRow.heightAnchor.constraint(equalToConstant: 0)
+        let inlineBarHeight = inlineBar.heightAnchor.constraint(equalToConstant: 0)
+        filterHeightConstraint = filterHeight
+        inlineBarHeightConstraint = inlineBarHeight
         let barTop = inlineBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: externalHeaderHeight + 8)
         inlineBarTopConstraint = barTop
         NSLayoutConstraint.activate([
             inlineBar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             inlineBar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
             barTop,
-            inlineBarHeightConstraint,
+            inlineBarHeight,
 
             filterRow.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             filterRow.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
             filterRow.topAnchor.constraint(equalTo: inlineBar.bottomAnchor),
-            filterHeightConstraint,
+            filterHeight,
 
             filterField.leadingAnchor.constraint(equalTo: filterRow.leadingAnchor),
             filterField.trailingAnchor.constraint(equalTo: filterRow.trailingAnchor),
@@ -674,10 +676,10 @@ final class TabOverviewViewController: UIViewController {
                 lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16
             )
         ])
-        let filterHeight = filterField.heightAnchor.constraint(equalToConstant: 36)
-        filterHeight.priority = .defaultHigh
+        let filterFieldHeight = filterField.heightAnchor.constraint(equalToConstant: 36)
+        filterFieldHeight.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            filterHeight
+            filterFieldHeight
         ])
     }
 
@@ -685,10 +687,10 @@ final class TabOverviewViewController: UIViewController {
         guard isViewLoaded else { return }
         let showsInline = showsInlineCommands
         inlineBar.isHidden = !showsInline
-        inlineBarHeightConstraint.constant = showsInline ? 44 : 0
+        inlineBarHeightConstraint?.constant = showsInline ? 44 : 0
         refreshOverviewToolbar()
         filterRow.isHidden = !isFilterVisible
-        filterHeightConstraint.constant = isFilterVisible ? 44 : 0
+        filterHeightConstraint?.constant = isFilterVisible ? 44 : 0
         filterField.text = filterQuery
         collectionView.reloadData()
         updateEmptyState()

@@ -16,9 +16,9 @@ final class VerticalTabBarView: UIView {
     /// stretching past thumb reach.
     nonisolated static let maxHeight: CGFloat = 480
 
-    var onSelectTab: ((UUID) -> Void)?
-    var onCloseTab: ((UUID) -> Void)?
-    var onNewTab: (() -> Void)?
+    var onSelectTab: (@MainActor (UUID) -> Void)?
+    var onCloseTab: (@MainActor (UUID) -> Void)?
+    var onNewTab: (@MainActor () -> Void)?
 
     var showsNewTabButton: Bool = false {
         didSet {
@@ -152,8 +152,8 @@ final class VerticalTabBarView: UIView {
 
 @MainActor
 final class VerticalTabItemView: UIView, UIContextMenuInteractionDelegate {
-    var onTap: (() -> Void)?
-    var onClose: (() -> Void)?
+    var onTap: (@MainActor () -> Void)?
+    var onClose: (@MainActor () -> Void)?
 
     private let item: TabOverviewItem
     private let isTabSelected: Bool

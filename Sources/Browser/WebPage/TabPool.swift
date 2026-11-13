@@ -157,7 +157,7 @@ final class TabPool {
         guard enabled else { return }
         let controller = page.webView.configuration.userContentController
         ContentBlockerService.shared.track(controller)
-        Task { @MainActor in
+        Task {
             await ContentBlockerService.shared.applyRules(to: controller, enabled: true)
         }
     }

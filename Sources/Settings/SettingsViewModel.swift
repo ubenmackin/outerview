@@ -48,7 +48,7 @@ final class SettingsViewModel {
     private let defaults: UserDefaults
     @ObservationIgnored
     private let syncedStore: SyncedSettingsStore
-    let syncMonitor: iCloudSyncMonitor
+    let syncMonitor: CloudSyncMonitor
 
     var searchEngine: SearchEngine {
         didSet {
@@ -91,7 +91,7 @@ final class SettingsViewModel {
         }
     }
 
-    var syncStatus: iCloudSyncMonitor.Status {
+    var syncStatus: CloudSyncMonitor.Status {
         syncMonitor.status
     }
 
@@ -177,7 +177,7 @@ final class SettingsViewModel {
     }
 
     nonisolated static func syncStatusText(
-        for status: iCloudSyncMonitor.Status,
+        for status: CloudSyncMonitor.Status,
         failureMessage: String?
     ) -> String {
         switch status {
@@ -193,10 +193,10 @@ final class SettingsViewModel {
         }
     }
 
-    init(defaults: UserDefaults = .standard, syncMonitor: iCloudSyncMonitor? = nil, syncedStore: SyncedSettingsStore? = nil) {
+    init(defaults: UserDefaults = .standard, syncMonitor: CloudSyncMonitor? = nil, syncedStore: SyncedSettingsStore? = nil) {
         self.defaults = defaults
         self.syncedStore = syncedStore ?? SyncedSettingsStore(defaults: defaults)
-        self.syncMonitor = syncMonitor ?? iCloudSyncMonitor.shared
+        self.syncMonitor = syncMonitor ?? CloudSyncMonitor.shared
         // Pure reader: launch owns KVS pull plus account refresh.
         let storedEngine = self.syncedStore.mirroredString(forKey: Self.searchEngineDefaultsKey)
             ?? defaults.string(forKey: Self.searchEngineDefaultsKey)

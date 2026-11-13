@@ -3,22 +3,24 @@
 //  OuterView
 //
 
+import Observation
 import SwiftUI
 
 /// Reference gate so detached copies share one confirmation flag.
 @MainActor
-final class DownloadsClearAllGate: ObservableObject {
-    @Published var isPresented = false
+@Observable
+final class DownloadsClearAllGate {
+    var isPresented = false
 }
 
 struct DownloadsSheetView: View {
     var manager: DownloadsManager
     var inlineCommands = false
-    var onOpenFiles: (() -> Void)?
-    var onClearAll: (() -> Void)?
-    var onDone: (() -> Void)?
+    var onOpenFiles: (@MainActor () -> Void)?
+    var onClearAll: (@MainActor () -> Void)?
+    var onDone: (@MainActor () -> Void)?
     @Environment(\.dismiss) private var dismiss
-    @ObservedObject private var clearAllGate = DownloadsClearAllGate()
+    private let clearAllGate = DownloadsClearAllGate()
 
     var showsInlineDone: Bool {
         inlineCommands
@@ -54,6 +56,7 @@ struct DownloadsSheetView: View {
     }
 
     var body: some View {
+        @Bindable var clearAllGate = clearAllGate
         NavigationStack {
             Group {
                 if manager.rows.isEmpty {

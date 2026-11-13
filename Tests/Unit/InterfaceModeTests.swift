@@ -443,6 +443,6 @@ final class InterfaceModeTests: XCTestCase {
         let ended = root.chromeController.handle(.editEnded(submitted: true))
         root.applyCommands(ended, animated: false)
         XCTAssertEqual(root.chromeController.state.pill, .expanded)
-        XCTAssertEqual(root.pillHeightConstraint.constant, AddressBarView.expandedHeight)
+        XCTAssertEqual(root.pillHeightConstraint?.constant, AddressBarView.expandedHeight)
     }
 }

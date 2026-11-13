@@ -2,6 +2,62 @@
 
 import Foundation
 
+/// Plist-safe value types mirrored cleanly through `SyncedSettingsStore` without type erasure.
+protocol SyncedPlistValue: Sendable {
+    func write(to defaults: UserDefaults, forKey key: String)
+    func write(to store: NSUbiquitousKeyValueStore, forKey key: String)
+}
+
+extension Bool: SyncedPlistValue {
+    func write(to defaults: UserDefaults, forKey key: String) {
+        defaults.set(self, forKey: key)
+    }
+
+    func write(to store: NSUbiquitousKeyValueStore, forKey key: String) {
+        store.set(self, forKey: key)
+    }
+}
+
+extension Int: SyncedPlistValue {
+    func write(to defaults: UserDefaults, forKey key: String) {
+        defaults.set(self, forKey: key)
+    }
+
+    func write(to store: NSUbiquitousKeyValueStore, forKey key: String) {
+        store.set(self, forKey: key)
+    }
+}
+
+extension String: SyncedPlistValue {
+    func write(to defaults: UserDefaults, forKey key: String) {
+        defaults.set(self, forKey: key)
+    }
+
+    func write(to store: NSUbiquitousKeyValueStore, forKey key: String) {
+        store.set(self, forKey: key)
+    }
+}
+
+extension Data: SyncedPlistValue {
+    func write(to defaults: UserDefaults, forKey key: String) {
+        defaults.set(self, forKey: key)
+    }
+
+    func write(to store: NSUbiquitousKeyValueStore, forKey key: String) {
+        store.set(self, forKey: key)
+    }
+}
+
+extension [String: Double]: SyncedPlistValue {
+    func write(to defaults: UserDefaults, forKey key: String) {
+        defaults.set(self, forKey: key)
+    }
+
+    func write(to store: NSUbiquitousKeyValueStore, forKey key: String) {
+        store.set(self, forKey: key)
+    }
+}
+
 @MainActor
 public final class SyncedSettingsStore {
     nonisolated static let iCloudSyncEnabledKey = "iCloudSyncEnabled"
@@ -22,8 +78,7 @@ public final class SyncedSettingsStore {
     private let defaults: UserDefaults
     private let keyValueStore: NSUbiquitousKeyValueStore
     private let notificationCenter: NotificationCenter
-    /// Token lifetime is lock-guarded; teardown needs no actor hop.
-    private var observation: KVSObservation?
+    private var kvsObserverToken: NSObjectProtocol?
     /// Single owner: monitor stamps last-sync; store only notifies.
     /// The pull below always runs before the notify.
     var onSyncSucceeded: (@MainActor () -> Void)?
@@ -40,11 +95,23 @@ public final class SyncedSettingsStore {
         self.onSyncSucceeded = onSyncSucceeded
     }
 
+    isolated deinit {
+        if let kvsObserverToken {
+            notificationCenter.removeObserver(kvsObserverToken)
+        }
+    }
+
     func startSync() {
-        if observation == nil {
-            let box = KVSObservation(center: notificationCenter, store: self)
-            observation = box
-            box.begin()
+        if kvsObserverToken == nil {
+            kvsObserverToken = notificationCenter.addObserver(
+                forName: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
+                object: nil,
+                queue: nil
+            ) { [weak self] _ in
+                Task { [weak self] in
+                    _ = await self?.pullRemoteValues()
+                }
+            }
         }
         let applied = pullRemoteValues()
         let pushed = backfillEmptyKeys()
@@ -54,32 +121,30 @@ public final class SyncedSettingsStore {
         }
     }
 
-    func set(_ value: Any?, forKey key: String) {
-        if let value {
-            defaults.set(value, forKey: key)
-        } else {
-            defaults.removeObject(forKey: key)
-        }
+    func set(_ value: some SyncedPlistValue, forKey key: String) {
+        value.write(to: defaults, forKey: key)
         // Toggle itself stays local-only; only synced keys mirror to KVS.
         guard !isTestIsolated, isSyncEnabled, Self.syncedKeys.contains(key) else { return }
-        if let value {
-            keyValueStore.set(value, forKey: key)
-        } else {
-            keyValueStore.removeObject(forKey: key)
-        }
+        value.write(to: keyValueStore, forKey: key)
     }
 
-    func value(forKey key: String) -> Any? {
+    func clearValue(forKey key: String) {
+        defaults.removeObject(forKey: key)
+        guard !isTestIsolated, isSyncEnabled, Self.syncedKeys.contains(key) else { return }
+        keyValueStore.removeObject(forKey: key)
+    }
+
+    func storedValue<T>(forKey key: String, as _: T.Type = T.self) -> T? {
         guard !isTestIsolated, isSyncEnabled,
               Self.syncedKeys.contains(key)
         else {
-            return defaults.object(forKey: key)
+            return defaults.object(forKey: key) as? T
         }
         // KVS miss fails closed to the local default.
         if let remote = keyValueStore.object(forKey: key) {
-            return remote
+            return remote as? T
         }
-        return defaults.object(forKey: key)
+        return defaults.object(forKey: key) as? T
     }
 
     /// Missing toggle means opt-in; bool(forKey:) reads missing as false.
@@ -98,53 +163,51 @@ public final class SyncedSettingsStore {
 
     func mirroredString(forKey key: String) -> String? {
         guard isSyncEnabled else { return nil }
-        return value(forKey: key) as? String
+        return storedValue(forKey: key, as: String.self)
     }
 
     func mirroredBool(forKey key: String) -> Bool? {
         guard isSyncEnabled else { return nil }
-        let stored = value(forKey: key)
-        if let bool = stored as? Bool {
+        if let bool = storedValue(forKey: key, as: Bool.self) {
             return bool
         }
-        return (stored as? NSNumber)?.boolValue
+        return storedValue(forKey: key, as: NSNumber.self)?.boolValue
     }
 
     func mirroredInt(forKey key: String) -> Int? {
         guard isSyncEnabled else { return nil }
-        let stored = value(forKey: key)
-        if let int = stored as? Int {
+        if let int = storedValue(forKey: key, as: Int.self) {
             return int
         }
-        return (stored as? NSNumber)?.intValue
+        return storedValue(forKey: key, as: NSNumber.self)?.intValue
     }
 
     func mirroredDoubleMap(forKey key: String) -> [String: Double]? {
         guard isSyncEnabled else { return nil }
-        if let typed = value(forKey: key) as? [String: Double] {
+        if let typed = storedValue(forKey: key, as: [String: Double].self) {
             return typed
         }
-        guard let raw = value(forKey: key) as? [String: Any] else { return nil }
+        guard let raw = storedValue(forKey: key, as: NSDictionary.self) else { return nil }
         return Self.decodedDoubleMap(raw)
     }
 
     func mirroredData(forKey key: String) -> Data? {
         guard isSyncEnabled else { return nil }
-        return value(forKey: key) as? Data
+        return storedValue(forKey: key, as: Data.self)
     }
 
-    func mirror(_ value: Any?, forKey key: String) {
+    func mirror(_ value: some SyncedPlistValue, forKey key: String) {
         set(value, forKey: key)
     }
 
-    nonisolated static func decodedDoubleMap(_ raw: [String: Any]) -> [String: Double] {
+    func clearMirror(forKey key: String) {
+        clearValue(forKey: key)
+    }
+
+    nonisolated static func decodedDoubleMap(_ raw: NSDictionary) -> [String: Double] {
         var result: [String: Double] = [:]
-        for (key, stored) in raw {
-            if let double = stored as? Double {
-                result[key] = double
-            } else if let number = stored as? NSNumber {
-                result[key] = number.doubleValue
-            }
+        for case let (key as String, number as NSNumber) in raw {
+            result[key] = number.doubleValue
         }
         return result
     }
@@ -191,44 +254,5 @@ public final class SyncedSettingsStore {
         guard didPush else { return false }
         // Failed push means outage; caller stamps only on success.
         return keyValueStore.synchronize()
-    }
-
-    /// The block pulls first so stamping follows
-    /// the pull via onSyncSucceeded. The lock guards the token.
-    private final class KVSObservation: @unchecked Sendable {
-        private let center: NotificationCenter
-        private weak var store: SyncedSettingsStore?
-        private let lock = NSLock()
-        private var token: NSObjectProtocol?
-
-        @MainActor init(center: NotificationCenter, store: SyncedSettingsStore) {
-            self.center = center
-            self.store = store
-        }
-
-        @MainActor func begin() {
-            lock.lock()
-            defer { lock.unlock() }
-            guard token == nil else { return }
-            token = center.addObserver(
-                forName: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    _ = self?.store?.pullRemoteValues()
-                }
-            }
-        }
-
-        deinit {
-            lock.lock()
-            let existing = token
-            token = nil
-            lock.unlock()
-            if let existing {
-                center.removeObserver(existing)
-            }
-        }
     }
 }

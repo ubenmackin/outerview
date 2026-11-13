@@ -268,6 +268,8 @@ final class WebPageController: NSObject {
             }
             return try await webView.takeSnapshot(configuration: config)
         } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "WebPage")
+                .error("takeSnapshot failed: \(error.localizedDescription, privacy: .public)")
             return nil
         }
     }
@@ -347,7 +349,8 @@ final class WebPageController: NSObject {
         )
     }
 
-    private func makePublishingObservation(for keyPath: KeyPath<WKWebView, some Any>) -> NSKeyValueObservation {
+    // swiftformat:disable:next opaqueGenericParameters
+    private func makePublishingObservation<Value>(for keyPath: KeyPath<WKWebView, Value>) -> NSKeyValueObservation {
         webView.observe(keyPath) { [weak self] _, _ in
             Task { @MainActor [weak self] in self?.refreshSnapshot() }
         }
@@ -414,7 +417,7 @@ extension WebPageController: WKNavigationDelegate {
     func webView(
         _: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
+        decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
     ) {
         // Screenshot mode keeps inline fixture only; every network
         // navigation cancels before the web view commits.
@@ -480,7 +483,7 @@ extension WebPageController: WKNavigationDelegate {
     func webView(
         _: WKWebView,
         decidePolicyFor navigationResponse: WKNavigationResponse,
-        decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
+        decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void
     ) {
         // Screenshot mode keeps inline fixture only; every network
         // response cancels before commit.
@@ -567,7 +570,7 @@ extension WebPageController: WKNavigationDelegate {
         _ = downloadsManager?.begin(download: download, suggestedName: fallback)
     }
 
-    func webView(_: WKWebView, didStartProvisionalNavigation _: WKNavigation!) {
+    func webView(_: WKWebView, didStartProvisionalNavigation _: WKNavigation?) {
         // A fresh navigation attempt supersedes any previous failure display.
         lastError = nil
         lastErrorCode = nil
@@ -584,11 +587,11 @@ extension WebPageController: WKNavigationDelegate {
         refreshSnapshot()
     }
 
-    func webView(_: WKWebView, didCommit _: WKNavigation!) {
+    func webView(_: WKWebView, didCommit _: WKNavigation?) {
         applySiteZoom()
     }
 
-    func webView(_: WKWebView, didFinish _: WKNavigation!) {
+    func webView(_: WKWebView, didFinish _: WKNavigation?) {
         lastError = nil
         lastErrorCode = nil
         if let title = webView.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
@@ -600,7 +603,7 @@ extension WebPageController: WKNavigationDelegate {
         applyAutomaticReaderIfNeeded()
     }
 
-    func webView(_: WKWebView, didFail _: WKNavigation!, withError error: Error) {
+    func webView(_: WKWebView, didFail _: WKNavigation?, withError error: Error) {
         // Failed method/body never bleeds into the next response.
         clearPendingAction()
         recordNavigationFailure(error)
@@ -608,7 +611,7 @@ extension WebPageController: WKNavigationDelegate {
 
     func webView(
         _: WKWebView,
-        didFailProvisionalNavigation _: WKNavigation!,
+        didFailProvisionalNavigation _: WKNavigation?,
         withError error: Error
     ) {
         // Failed method/body never bleeds into the next response.
@@ -619,7 +622,7 @@ extension WebPageController: WKNavigationDelegate {
     func webView(
         _: WKWebView,
         didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping @MainActor @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+        completionHandler: @escaping @MainActor (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
         guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               let serverTrust = challenge.protectionSpace.serverTrust
@@ -703,15 +706,13 @@ extension WebPageController: WKNavigationDelegate {
         let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
         let agent = webView.customUserAgent
         let pageURL = webView.url
-        Task { @MainActor [weak self] in
+        Task { [weak self] in
             // Tests skip the store callback so the handoff never waits forever.
             let all: [HTTPCookie] =
                 if AppEnvironment.isTestHost {
                     []
                 } else {
-                    await withCheckedContinuation { (continuation: CheckedContinuation<[HTTPCookie], Never>) in
-                        cookieStore.getAllCookies { continuation.resume(returning: $0) }
-                    }
+                    await cookieStore.allCookies()
                 }
             let request = Self.preparedDownloadRequest(
                 base: base,
@@ -915,7 +916,7 @@ extension WebPageController {
               !isReaderActive,
               !isReaderUnavailable
         else { return }
-        Task { @MainActor [weak self] in
+        Task { [weak self] in
             await self?.enterReaderAutomaticallyIfNeeded()
         }
     }

@@ -144,8 +144,8 @@ struct BookmarkEditorView: View {
     @Bindable var model: BookmarkEditorModel
     let bookmarkStore: BookmarkStore
     var inlineCommands = false
-    var onCancel: (() -> Void)?
-    var onSave: (() -> Void)?
+    var onCancel: (@MainActor () -> Void)?
+    var onSave: (@MainActor () -> Void)?
 
     @State private var locationOptions: [BookmarkLocationOption] = []
 

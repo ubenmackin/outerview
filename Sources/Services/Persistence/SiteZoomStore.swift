@@ -53,17 +53,18 @@ final class SiteZoomStore {
     private func persist(_ zooms: [String: Double]) {
         if zooms.isEmpty {
             defaults.removeObject(forKey: Self.storeKey)
+            syncedStore.clearMirror(forKey: Self.storeKey)
         } else {
             defaults.set(zooms, forKey: Self.storeKey)
+            syncedStore.mirror(zooms, forKey: Self.storeKey)
         }
-        syncedStore.mirror(zooms.isEmpty ? nil : zooms, forKey: Self.storeKey)
     }
 
     private func storedZooms() -> [String: Double] {
         if let remote = syncedStore.mirroredDoubleMap(forKey: Self.storeKey) {
             return remote
         }
-        guard let raw = defaults.dictionary(forKey: Self.storeKey) else { return [:] }
+        guard let raw = defaults.object(forKey: Self.storeKey) as? NSDictionary else { return [:] }
         return SyncedSettingsStore.decodedDoubleMap(raw)
     }
 }

@@ -388,7 +388,7 @@ extension BrowserRootViewController {
 
     func saveImageToPhotos(from url: URL) {
         guard URLNormalizer.isLoadable(url) else { return }
-        Task { @MainActor [weak self] in
+        Task { [weak self] in
             guard let self else { return }
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)

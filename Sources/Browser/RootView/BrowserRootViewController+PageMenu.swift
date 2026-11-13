@@ -3,6 +3,7 @@
 import os
 import SwiftUI
 import UIKit
+import WebKit
 
 extension BrowserRootViewController {
     // MARK: - Page menu
@@ -299,7 +300,7 @@ extension BrowserRootViewController {
                     page.setDesktopMode(newSettings.requestDesktopWebsite)
                 }
                 if newSettings.useReaderAutomatically, !page.isReaderActive {
-                    Task { @MainActor in
+                    Task {
                         await page.enterReaderAutomaticallyIfNeeded()
                     }
                 }
@@ -365,13 +366,9 @@ extension BrowserRootViewController {
 
     func saveActivePageAsPDF() {
         guard let page = activePage(), let url = page.snapshot.url, URLNormalizer.isLoadable(url) else { return }
-        Task { @MainActor [weak self] in
+        Task { [weak self] in
             do {
-                let pdfData: Data = try await withCheckedThrowingContinuation { continuation in
-                    page.webView.createPDF { result in
-                        continuation.resume(with: result)
-                    }
-                }
+                let pdfData = try await page.webView.pdf(configuration: WKPDFConfiguration())
                 let titlePrefix = page.snapshot.title.map { String($0.prefix(50)) }
                 let rawBase = titlePrefix ?? url.host ?? "Page"
                 // Percent-encode to strip separators and controls; truncate to keep filenames bounded.
@@ -437,7 +434,7 @@ extension BrowserRootViewController {
         } catch {
             logPersistenceError(error, operation: "addToReadingList")
         }
-        Task { @MainActor [weak self, weak page] in
+        Task { [weak self, weak page] in
             guard let self, let page else { return }
             let snippet = await page.extractPreviewSnippet()
             if let snippet, !snippet.isEmpty {
@@ -482,7 +479,7 @@ extension BrowserRootViewController {
     func toggleReaderFromMenu() {
         guard let page = activePage() else { return }
         let url = page.snapshot.url
-        Task { @MainActor [weak self, weak page] in
+        Task { [weak self, weak page] in
             guard let page else { return }
             let entered = await page.toggleReader()
             guard !Task.isCancelled else { return }
@@ -581,7 +578,7 @@ extension BrowserRootViewController {
             return
         }
         findQueryTask?.cancel()
-        findQueryTask = Task { @MainActor [weak self, weak page] in
+        findQueryTask = Task { [weak self, weak page] in
             guard let self, let page else { return }
             let total = await page.findText(text)
             guard !Task.isCancelled, self.isFindActive, self.findView.fieldText == text else { return }
@@ -593,7 +590,7 @@ extension BrowserRootViewController {
         guard let page = peekActivePage() else { return }
         let query = findView.fieldText
         findStepTask?.cancel()
-        findStepTask = Task { @MainActor [weak self, weak page] in
+        findStepTask = Task { [weak self, weak page] in
             guard let self, let page else { return }
             let index = await page.findStep(delta)
             guard !Task.isCancelled, self.isFindActive, self.findView.fieldText == query else { return }
