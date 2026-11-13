@@ -59,4 +59,55 @@ final class SideRailRevealTests: XCTestCase {
         rail.setRailState(.hidden, pill: .expanded, animated: false)
         XCTAssertEqual(rail.applyCount, 3)
     }
+
+    func testShrinkingStacksFromTwoItemsToOnePreservesButtonHitTargets() {
+        let rail = SideRailView(frame: TestWindow.defaultFrame)
+        TestWindow.attach(rail)
+
+        func assertStackDimensions(prefixCount: Int, suffixCount: Int, line: UInt = #line) {
+            let railStacks = stacks(in: rail)
+            XCTAssertEqual(railStacks.count, 2, line: line)
+            XCTAssertEqual(
+                railStacks[0].bounds.size,
+                CGSize(width: SideRailView.columnWidth, height: SideRailView.expectedStackHeight(itemCount: prefixCount)),
+                line: line
+            )
+            XCTAssertEqual(
+                railStacks[1].bounds.size,
+                CGSize(width: SideRailView.columnWidth, height: SideRailView.expectedStackHeight(itemCount: suffixCount)),
+                line: line
+            )
+            for button in rail.buttons {
+                XCTAssertEqual(
+                    button.bounds.size,
+                    CGSize(width: SystemToolbarMapper.hitTarget, height: SystemToolbarMapper.hitTarget),
+                    line: line
+                )
+                XCTAssertFalse(button.hasAmbiguousLayout, line: line)
+                let activeHeights = button.constraints.filter {
+                    $0.isActive && $0.firstAttribute == .height && $0.constant == SystemToolbarMapper.hitTarget
+                }
+                XCTAssertEqual(activeHeights.count, 1, line: line)
+            }
+        }
+
+        // Start with 2-item stacks (96 pt tall) then shrink to 1 item (44 pt), both visible and hidden.
+        rail.setItems(prefix: [.addFolder {}, .edit {}], suffix: [.newTab {}, .tabs {}])
+        rail.layoutIfNeeded()
+        assertStackDimensions(prefixCount: 2, suffixCount: 2)
+
+        rail.setItems(prefix: [.back {}], suffix: [.tabs {}])
+        assertStackDimensions(prefixCount: 1, suffixCount: 1)
+        rail.layoutIfNeeded()
+        assertStackDimensions(prefixCount: 1, suffixCount: 1)
+
+        rail.setItems(prefix: [.addFolder {}, .edit {}], suffix: [.newTab {}, .tabs {}])
+        rail.setRailState(.hidden, pill: .expanded, animated: false)
+        rail.layoutIfNeeded()
+
+        rail.setItems(prefix: [.back {}], suffix: [])
+        assertStackDimensions(prefixCount: 1, suffixCount: 0)
+        rail.layoutIfNeeded()
+        assertStackDimensions(prefixCount: 1, suffixCount: 0)
+    }
 }

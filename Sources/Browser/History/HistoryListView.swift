@@ -18,7 +18,9 @@ class LibrarySubtitleCell: UITableViewCell {
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         backgroundColor = .secondarySystemGroupedBackground
-        setupSelectionIndicator()
+        selectionIndicatorView.contentMode = .scaleAspectFit
+        selectionIndicatorView.accessibilityIdentifier = "LibrarySubtitleCell.SelectionIndicator"
+        selectionIndicatorView.isHidden = true
     }
 
     @available(*, unavailable)
@@ -26,35 +28,39 @@ class LibrarySubtitleCell: UITableViewCell {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        configureSelectionIndicator(visible: false, isSelected: false)
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
-        if !selectionIndicatorView.isHidden {
-            contentView.bringSubviewToFront(selectionIndicatorView)
-        }
+        guard selectionIndicatorView.superview === contentView, !selectionIndicatorView.isHidden else { return }
+        let size: CGFloat = 22
+        let isRTL = effectiveUserInterfaceLayoutDirection == .rightToLeft
+        let originX: CGFloat = isRTL ? contentView.bounds.width - 16 - size : 16
+        let originY = floor((contentView.bounds.height - size) / 2)
+        selectionIndicatorView.frame = CGRect(x: originX, y: originY, width: size, height: size)
+        contentView.bringSubviewToFront(selectionIndicatorView)
     }
 
     func configureSelectionIndicator(visible: Bool, isSelected: Bool) {
         isShowingSelectionIndicator = visible
         isSelectionIndicatorChecked = visible && isSelected
-        selectionIndicatorView.isHidden = !visible
-        guard visible else { return }
+        guard visible else {
+            selectionIndicatorView.isHidden = true
+            selectionIndicatorView.removeFromSuperview()
+            return
+        }
+        if selectionIndicatorView.superview !== contentView {
+            contentView.addSubview(selectionIndicatorView)
+        }
+        selectionIndicatorView.isHidden = false
         let symbol = isSelected ? "checkmark.circle.fill" : "circle"
         let config = UIImage.SymbolConfiguration(pointSize: 20, weight: .regular)
         selectionIndicatorView.image = UIImage(systemName: symbol, withConfiguration: config)
         selectionIndicatorView.tintColor = isSelected ? .systemBlue : .tertiaryLabel
-    }
-
-    private func setupSelectionIndicator() {
-        selectionIndicatorView.translatesAutoresizingMaskIntoConstraints = false
-        selectionIndicatorView.contentMode = .scaleAspectFit
-        selectionIndicatorView.isHidden = true
-        contentView.addSubview(selectionIndicatorView)
-        NSLayoutConstraint.activate([
-            selectionIndicatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            selectionIndicatorView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            selectionIndicatorView.widthAnchor.constraint(equalToConstant: 22),
-            selectionIndicatorView.heightAnchor.constraint(equalToConstant: 22)
-        ])
+        setNeedsLayout()
     }
 }
 
