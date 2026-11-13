@@ -138,7 +138,7 @@ extension BrowserRootViewController {
         topBarView.translatesAutoresizingMaskIntoConstraints = false
         topBarView.isHidden = true
         topBarView.onSlotWidthChanged = { [weak self] in
-            guard let self, self.pillSlotWidthConstraint.isActive else { return }
+            guard let self, self.pillSlotWidthConstraint?.isActive == true else { return }
             self.updateRegularPillGeometry()
             self.topBarView.pillSlotView.layoutIfNeeded()
         }
@@ -148,12 +148,14 @@ extension BrowserRootViewController {
         topBarTopToSafeAreaConstraint = toSafeArea
         topBarTopToViewConstraint = toViewTop
         topBarTopConstraint = toSafeArea
-        topBarLeadingConstraint = topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor)
-        topBarTrailingConstraint = topBarView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+        let topBarLeading = topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor)
+        let topBarTrailing = topBarView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+        topBarLeadingConstraint = topBarLeading
+        topBarTrailingConstraint = topBarTrailing
         NSLayoutConstraint.activate([
             toSafeArea,
-            topBarLeadingConstraint,
-            topBarTrailingConstraint
+            topBarLeading,
+            topBarTrailing
         ])
     }
 
@@ -231,11 +233,8 @@ extension BrowserRootViewController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
-            // Queue is main, so this already runs on the MainActor;
-            // assume isolation for a synchronous live re-constrain.
-            MainActor.assumeIsolated {
-                self.updateVerticalTabBarPosition()
+            Task { [weak self] in
+                await self?.updateVerticalTabBarPosition()
             }
         }
         storePortraitObserver(observer)
@@ -268,13 +267,13 @@ extension BrowserRootViewController {
     func setupPill() {
         pillView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(pillView)
-        pillHeightConstraint = pillView.heightAnchor.constraint(
+        let pillHeight = pillView.heightAnchor.constraint(
             equalToConstant: AddressBarView.heightForState(.expanded)
         )
-        pillLeadingConstraint = pillView.leadingAnchor.constraint(
+        let pillLeading = pillView.leadingAnchor.constraint(
             equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16
         )
-        pillTrailingConstraint = pillView.trailingAnchor.constraint(
+        let pillTrailing = pillView.trailingAnchor.constraint(
             equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16
         )
         pillCenterXConstraint = pillView.centerXAnchor.constraint(
@@ -283,7 +282,7 @@ extension BrowserRootViewController {
         pillWidthConstraint = pillView.widthAnchor.constraint(
             equalToConstant: AddressBarView.widthForBounds(view.bounds.width)
         )
-        pillBottomConstraint = pillView.bottomAnchor.constraint(
+        let pillBottom = pillView.bottomAnchor.constraint(
             equalTo: view.bottomAnchor,
             constant: -Self.pillBottomOffset(for: .expanded, systemBottomInset: view.safeAreaInsets.bottom)
         )
@@ -296,23 +295,32 @@ extension BrowserRootViewController {
         pillSlotCenterYConstraint = pillView.centerYAnchor.constraint(
             equalTo: topBarView.pillSlotView.centerYAnchor
         )
-        pillSlotCenterXConstraint = pillView.centerXAnchor.constraint(
+        let pillSlotCenterX = pillView.centerXAnchor.constraint(
             equalTo: topBarView.centerXAnchor
         )
         // Bar-centered wins so an asymmetric slot never drags the capsule off-center.
-        pillSlotCenterXConstraint.priority = .required
-        pillSlotWidthConstraint = pillView.widthAnchor.constraint(
+        pillSlotCenterX.priority = .required
+        let pillSlotWidth = pillView.widthAnchor.constraint(
             equalToConstant: AddressBarView.minifiedMaxWidth
         )
-        pillSlotWidthConstraint.priority = UILayoutPriority(998)
-        pillSlotMinLeadingConstraint = pillView.leadingAnchor.constraint(
+        pillSlotWidth.priority = UILayoutPriority(998)
+        let pillSlotMinLeading = pillView.leadingAnchor.constraint(
             greaterThanOrEqualTo: topBarView.pillSlotView.leadingAnchor
         )
-        pillSlotMinLeadingConstraint.priority = .defaultHigh
-        pillSlotMaxTrailingConstraint = pillView.trailingAnchor.constraint(
+        pillSlotMinLeading.priority = .defaultHigh
+        let pillSlotMaxTrailing = pillView.trailingAnchor.constraint(
             lessThanOrEqualTo: topBarView.pillSlotView.trailingAnchor
         )
-        pillSlotMaxTrailingConstraint.priority = .defaultHigh
+        pillSlotMaxTrailing.priority = .defaultHigh
+
+        pillHeightConstraint = pillHeight
+        pillLeadingConstraint = pillLeading
+        pillTrailingConstraint = pillTrailing
+        pillBottomConstraint = pillBottom
+        pillSlotCenterXConstraint = pillSlotCenterX
+        pillSlotWidthConstraint = pillSlotWidth
+        pillSlotMinLeadingConstraint = pillSlotMinLeading
+        pillSlotMaxTrailingConstraint = pillSlotMaxTrailing
 
         // Mode 3: 44 pt native Liquid Glass buttons with 8 pt
         // spacing; outer insets stay 16 pt with 8 pt pill gaps.
@@ -332,23 +340,25 @@ extension BrowserRootViewController {
         pillBottomTrailingConstraint = pillView.trailingAnchor.constraint(
             equalTo: bottomTrailingStack.leadingAnchor, constant: -8
         )
-        bottomLeadingCenterYConstraint = bottomLeadingStack.centerYAnchor.constraint(
+        let bottomLeadingCenterY = bottomLeadingStack.centerYAnchor.constraint(
             equalTo: pillView.centerYAnchor
         )
-        bottomTrailingCenterYConstraint = bottomTrailingStack.centerYAnchor.constraint(
+        let bottomTrailingCenterY = bottomTrailingStack.centerYAnchor.constraint(
             equalTo: pillView.centerYAnchor
         )
+        bottomLeadingCenterYConstraint = bottomLeadingCenterY
+        bottomTrailingCenterYConstraint = bottomTrailingCenterY
 
         NSLayoutConstraint.activate([
-            pillBottomConstraint,
-            pillHeightConstraint,
-            pillLeadingConstraint,
-            pillTrailingConstraint,
+            pillBottom,
+            pillHeight,
+            pillLeading,
+            pillTrailing,
             bottomLeadingStack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-            bottomLeadingCenterYConstraint,
+            bottomLeadingCenterY,
             bottomLeadingStack.heightAnchor.constraint(equalToConstant: SystemToolbarMapper.bottomBarHeight),
             bottomTrailingStack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
-            bottomTrailingCenterYConstraint,
+            bottomTrailingCenterY,
             bottomTrailingStack.heightAnchor.constraint(equalToConstant: SystemToolbarMapper.bottomBarHeight)
         ])
         pillView.onPillTap = { [weak self] in self?.handlePillTap() }

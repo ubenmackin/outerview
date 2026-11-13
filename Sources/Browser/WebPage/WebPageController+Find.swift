@@ -115,6 +115,8 @@ extension WebPageController {
         do {
             decoded = try JSONDecoder().decode(FindResponse.self, from: data)
         } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "WebPage")
+                .error("parsedFindCounts decode failed: \(error.localizedDescription, privacy: .public)")
             return (0, 0)
         }
         return (max(0, decoded.total), max(0, decoded.index))

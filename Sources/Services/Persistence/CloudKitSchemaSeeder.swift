@@ -140,7 +140,7 @@
             let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
             _ = try bookmarkStore.add(
                 title: "\(sentinelTitlePrefix)Favorite Bookmark",
-                url: URL(string: "https://\(sentinelHost)/bookmark-favorite")!,
+                url: sentinelURL(path: "/bookmark-favorite"),
                 isFavorite: true,
                 addedDate: baseDate,
                 folderId: favoritesChild.id,
@@ -148,7 +148,7 @@
             )
             _ = try bookmarkStore.add(
                 title: "\(sentinelTitlePrefix)Root Bookmark",
-                url: URL(string: "https://\(sentinelHost)/bookmark-root")!,
+                url: sentinelURL(path: "/bookmark-root"),
                 isFavorite: false,
                 addedDate: baseDate.addingTimeInterval(24 * 60 * 60),
                 folderId: nil,
@@ -156,7 +156,7 @@
             )
             _ = try bookmarkStore.add(
                 title: "\(sentinelTitlePrefix)Extra Bookmark",
-                url: URL(string: "https://\(sentinelHost)/bookmark-extra")!,
+                url: sentinelURL(path: "/bookmark-extra"),
                 isFavorite: true,
                 addedDate: baseDate.addingTimeInterval(2 * 24 * 60 * 60),
                 folderId: nil,
@@ -168,12 +168,12 @@
         private static func seedHistoryRows(_ historyStore: HistoryStore) throws {
             let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
             try historyStore.record(visit: PageVisit(
-                url: URL(string: "https://\(sentinelHost)/history-1")!,
+                url: sentinelURL(path: "/history-1"),
                 title: "\(sentinelTitlePrefix)History One",
                 visitedAt: baseDate
             ))
             try historyStore.record(visit: PageVisit(
-                url: URL(string: "https://\(sentinelHost)/history-2")!,
+                url: sentinelURL(path: "/history-2"),
                 title: "\(sentinelTitlePrefix)History Two",
                 visitedAt: baseDate.addingTimeInterval(60 * 60)
             ))
@@ -189,15 +189,26 @@
         private static func seedReadingItems(_ readingStore: ReadingListStore) throws {
             _ = try readingStore.add(
                 title: "\(sentinelTitlePrefix)Reading One",
-                url: URL(string: "https://\(sentinelHost)/reading-1")!,
+                url: sentinelURL(path: "/reading-1"),
                 previewText: "\(sentinelTitlePrefix)preview text for offline reading"
             )
             if let second = try readingStore.add(
                 title: "\(sentinelTitlePrefix)Reading Two",
-                url: URL(string: "https://\(sentinelHost)/reading-2")!
+                url: sentinelURL(path: "/reading-2")
             ) {
                 try readingStore.setRead(id: second.id, isRead: true)
             }
+        }
+
+        private static func sentinelURL(path: String) throws -> URL {
+            var components = URLComponents()
+            components.scheme = "https"
+            components.host = sentinelHost
+            components.path = path
+            guard let url = components.url else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            return url
         }
 
         @MainActor

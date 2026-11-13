@@ -146,7 +146,7 @@ final class LibraryTabBar: UIView {
         defaults.set(tab.rawValue, forKey: libraryTabDefaultsKey)
     }
 
-    var onTabSelected: ((LibraryTab) -> Void)?
+    var onTabSelected: (@MainActor (LibraryTab) -> Void)?
 
     private(set) var selectedTab: LibraryTab = .bookmarks
 

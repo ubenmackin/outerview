@@ -13,7 +13,7 @@ extension BrowserRootViewController {
             authenticatedApply()
             return
         }
-        Task { @MainActor [weak self] in
+        Task { [weak self] in
             guard let self else { return }
             if await self.biometricAuthService.authenticate(reason: "Unlock Private Browsing") {
                 authenticatedApply()
@@ -41,7 +41,7 @@ extension BrowserRootViewController {
             let selectedIsPrivate = tabs.first(where: { $0.id == selectedTabID })?.isPrivate ?? false
             let isPrivateVisible = overviewMode.isPrivate || selectedIsPrivate
             if isPrivateSessionLocked, isPrivateVisible, shouldRequireBiometricsForPrivateMode {
-                Task { @MainActor [weak self] in
+                Task { [weak self] in
                     guard let self else { return }
                     let authenticated = await self.biometricAuthService.authenticate(reason: "Unlock Private Browsing")
                     if authenticated {
@@ -71,7 +71,7 @@ extension BrowserRootViewController {
     /// Single live owner for the tracker toggle: shared configs cover future
     /// tabs while live web views update in place with no restart.
     func applyContentBlockerEnabled(_ enabled: Bool) {
-        Task { @MainActor [weak self] in
+        Task { [weak self] in
             guard let self else { return }
             let controllers = [self.tabPool.configuration(isPrivate: false).userContentController,
                                self.tabPool.configuration(isPrivate: true).userContentController]
@@ -84,23 +84,30 @@ extension BrowserRootViewController {
         guard !hasContentBlockerObserver() else { return }
         let observer = NotificationCenter.default.addObserver(forName: .outerViewContentBlockerChanged, object: nil, queue: .main) { [weak self] note in
             let posted = note.userInfo?["enabled"] as? Bool
-            Task { @MainActor [weak self, posted] in
-                guard let self else { return }
-                let enabled = posted ?? (self.selectionDefaults.object(forKey: SettingsViewModel.blockTrackersDefaultsKey) as? Bool ?? true)
-                self.applyContentBlockerEnabled(enabled)
+            Task { [weak self, posted] in
+                await self?.applyPostedContentBlockerChange(posted)
             }
         }
         storeContentBlockerObserver(observer)
+    }
+
+    private func applyPostedContentBlockerChange(_ posted: Bool?) {
+        let enabled = posted ?? (selectionDefaults.object(forKey: SettingsViewModel.blockTrackersDefaultsKey) as? Bool ?? true)
+        applyContentBlockerEnabled(enabled)
     }
 
     // MARK: - Fold handling
 
     func scheduleStructuralUpdate() {
         cancelStructuralTask()
-        storeStructuralTask(Task { @MainActor [weak self] in
+        storeStructuralTask(Task { [weak self] in
             do {
                 try await Task.sleep(nanoseconds: UInt64(Self.structuralDebounceInterval * 1_000_000_000))
+            } catch is CancellationError {
+                return
             } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "BrowserRoot")
+                    .error("structural update sleep failed: \(error.localizedDescription, privacy: .public)")
                 return
             }
             guard !Task.isCancelled else { return }

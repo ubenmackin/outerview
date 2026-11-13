@@ -179,7 +179,7 @@ final class ContentBlockerService {
     /// Toggles serialize through a chain so rapid flips apply in order.
     func setEnabled(_ enabled: Bool, controllers: [WKUserContentController]) async {
         let previous = lastToggle
-        let current = Task { @MainActor in
+        let current = Task {
             await previous?.value
             for controller in controllers {
                 await applyRules(to: controller, enabled: enabled)
@@ -193,7 +193,7 @@ final class ContentBlockerService {
     /// Toggles serialize through a chain so rapid flips apply in order.
     func setEnabled(_ enabled: Bool) async {
         let previous = lastToggle
-        let current = Task { @MainActor in
+        let current = Task {
             await previous?.value
             trackedControllers.removeAll { $0.value == nil }
             for entry in trackedControllers {
@@ -233,47 +233,40 @@ final class ContentBlockerService {
                 waiter.resume()
             }
         }
-        // Check if already compiled
-        let existing: WKContentRuleList? = await withCheckedContinuation { continuation in
-            store.lookUpContentRuleList(forIdentifier: Self.ruleListIdentifier) { list, _ in
-                continuation.resume(returning: list)
-            }
-        }
-        if let existing {
+        if let existing = await fetchExistingRuleList(from: store) {
             compiledRuleList = existing
             return existing
         }
         do {
-            let compiled: WKContentRuleList = try await withCheckedThrowingContinuation { continuation in
-                store.compileContentRuleList(
-                    forIdentifier: Self.ruleListIdentifier,
-                    encodedContentRuleList: Self.defaultRulesJSON
-                ) { list, error in
-                    if let error {
-                        continuation.resume(throwing: error)
-                    } else if let list {
-                        continuation.resume(returning: list)
-                    } else {
-                        continuation.resume(throwing: NSError(domain: "ContentBlockerService", code: -1))
-                    }
-                }
+            guard let compiled = try await store.compileContentRuleList(
+                forIdentifier: Self.ruleListIdentifier,
+                encodedContentRuleList: Self.defaultRulesJSON
+            ) else {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "Security")
+                    .error("Content rule compilation returned nil without throwing")
+                return nil
             }
             compiledRuleList = compiled
             return compiled
         } catch {
             // Concurrent compile for the same identifier can fail even when
             // serialized elsewhere; re-check the store before giving up.
-            let retry: WKContentRuleList? = await withCheckedContinuation { continuation in
-                store.lookUpContentRuleList(forIdentifier: Self.ruleListIdentifier) { list, _ in
-                    continuation.resume(returning: list)
-                }
-            }
-            if let retry {
+            if let retry = await fetchExistingRuleList(from: store) {
                 compiledRuleList = retry
                 return retry
             }
             Logger(subsystem: "com.volcrypt.OuterView", category: "Security")
                 .error("Content rule compilation failed: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
+
+    private func fetchExistingRuleList(from store: WKContentRuleListStore) async -> WKContentRuleList? {
+        do {
+            return try await store.contentRuleList(forIdentifier: Self.ruleListIdentifier)
+        } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "Security")
+                .debug("Content rule lookup failed: \(error.localizedDescription, privacy: .public)")
             return nil
         }
     }

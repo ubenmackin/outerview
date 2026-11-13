@@ -89,7 +89,7 @@ public final class WebsiteSettingsStore {
         ephemeral.removeAll()
         ephemeralOrder.removeAll()
         defaults.removeObject(forKey: Self.storeKey)
-        syncedStore.mirror(nil, forKey: Self.storeKey)
+        syncedStore.clearMirror(forKey: Self.storeKey)
     }
 
     private func normalized(_ host: String?) -> String? {
@@ -106,7 +106,7 @@ public final class WebsiteSettingsStore {
 
         if current.isEmpty {
             defaults.removeObject(forKey: Self.storeKey)
-            syncedStore.mirror(nil, forKey: Self.storeKey)
+            syncedStore.clearMirror(forKey: Self.storeKey)
         } else {
             do {
                 let data = try JSONEncoder().encode(current)
@@ -138,7 +138,7 @@ public final class WebsiteSettingsStore {
             do {
                 return try JSONDecoder().decode([String: WebsiteSettings].self, from: mirrored)
             } catch {
-                // Corrupt mirror falls through to local defaults below.
+                logger.warning("Failed to decode mirrored website settings; falling back to local defaults: \(error.localizedDescription, privacy: .public)")
             }
         }
         guard let data = defaults.data(forKey: Self.storeKey) else {

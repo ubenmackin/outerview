@@ -1,4 +1,5 @@
 // RootView — Address editing lifecycle plus suggestion pipeline and Mode 3 inline dismiss.
+import os
 import UIKit
 
 extension BrowserRootViewController {
@@ -384,10 +385,14 @@ extension BrowserRootViewController {
 
         // 2. Debounced background fetch for per-engine remote suggestions
         let engine = currentSearchEngine()
-        suggestionTask = Task { @MainActor [weak self] in
+        suggestionTask = Task { [weak self] in
             do {
                 try await Task.sleep(nanoseconds: 120_000_000)
+            } catch is CancellationError {
+                return
             } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "BrowserRoot")
+                    .error("suggestion debounce sleep failed: \(error.localizedDescription, privacy: .public)")
                 return
             }
             guard !Task.isCancelled, let self else { return }

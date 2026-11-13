@@ -9,7 +9,7 @@ final class LibrarySheetViewController: UIViewController, UIAdaptivePresentation
     nonisolated static let preferredSheetCornerRadius: CGFloat = 32
 
     let libraryView: BookmarksLibraryView
-    var onDidDismiss: (() -> Void)?
+    var onDidDismiss: (@MainActor () -> Void)?
 
     private var contentConstraints: [NSLayoutConstraint] = []
 

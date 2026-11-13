@@ -6,8 +6,8 @@ public struct WebsiteSettingsView: View {
     public let host: String
     public let store: WebsiteSettingsStore
     public let isPrivate: Bool
-    public var onSettingsChanged: ((WebsiteSettings) -> Void)?
-    public var onDone: (() -> Void)?
+    public var onSettingsChanged: (@MainActor (WebsiteSettings) -> Void)?
+    public var onDone: (@MainActor () -> Void)?
 
     @Environment(\.dismiss) private var dismiss
     @State private var settings: WebsiteSettings
@@ -16,8 +16,8 @@ public struct WebsiteSettingsView: View {
         host: String,
         store: WebsiteSettingsStore,
         isPrivate: Bool,
-        onSettingsChanged: ((WebsiteSettings) -> Void)? = nil,
-        onDone: (() -> Void)? = nil
+        onSettingsChanged: (@MainActor (WebsiteSettings) -> Void)? = nil,
+        onDone: (@MainActor () -> Void)? = nil
     ) {
         self.host = host
         self.store = store

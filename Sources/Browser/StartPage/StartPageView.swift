@@ -16,14 +16,14 @@ protocol StartPageViewDelegate: AnyObject {
 @MainActor
 final class StartPageView: UIView {
     weak var delegate: StartPageViewDelegate?
-    var onImportTapped: (() -> Void)?
-    var onDeleteFavorite: ((UUID) -> Void)?
-    var onOpenInNewTab: ((URL) -> Void)?
-    var onOpenURLsInBackground: (([URL]) -> Void)?
-    var onOpenURLsInTabGroup: (([URL], TabGroup) -> Void)?
-    var onOpenURLsInNewTabGroup: (([URL], String) -> Void)?
-    var onRequestEdit: ((BookmarkEditorTarget) -> Void)?
-    var tabGroupsProvider: (() -> [TabGroup])?
+    var onImportTapped: (@MainActor () -> Void)?
+    var onDeleteFavorite: (@MainActor (UUID) -> Void)?
+    var onOpenInNewTab: (@MainActor (URL) -> Void)?
+    var onOpenURLsInBackground: (@MainActor ([URL]) -> Void)?
+    var onOpenURLsInTabGroup: (@MainActor ([URL], TabGroup) -> Void)?
+    var onOpenURLsInNewTabGroup: (@MainActor ([URL], String) -> Void)?
+    var onRequestEdit: (@MainActor (BookmarkEditorTarget) -> Void)?
+    var tabGroupsProvider: (@MainActor () -> [TabGroup])?
 
     let viewModel: StartPageViewModel
 
@@ -34,7 +34,7 @@ final class StartPageView: UIView {
     private let favoritesHeaderLabel = UILabel()
     private let collectionView: UICollectionView
     private let flowLayout: UICollectionViewFlowLayout
-    private var collectionHeightConstraint: NSLayoutConstraint!
+    private var collectionHeightConstraint: NSLayoutConstraint?
     private let emptyStateStack = UIStackView()
     private let importTile = DashedPromptTile()
     private let addCurrentPageTile = DashedPromptTile()
@@ -222,8 +222,9 @@ final class StartPageView: UIView {
         collectionView.accessibilityIdentifier = "StartPage.FavoritesGrid"
         collectionView.register(FavoriteTileCell.self, forCellWithReuseIdentifier: FavoriteTileCell.reuseIdentifier)
         contentStack.addArrangedSubview(collectionView)
-        collectionHeightConstraint = collectionView.heightAnchor.constraint(equalToConstant: 0)
-        collectionHeightConstraint.isActive = true
+        let collectionHeight = collectionView.heightAnchor.constraint(equalToConstant: 0)
+        collectionHeight.isActive = true
+        collectionHeightConstraint = collectionHeight
 
         emptyStateStack.axis = .horizontal
         emptyStateStack.spacing = 12
@@ -302,8 +303,8 @@ final class StartPageView: UIView {
         let rows = (count + columns - 1) / columns
         let itemHeight = flowLayout.itemSize.height
         let total = CGFloat(rows) * itemHeight + CGFloat(max(rows - 1, 0)) * flowLayout.minimumLineSpacing
-        if collectionHeightConstraint.constant != total {
-            collectionHeightConstraint.constant = total
+        if collectionHeightConstraint?.constant != total {
+            collectionHeightConstraint?.constant = total
         }
     }
 
@@ -357,7 +358,7 @@ final class StartPageView: UIView {
                 self.delegate?.startPage(self, didOpenURL: url)
             }, for: .touchUpInside)
 
-            Task { @MainActor [weak button, targetURL = url] in
+            Task { [weak button, targetURL = url] in
                 let fetched = await FaviconService.shared.favicon(for: targetURL, size: 26)
                 guard let button else { return }
                 var config = button.configuration

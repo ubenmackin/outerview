@@ -195,12 +195,13 @@ final class RegularHeaderTests: XCTestCase {
         let fixture = try makeRegularRoot()
         let root = fixture.root
         XCTAssertEqual(root.chromePlacement, .regular)
-        let topSecond = root.topBarTopConstraint.secondItem as? UIView
+        let topBarTop = try XCTUnwrap(root.topBarTopConstraint)
+        let topSecond = topBarTop.secondItem as? UIView
         XCTAssertTrue(topSecond === root.view)
-        XCTAssertEqual(root.topBarTopConstraint.secondAttribute, .top)
-        XCTAssertEqual(root.topBarTopConstraint.firstAttribute, .top)
-        XCTAssertEqual(root.topBarTrailingConstraint.constant, 0, accuracy: 0.001)
-        XCTAssertEqual(root.topBarLeadingConstraint.constant, 0, accuracy: 0.001)
+        XCTAssertEqual(topBarTop.secondAttribute, .top)
+        XCTAssertEqual(topBarTop.firstAttribute, .top)
+        XCTAssertEqual(try XCTUnwrap(root.topBarTrailingConstraint).constant, 0, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(root.topBarLeadingConstraint).constant, 0, accuracy: 0.001)
     }
 
     func testAlwaysBlurBackground() {
@@ -221,8 +222,8 @@ final class RegularHeaderTests: XCTestCase {
     func testBarFullWidthTrailing() throws {
         let fixture = try makeRegularRoot()
         let root = fixture.root
-        XCTAssertEqual(root.topBarTrailingConstraint.constant, 0, accuracy: 0.001)
-        XCTAssertEqual(root.topBarLeadingConstraint.constant, 0, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(root.topBarTrailingConstraint).constant, 0, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(root.topBarLeadingConstraint).constant, 0, accuracy: 0.001)
     }
 
     func testClusterInsetsAndSpacing() {
@@ -238,10 +239,10 @@ final class RegularHeaderTests: XCTestCase {
     func testPillCapsPerState() throws {
         let fixture = try makeRegularRoot(tabCount: 2)
         let root = fixture.root
-        XCTAssertFalse(root.pillSlotLeadingConstraint.isActive)
-        XCTAssertFalse(root.pillSlotTrailingConstraint.isActive)
-        XCTAssertTrue(root.pillSlotCenterXConstraint.isActive)
-        XCTAssertTrue(root.pillSlotWidthConstraint.isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillSlotLeadingConstraint).isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillSlotTrailingConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.pillSlotCenterXConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.pillSlotWidthConstraint).isActive)
         let expandedSlotWidth = root.topBarView.pillSlotView.bounds.width
         let expandedExpected = BrowserRootViewController.regularPillTarget(
             slotWidth: expandedSlotWidth,
@@ -249,15 +250,15 @@ final class RegularHeaderTests: XCTestCase {
             preferredMinifiedWidth: root.pillView.preferredMinifiedWidth()
         )
         XCTAssertEqual(TopBarView.expandedPillMaxWidth, 380)
-        XCTAssertEqual(root.pillSlotWidthConstraint.constant, expandedExpected, accuracy: 0.5)
+        XCTAssertEqual(try XCTUnwrap(root.pillSlotWidthConstraint).constant, expandedExpected, accuracy: 0.5)
         scroll(root, delta: 30)
         root.view.layoutIfNeeded()
         root.view.layoutIfNeeded()
         root.view.layoutIfNeeded()
-        XCTAssertFalse(root.pillSlotLeadingConstraint.isActive)
-        XCTAssertFalse(root.pillSlotTrailingConstraint.isActive)
-        XCTAssertTrue(root.pillSlotCenterXConstraint.isActive)
-        XCTAssertTrue(root.pillSlotWidthConstraint.isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillSlotLeadingConstraint).isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillSlotTrailingConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.pillSlotCenterXConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.pillSlotWidthConstraint).isActive)
         let slotWidth = root.topBarView.pillSlotView.bounds.width
         let minifiedExpected = BrowserRootViewController.regularPillTarget(
             slotWidth: slotWidth,
@@ -265,7 +266,7 @@ final class RegularHeaderTests: XCTestCase {
             preferredMinifiedWidth: root.pillView.preferredMinifiedWidth()
         )
         XCTAssertEqual(AddressBarView.minifiedMaxWidth, 220)
-        XCTAssertEqual(root.pillSlotWidthConstraint.constant, minifiedExpected, accuracy: 0.5)
+        XCTAssertEqual(try XCTUnwrap(root.pillSlotWidthConstraint).constant, minifiedExpected, accuracy: 0.5)
     }
 
     func testExpandedHeaderTranslucentWithContentBelow() throws {
@@ -280,17 +281,17 @@ final class RegularHeaderTests: XCTestCase {
         XCTAssertTrue(root.topBarView.isBlurVisible)
         XCTAssertFalse(hasRemnantProperty(root))
         XCTAssertEqual(root.additionalSafeAreaInsets.top, 0, accuracy: 0.001)
-        XCTAssertFalse(root.pillSlotLeadingConstraint.isActive)
-        XCTAssertFalse(root.pillSlotTrailingConstraint.isActive)
-        XCTAssertTrue(root.pillSlotCenterXConstraint.isActive)
-        XCTAssertTrue(root.pillSlotWidthConstraint.isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillSlotLeadingConstraint).isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillSlotTrailingConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.pillSlotCenterXConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.pillSlotWidthConstraint).isActive)
         let slotWidth = root.topBarView.pillSlotView.bounds.width
         let expected = BrowserRootViewController.regularPillTarget(
             slotWidth: slotWidth,
             isMinified: false,
             preferredMinifiedWidth: root.pillView.preferredMinifiedWidth()
         )
-        XCTAssertEqual(root.pillSlotWidthConstraint.constant, expected, accuracy: 0.5)
+        XCTAssertEqual(try XCTUnwrap(root.pillSlotWidthConstraint).constant, expected, accuracy: 0.5)
         XCTAssertTrue(root.startPageTopToStripConstraint?.isActive ?? false)
         XCTAssertFalse(root.startPageTopToBarConstraint?.isActive ?? true)
     }
@@ -319,18 +320,18 @@ final class RegularHeaderTests: XCTestCase {
         XCTAssertTrue(root.topBarView.isBlurVisible)
         XCTAssertFalse(hasRemnantProperty(root))
         XCTAssertEqual(root.additionalSafeAreaInsets.top, 0, accuracy: 0.001)
-        XCTAssertFalse(root.pillSlotLeadingConstraint.isActive)
-        XCTAssertFalse(root.pillSlotTrailingConstraint.isActive)
-        XCTAssertTrue(root.pillSlotCenterXConstraint.isActive)
-        XCTAssertTrue(root.pillSlotWidthConstraint.isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillSlotLeadingConstraint).isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillSlotTrailingConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.pillSlotCenterXConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.pillSlotWidthConstraint).isActive)
         let slotWidth = root.topBarView.pillSlotView.bounds.width
         let expected = BrowserRootViewController.regularPillTarget(
             slotWidth: slotWidth,
             isMinified: true,
             preferredMinifiedWidth: root.pillView.preferredMinifiedWidth()
         )
-        XCTAssertEqual(root.pillSlotWidthConstraint.constant, expected, accuracy: 0.5)
-        XCTAssertEqual(root.pillHeightConstraint.constant, AddressBarView.minifiedHeight, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(root.pillSlotWidthConstraint).constant, expected, accuracy: 0.5)
+        XCTAssertEqual(try XCTUnwrap(root.pillHeightConstraint).constant, AddressBarView.minifiedHeight, accuracy: 0.001)
         XCTAssertTrue(root.startPageTopToBarConstraint?.isActive ?? false)
         XCTAssertFalse(root.startPageTopToStripConstraint?.isActive ?? true)
         scroll(root, delta: -40)
@@ -348,17 +349,17 @@ final class RegularHeaderTests: XCTestCase {
         XCTAssertEqual(root.topBarView.backgroundColor, .clear)
         XCTAssertFalse(root.topBarView.isOpaque)
         XCTAssertTrue(root.topBarView.isBlurVisible)
-        XCTAssertFalse(root.pillSlotLeadingConstraint.isActive)
-        XCTAssertFalse(root.pillSlotTrailingConstraint.isActive)
-        XCTAssertTrue(root.pillSlotCenterXConstraint.isActive)
-        XCTAssertTrue(root.pillSlotWidthConstraint.isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillSlotLeadingConstraint).isActive)
+        XCTAssertFalse(try XCTUnwrap(root.pillSlotTrailingConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.pillSlotCenterXConstraint).isActive)
+        XCTAssertTrue(try XCTUnwrap(root.pillSlotWidthConstraint).isActive)
         let restoredSlotWidth = root.topBarView.pillSlotView.bounds.width
         let restoredExpected = BrowserRootViewController.regularPillTarget(
             slotWidth: restoredSlotWidth,
             isMinified: false,
             preferredMinifiedWidth: root.pillView.preferredMinifiedWidth()
         )
-        XCTAssertEqual(root.pillSlotWidthConstraint.constant, restoredExpected, accuracy: 0.5)
+        XCTAssertEqual(try XCTUnwrap(root.pillSlotWidthConstraint).constant, restoredExpected, accuracy: 0.5)
     }
 
     func testNoRemnantViewExists() throws {

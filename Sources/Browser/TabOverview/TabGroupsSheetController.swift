@@ -89,9 +89,9 @@ final class TabGroupsSheetController: UIViewController {
     nonisolated static let headerHeight: CGFloat = 52
     nonisolated static let closeButtonDiameter: CGFloat = 36
 
-    var onAction: ((Action) -> Void)?
+    var onAction: (@MainActor (Action) -> Void)?
 
-    private let stateProvider: () -> TabGroupsSheetState
+    private let stateProvider: @MainActor () -> TabGroupsSheetState
     private var currentState = TabGroupsSheetState(
         isPrivate: false,
         selectedGroupID: nil,
@@ -108,7 +108,7 @@ final class TabGroupsSheetController: UIViewController {
     private let pillControl = UISegmentedControl()
     private let tableView = UITableView(frame: .zero, style: .insetGrouped)
 
-    init(stateProvider: @escaping () -> TabGroupsSheetState) {
+    init(stateProvider: @MainActor @escaping () -> TabGroupsSheetState) {
         self.stateProvider = stateProvider
         super.init(nibName: nil, bundle: nil)
     }

@@ -31,11 +31,11 @@ struct BrowserContainerView: UIViewControllerRepresentable {
     @MainActor
     private static func activateSyncIfNeeded() {
         guard !AppEnvironment.isTestHost, SyncedSettingsStore.isSyncEnabled() else { return }
-        let monitor = iCloudSyncMonitor.shared
+        let monitor = CloudSyncMonitor.shared
         let store = SyncedSettingsStore.shared
         store.onSyncSucceeded = { [weak monitor] in monitor?.noteImportSucceeded() }
         // Refresh first so account state (syncing) precedes the KVS stamp (synced).
-        Task { @MainActor [monitor, store] in
+        Task { [monitor, store] in
             await monitor.refreshAccountStatus()
             store.startSync()
         }
@@ -51,7 +51,7 @@ struct BrowserContainerView: UIViewControllerRepresentable {
             controller.openExternalURL(url)
             // Consuming clears the binding so repeated deep links reload.
             let binding = _pendingURL
-            Task { @MainActor in
+            Task {
                 binding.wrappedValue = nil
             }
         }

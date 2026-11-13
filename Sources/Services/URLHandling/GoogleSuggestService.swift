@@ -4,6 +4,76 @@
 //
 
 import Foundation
+import os
+
+private struct DuckDuckGoPhraseRow: Decodable {
+    let phrase: String?
+}
+
+private struct OpenSearchTupleRow: Decodable {
+    let first: String
+
+    init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        first = try container.decode(String.self)
+    }
+}
+
+private func decodeOptionalMatch<T: Decodable>(
+    _ type: T.Type,
+    from container: SingleValueDecodingContainer
+) throws -> T? {
+    do {
+        return try container.decode(type)
+    } catch DecodingError.typeMismatch, DecodingError.valueNotFound {
+        return nil
+    }
+}
+
+private enum OpenSearchSuggestionValue: Decodable {
+    case string(String)
+    case tuple(OpenSearchTupleRow)
+    case other
+
+    var text: String? {
+        switch self {
+        case let .string(value):
+            value
+        case let .tuple(row):
+            row.first
+        case .other:
+            nil
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let string = try decodeOptionalMatch(String.self, from: container) {
+            self = .string(string)
+        } else if let tuple = try decodeOptionalMatch(OpenSearchTupleRow.self, from: container) {
+            self = .tuple(tuple)
+        } else {
+            self = .other
+        }
+    }
+}
+
+private enum OpenSearchRootElement: Decodable {
+    case query(String)
+    case suggestions([OpenSearchSuggestionValue])
+    case other
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let query = try decodeOptionalMatch(String.self, from: container) {
+            self = .query(query)
+        } else if let list = try decodeOptionalMatch([OpenSearchSuggestionValue].self, from: container) {
+            self = .suggestions(list)
+        } else {
+            self = .other
+        }
+    }
+}
 
 /// Fetches per-engine search suggestions as the user types.
 actor GoogleSuggestService {
@@ -42,7 +112,13 @@ actor GoogleSuggestService {
                 return []
             }
             return Self.parseSuggestions(data, engine: engine, limit: limit)
+        } catch is CancellationError {
+            return []
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            return []
         } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "Suggestions")
+                .error("Suggest fetch failed: \(error.localizedDescription, privacy: .public)")
             return []
         }
     }
@@ -87,18 +163,17 @@ actor GoogleSuggestService {
 
     /// DuckDuckGo phrase shape: [{"phrase": "…"}, …].
     private nonisolated static func parsePhraseSuggestions(from data: Data, limit: Int) -> [String] {
-        let jsonObject: Any
+        let rows: [DuckDuckGoPhraseRow]
         do {
-            jsonObject = try JSONSerialization.jsonObject(with: data)
+            rows = try JSONDecoder().decode([DuckDuckGoPhraseRow].self, from: data)
         } catch {
-            return []
-        }
-        guard let rows = jsonObject as? [[String: Any]] else {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "Suggestions")
+                .debug("DuckDuckGo suggest decode failed: \(error.localizedDescription, privacy: .public)")
             return []
         }
         var results: [String] = []
         for row in rows {
-            guard let phrase = row["phrase"] as? String else { continue }
+            guard let phrase = row.phrase else { continue }
             let trimmed = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
                 results.append(trimmed)
@@ -109,30 +184,25 @@ actor GoogleSuggestService {
 
     /// OpenSearch array shape: ["query", ["s1", "s2"]].
     private nonisolated static func parseOpenSearchSuggestions(from data: Data, limit: Int) -> [String] {
-        let jsonObject: Any
+        let root: [OpenSearchRootElement]
         do {
-            jsonObject = try JSONSerialization.jsonObject(with: data)
+            root = try JSONDecoder().decode([OpenSearchRootElement].self, from: data)
         } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "Suggestions")
+                .debug("OpenSearch suggest decode failed: \(error.localizedDescription, privacy: .public)")
             return []
         }
-        guard let json = jsonObject as? [Any],
-              json.count >= 2,
-              let rawSuggestions = json[1] as? [Any]
+        guard root.count >= 2,
+              case let .suggestions(items) = root[1]
         else {
             return []
         }
         var results: [String] = []
-        for item in rawSuggestions {
-            if let str = item as? String {
-                let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    results.append(trimmed)
-                }
-            } else if let arr = item as? [Any], let str = arr.first as? String {
-                let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    results.append(trimmed)
-                }
+        for item in items {
+            guard let text = item.text else { continue }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                results.append(trimmed)
             }
         }
         return Array(results.prefix(limit))

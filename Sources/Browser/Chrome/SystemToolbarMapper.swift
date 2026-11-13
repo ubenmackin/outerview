@@ -35,9 +35,7 @@ enum SystemToolbarMapper {
         guard let provider = action.menuProvider else { return nil }
         return UIMenu(children: [
             UIDeferredMenuElement.uncached { completion in
-                Task { @MainActor in
-                    completion(provider()?.children ?? [])
-                }
+                completion(provider()?.children ?? [])
             }
         ])
     }
@@ -48,21 +46,20 @@ enum SystemToolbarMapper {
         menu == nil || !showsMenuAsPrimaryAction
     }
 
-    /// Bar-item tap hopping to the main actor. UIKit may fire off-main,
-    /// so the handler never assumes isolation.
+    /// Bar-item tap invoking the main-actor action directly.
     private static func barTap(for action: RailAction) -> UIAction {
         let handler = action.handler
         let image = symbolImage(for: action)
         return UIAction(title: action.accessibilityLabel, image: image) { _ in
-            Task { @MainActor in handler() }
+            handler()
         }
     }
 
-    /// Button tap for stack hosts with the same main-actor hop.
+    /// Button tap for stack hosts invoking the main-actor action directly.
     private static func buttonTap(for action: RailAction) -> UIAction {
         let handler = action.handler
         return UIAction { _ in
-            Task { @MainActor in handler() }
+            handler()
         }
     }
 

@@ -42,10 +42,10 @@ final class FindInPageView: UIView {
         return "\(max(1, index))/\(total)"
     }
 
-    var onTextChanged: ((String) -> Void)?
-    var onPrevious: (() -> Void)?
-    var onNext: (() -> Void)?
-    var onDone: (() -> Void)?
+    var onTextChanged: (@MainActor (String) -> Void)?
+    var onPrevious: (@MainActor () -> Void)?
+    var onNext: (@MainActor () -> Void)?
+    var onDone: (@MainActor () -> Void)?
 
     private(set) var currentTotal: Int = 0
     private(set) var currentIndex: Int = 0

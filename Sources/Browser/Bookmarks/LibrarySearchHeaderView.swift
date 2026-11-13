@@ -10,9 +10,9 @@ final class LibrarySearchHeaderView: UIView, UISearchBarDelegate {
     nonisolated static let defaultHeight: CGFloat = 64
     nonisolated static let revealThreshold: CGFloat = -28
 
-    var onQueryChanged: ((String) -> Void)?
-    var onCancel: (() -> Void)?
-    var onBeginEditing: (() -> Void)?
+    var onQueryChanged: (@MainActor (String) -> Void)?
+    var onCancel: (@MainActor () -> Void)?
+    var onBeginEditing: (@MainActor () -> Void)?
 
     let searchBar = UISearchBar()
 
@@ -214,8 +214,8 @@ final class LibrarySearchTuckController {
     func wire(
         header: LibrarySearchHeaderView,
         tableView: UITableView,
-        onQueryChanged: @escaping (String) -> Void,
-        onCleared: @escaping () -> Void
+        onQueryChanged: @MainActor @escaping (String) -> Void,
+        onCleared: @MainActor @escaping () -> Void
     ) {
         header.onQueryChanged = { query in
             onQueryChanged(query)

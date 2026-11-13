@@ -152,6 +152,16 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
         }
     }
 
+    /// Removes a file off MainActor without throwing; failures only log.
+    @MainActor
+    private func removeFileOffMainActor(at url: URL) async {
+        do {
+            try await StagedDownloadFileWorker.shared.removeItem(at: url)
+        } catch {
+            logger.error("cleanup removeItem failed: \(error.localizedDescription, privacy: .private)")
+        }
+    }
+
     /// Clears task mappings for a finished row.
     @MainActor
     private func clearMapping(taskKey: ObjectIdentifier, rowID: UUID?) {
@@ -168,10 +178,14 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
     /// returning the stored system completion here lets iOS snapshot the app switcher.
     nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         guard let identifier = session.configuration.identifier else { return }
-        Task { @MainActor [weak self] in
-            guard let store = self?.launchHandlerStore else { return }
-            store.popLaunchHandler(for: identifier)?()
+        Task { [weak self] in
+            await self?.handleSessionDidFinishEvents(identifier: identifier)
         }
+    }
+
+    @MainActor
+    private func handleSessionDidFinishEvents(identifier: String) {
+        launchHandlerStore?.popLaunchHandler(for: identifier)?()
     }
 
     // MARK: - URLSessionDownloadDelegate
@@ -189,10 +203,15 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
         else { return }
         let key = ObjectIdentifier(downloadTask)
         let fraction = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-        Task { @MainActor [weak self] in
-            guard let self, let id = self.taskIDs[key], let manager = self.effectiveManager else { return }
-            manager.applyProgress(fraction, for: id)
+        Task { [weak self] in
+            await self?.handleDownloadProgress(taskKey: key, fraction: fraction)
         }
+    }
+
+    @MainActor
+    private func handleDownloadProgress(taskKey: ObjectIdentifier, fraction: Double) {
+        guard let id = taskIDs[taskKey], let manager = effectiveManager else { return }
+        manager.applyProgress(fraction, for: id)
     }
 
     nonisolated func urlSession(
@@ -219,21 +238,8 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
             // System reclaims location after return; never hand it to async work.
             cleanupItem(at: location)
             let message = error.localizedDescription
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                guard let rowID = self.taskIDs[key] else {
-                    self.taskIDs[key] = nil
-                    return
-                }
-                self.taskIDs[key] = nil
-                self.tasks[rowID] = nil
-                self.names[rowID] = nil
-                if let manager = self.effectiveManager,
-                   let index = manager.rows.firstIndex(where: { $0.id == rowID }),
-                   manager.rows[index].state == .inProgress
-                {
-                    manager.failDownload(id: rowID, reason: message)
-                }
+            Task { [weak self] in
+                await self?.handleStagingFailure(taskKey: key, message: message)
             }
             return
         }
@@ -242,21 +248,39 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
         }
     }
 
-    nonisolated func urlSession(_ _: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        let key = ObjectIdentifier(task)
-        Task { @MainActor [weak self] in
-            // Success without error is owned by finalize; leave mapping for it.
-            guard let self, let error, let rowID = self.taskIDs[key] else { return }
-            self.taskIDs[key] = nil
-            self.tasks[rowID] = nil
-            self.names[rowID] = nil
-            guard let manager = self.effectiveManager else { return }
-            // Map cancel distinctly so UI shows explicit Cancelled, not system text.
-            let code = (error as NSError).code
-            let domain = (error as NSError).domain
-            let isCancelled = domain == NSURLErrorDomain && code == NSURLErrorCancelled
-            manager.failDownload(id: rowID, reason: isCancelled ? "Cancelled" : error.localizedDescription)
+    @MainActor
+    private func handleStagingFailure(taskKey: ObjectIdentifier, message: String) {
+        guard let rowID = taskIDs[taskKey] else {
+            taskIDs[taskKey] = nil
+            return
         }
+        clearMapping(taskKey: taskKey, rowID: rowID)
+        if let manager = effectiveManager,
+           let index = manager.rows.firstIndex(where: { $0.id == rowID }),
+           manager.rows[index].state == .inProgress
+        {
+            manager.failDownload(id: rowID, reason: message)
+        }
+    }
+
+    nonisolated func urlSession(_ _: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard let error else { return }
+        let key = ObjectIdentifier(task)
+        let nsError = error as NSError
+        let isCancelled = nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+        let message = isCancelled ? "Cancelled" : error.localizedDescription
+        Task { [weak self] in
+            await self?.handleTaskCompletion(taskKey: key, message: message)
+        }
+    }
+
+    @MainActor
+    private func handleTaskCompletion(taskKey: ObjectIdentifier, message: String) {
+        // Success without error is owned by finalize; leave mapping for it.
+        guard let rowID = taskIDs[taskKey] else { return }
+        clearMapping(taskKey: taskKey, rowID: rowID)
+        guard let manager = effectiveManager else { return }
+        manager.failDownload(id: rowID, reason: message)
     }
 
     /// Clears mappings and surfaces an HTTP status failure on the mapped or relaunched row.
@@ -312,111 +336,114 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
     }
 
     /// Drops a staged file with no destination and clears mappings.
-    private nonisolated func discardStagedDownload(taskKey: ObjectIdentifier, resolved: ResolvedDownload, stagedURL: URL) async {
-        cleanupItem(at: stagedURL)
-        await MainActor.run { [weak self] in
-            guard let self else { return }
-            // No destination means no row owner at resolve; surface a failed row.
-            if let manager = self.effectiveManager {
-                if let rowID = resolved.rowID,
-                   let index = manager.rows.firstIndex(where: { $0.id == rowID }),
-                   manager.rows[index].state == .inProgress
-                {
-                    manager.failDownload(id: rowID, reason: "Download service unavailable")
-                } else if resolved.rowID == nil {
-                    let clean = DownloadsManager.sanitizedFileName(resolved.clean)
-                    let newID = manager.registerRow(name: clean, fileURL: nil)
-                    manager.failDownload(id: newID, reason: "Download service unavailable")
-                }
+    @MainActor
+    private func discardStagedDownload(taskKey: ObjectIdentifier, resolved: ResolvedDownload, stagedURL: URL) async {
+        await removeFileOffMainActor(at: stagedURL)
+        // No destination means no row owner at resolve; surface a failed row.
+        if let manager = effectiveManager {
+            if let rowID = resolved.rowID,
+               let index = manager.rows.firstIndex(where: { $0.id == rowID }),
+               manager.rows[index].state == .inProgress
+            {
+                manager.failDownload(id: rowID, reason: "Download service unavailable")
+            } else if resolved.rowID == nil {
+                let clean = DownloadsManager.sanitizedFileName(resolved.clean)
+                let newID = manager.registerRow(name: clean, fileURL: nil)
+                manager.failDownload(id: newID, reason: "Download service unavailable")
             }
-            self.clearMapping(taskKey: taskKey, rowID: resolved.rowID)
         }
+        clearMapping(taskKey: taskKey, rowID: resolved.rowID)
     }
 
     /// Records a move failure on the mapped or relaunched row.
-    private nonisolated func failStagedMove(
+    @MainActor
+    private func failStagedMove(
         taskKey: ObjectIdentifier,
         resolved: ResolvedDownload,
         stagedURL: URL,
         message: String
     ) async {
-        cleanupItem(at: stagedURL)
-        await MainActor.run { [weak self] in
-            guard let self else { return }
-            defer { self.clearMapping(taskKey: taskKey, rowID: resolved.rowID) }
-            let manager = self.effectiveManager ?? self.ensureManagerForBackgroundWake()
-            if let rowID = resolved.rowID {
-                // Only in-progress rows fail; cancelled/deleted just clear.
-                if let index = manager.rows.firstIndex(where: { $0.id == rowID }),
-                   manager.rows[index].state == .inProgress
-                {
-                    manager.failDownload(id: rowID, reason: message)
-                }
-            } else {
-                // Relaunch without mapping still surfaces a failed row.
-                let newID = manager.registerRow(name: resolved.clean, fileURL: nil)
-                manager.failDownload(id: newID, reason: message)
+        await removeFileOffMainActor(at: stagedURL)
+        defer { clearMapping(taskKey: taskKey, rowID: resolved.rowID) }
+        let manager = effectiveManager ?? ensureManagerForBackgroundWake()
+        if let rowID = resolved.rowID {
+            // Only in-progress rows fail; cancelled/deleted just clear.
+            if let index = manager.rows.firstIndex(where: { $0.id == rowID }),
+               manager.rows[index].state == .inProgress
+            {
+                manager.failDownload(id: rowID, reason: message)
             }
+        } else {
+            // Relaunch without mapping still surfaces a failed row.
+            let newID = manager.registerRow(name: resolved.clean, fileURL: nil)
+            manager.failDownload(id: newID, reason: message)
         }
     }
 
     /// Completes a moved file; relaunched completions surface a finished row.
-    private nonisolated func finishMovedDownload(
+    @MainActor
+    private func finishMovedDownload(
         taskKey: ObjectIdentifier,
         resolved: ResolvedDownload,
         destination: URL
     ) async {
-        let shouldKeep: Bool = await MainActor.run { [weak self] in
-            guard let self else { return false }
-            defer { self.clearMapping(taskKey: taskKey, rowID: resolved.rowID) }
-            let manager = self.effectiveManager ?? self.ensureManagerForBackgroundWake()
-            if let rowID = resolved.rowID {
-                // Only in-progress rows complete; cancelled/deleted just drop.
-                guard let index = manager.rows.firstIndex(where: { $0.id == rowID }),
-                      manager.rows[index].state == .inProgress
-                else {
-                    return false
-                }
-                manager.renameRow(id: rowID, name: destination.lastPathComponent, fileURL: destination)
-                manager.completeDownload(id: rowID)
-                return true
-            }
-            // Relaunch without mapping still surfaces a finished row.
-            let newID = manager.registerRow(name: destination.lastPathComponent, fileURL: destination)
-            manager.completeDownload(id: newID)
-            return true
-        }
+        let shouldKeep = completeMovedDownloadRow(taskKey: taskKey, resolved: resolved, destination: destination)
         if !shouldKeep {
             // Cancelled/deleted or manager-absent files never resurrect.
-            cleanupItem(at: destination)
+            await removeFileOffMainActor(at: destination)
         }
     }
 
-    /// Resolves the destination on MainActor, moves off MainActor, then completes rows.
-    private nonisolated func finalizeDownload(taskKey: ObjectIdentifier, fallbackName: String, stagedURL: URL) async {
-        let resolved: ResolvedDownload = await MainActor.run { [weak self] in
-            guard let self else { return ResolvedDownload(rowID: nil, clean: fallbackName, destination: nil) }
-            return self.resolveDownload(taskKey: taskKey, fallbackName: fallbackName)
+    @MainActor
+    private func completeMovedDownloadRow(
+        taskKey: ObjectIdentifier,
+        resolved: ResolvedDownload,
+        destination: URL
+    ) -> Bool {
+        defer { clearMapping(taskKey: taskKey, rowID: resolved.rowID) }
+        let manager = effectiveManager ?? ensureManagerForBackgroundWake()
+        if let rowID = resolved.rowID {
+            // Only in-progress rows complete; cancelled/deleted just drop.
+            guard let index = manager.rows.firstIndex(where: { $0.id == rowID }),
+                  manager.rows[index].state == .inProgress
+            else {
+                return false
+            }
+            manager.renameRow(id: rowID, name: destination.lastPathComponent, fileURL: destination)
+            manager.completeDownload(id: rowID)
+            return true
         }
+        // Relaunch without mapping still surfaces a finished row.
+        let newID = manager.registerRow(name: destination.lastPathComponent, fileURL: destination)
+        manager.completeDownload(id: newID)
+        return true
+    }
+
+    @MainActor
+    private func retryDestinationAfterCollision(for resolved: ResolvedDownload, error: Error) -> URL? {
+        guard Self.isFileExistsError(error), let manager = effectiveManager else { return nil }
+        let fresh = manager.nextDestinationURL(for: resolved.clean, excluding: resolved.rowID)
+        if let rowID = resolved.rowID {
+            manager.renameRow(id: rowID, name: fresh.lastPathComponent, fileURL: fresh)
+        }
+        return fresh
+    }
+
+    /// Resolves the destination on MainActor, moves off MainActor, then completes rows.
+    @MainActor
+    private func finalizeDownload(taskKey: ObjectIdentifier, fallbackName: String, stagedURL: URL) async {
+        let resolved = resolveDownload(taskKey: taskKey, fallbackName: fallbackName)
         guard let destination = resolved.destination else {
             await discardStagedDownload(taskKey: taskKey, resolved: resolved, stagedURL: stagedURL)
             return
         }
         do {
-            try FileManager.default.moveItem(at: stagedURL, to: destination)
+            try await StagedDownloadFileWorker.shared.moveItem(at: stagedURL, to: destination)
         } catch {
             // A reservation race or external file can collide; retry once with a fresh name.
-            let retried: URL? = await MainActor.run { [weak self] in
-                guard let self, Self.isFileExistsError(error), let manager = self.effectiveManager else { return nil }
-                let fresh = manager.nextDestinationURL(for: resolved.clean, excluding: resolved.rowID)
-                if let rowID = resolved.rowID {
-                    manager.renameRow(id: rowID, name: fresh.lastPathComponent, fileURL: fresh)
-                }
-                return fresh
-            }
-            if let retried {
+            if let retried = retryDestinationAfterCollision(for: resolved, error: error) {
                 do {
-                    try FileManager.default.moveItem(at: stagedURL, to: retried)
+                    try await StagedDownloadFileWorker.shared.moveItem(at: stagedURL, to: retried)
                     var moved = resolved
                     moved.destination = retried
                     moved.clean = retried.lastPathComponent
@@ -447,5 +474,18 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
             return true
         }
         return false
+    }
+}
+
+/// Offloads blocking staged-file moves and removals off MainActor without MainActor.run hops.
+private actor StagedDownloadFileWorker {
+    static let shared = StagedDownloadFileWorker()
+
+    func moveItem(at source: URL, to destination: URL) throws {
+        try FileManager.default.moveItem(at: source, to: destination)
+    }
+
+    func removeItem(at url: URL) throws {
+        try FileManager.default.removeItem(at: url)
     }
 }

@@ -150,6 +150,8 @@ final class BookmarkStore {
         do {
             return try context.fetch(descriptor)
         } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
+                .error("fetchPreviewBookmarks failed: \(error.localizedDescription, privacy: .public)")
             return []
         }
     }
@@ -499,6 +501,8 @@ final class BookmarkStore {
         do {
             return try earliestBookmark(at: url)?.isFavorite == true
         } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
+                .error("isFavorite failed: \(error.localizedDescription, privacy: .public)")
             return false
         }
     }
@@ -507,6 +511,8 @@ final class BookmarkStore {
         do {
             return try earliestBookmark(at: url)
         } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
+                .error("bookmark(for:) failed: \(error.localizedDescription, privacy: .public)")
             return nil
         }
     }

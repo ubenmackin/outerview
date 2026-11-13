@@ -367,7 +367,13 @@ final class FaviconService {
                 return nil
             }
             return image
+        } catch is CancellationError {
+            return nil
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            return nil
         } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "Favicons")
+                .debug("favicon network fetch failed: \(error.localizedDescription, privacy: .public)")
             return nil
         }
     }
@@ -419,7 +425,11 @@ actor FaviconDiskCache {
     func read(from url: URL) -> Data? {
         do {
             return try Data(contentsOf: url)
+        } catch let cocoaError as CocoaError where cocoaError.code == .fileReadNoSuchFile {
+            return nil
         } catch {
+            Logger(subsystem: "com.volcrypt.OuterView", category: "Favicons")
+                .error("favicon cache read failed: \(error.localizedDescription, privacy: .public)")
             return nil
         }
     }

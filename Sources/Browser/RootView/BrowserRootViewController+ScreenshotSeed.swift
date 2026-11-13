@@ -5,6 +5,26 @@ import os
 import UIKit
 import WebKit
 
+private enum ScreenshotSeedError: LocalizedError {
+    case missingHistoryOrSearchStore
+    case missingBookmarkOrReadingListStore
+    case missingTabStore
+    case missingSelectedTab
+
+    var errorDescription: String? {
+        switch self {
+        case .missingHistoryOrSearchStore:
+            "Screenshot seed requires history and search stores"
+        case .missingBookmarkOrReadingListStore:
+            "Screenshot seed requires bookmark and reading list stores"
+        case .missingTabStore:
+            "Screenshot seed requires a tab store"
+        case .missingSelectedTab:
+            "Screenshot seed requires a selected tab"
+        }
+    }
+}
+
 extension BrowserRootViewController {
     /// Launch argument presence is read once at process start; entering or
     /// exiting screenshot mode requires a relaunch with no live reload.
@@ -19,8 +39,9 @@ extension BrowserRootViewController {
         do {
             try applyScreenshotSeed()
         } catch {
-            // Fail-closed: a partial seed must never masquerade as ready.
-            preconditionFailure("Screenshot seed failed: \(error)")
+            // Fail-closed: log the error and abort seeding rather than crashing or masking partial state.
+            Logger(subsystem: "com.volcrypt.OuterView", category: "ScreenshotSeed")
+                .error("Screenshot seed failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -65,7 +86,7 @@ extension BrowserRootViewController {
     /// History plus recent searches reset before populating deterministic items.
     private func clearScreenshotEphemera() throws {
         guard historyStore != nil, recentSearchStore != nil else {
-            preconditionFailure("Screenshot seed requires history and search stores")
+            throw ScreenshotSeedError.missingHistoryOrSearchStore
         }
         try historyStore?.clear()
         try recentSearchStore?.clear()
@@ -140,7 +161,7 @@ extension BrowserRootViewController {
 
     private func seedScreenshotStores() throws {
         guard let bookmarkStore, let readingListStore else {
-            preconditionFailure("Screenshot seed requires bookmark and reading list stores")
+            throw ScreenshotSeedError.missingBookmarkOrReadingListStore
         }
         let existing = bookmarkStore.fetchAll()
         if !existing.isEmpty {
@@ -227,11 +248,11 @@ extension BrowserRootViewController {
         }
 
         guard let tabStore else {
-            preconditionFailure("Screenshot seed requires a tab store")
+            throw ScreenshotSeedError.missingTabStore
         }
         try tabStore.saveSession(tabs: tabs, selected: tabs.first?.id)
         guard let selected = tabs.first?.id else {
-            preconditionFailure("Screenshot seed requires a selected tab")
+            throw ScreenshotSeedError.missingSelectedTab
         }
         selectedTabID = selected
         displaySelectedTab()

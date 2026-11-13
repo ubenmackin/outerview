@@ -4,9 +4,9 @@ import UIKit
 
 @MainActor
 final class RecentSearchesView: UIView {
-    var onSelectQuery: ((String) -> Void)?
-    var onDeleteQuery: ((UUID) -> Void)?
-    var onClearAll: (() -> Void)?
+    var onSelectQuery: (@MainActor (String) -> Void)?
+    var onDeleteQuery: (@MainActor (UUID) -> Void)?
+    var onClearAll: (@MainActor () -> Void)?
 
     private let recentSearchStore: RecentSearchStore?
     private var entries: [RecentSearch] = []
@@ -144,8 +144,8 @@ private final class RecentSearchCell: UITableViewCell {
     private let queryLabel = UILabel()
     private let selectButton = UIButton(type: .system)
     private let deleteButton = UIButton(type: .system)
-    private var onDelete: (() -> Void)?
-    private var onSelect: (() -> Void)?
+    private var onDelete: (@MainActor () -> Void)?
+    private var onSelect: (@MainActor () -> Void)?
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -157,7 +157,7 @@ private final class RecentSearchCell: UITableViewCell {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(with entry: RecentSearch, onDelete: @escaping () -> Void, onSelect: @escaping () -> Void) {
+    func configure(with entry: RecentSearch, onDelete: @MainActor @escaping () -> Void, onSelect: @MainActor @escaping () -> Void) {
         self.onDelete = onDelete
         self.onSelect = onSelect
         queryLabel.text = entry.query

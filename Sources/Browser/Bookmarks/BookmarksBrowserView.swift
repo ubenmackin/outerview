@@ -21,15 +21,15 @@ final class BookmarkRowCell: LibrarySubtitleCell {
 /// nested user folders, reordering clamped within section, context menus, and inline editing.
 @MainActor
 final class BookmarksBrowserView: UIView {
-    var onOpenURL: ((URL) -> Void)?
-    var onOpenInNewTab: ((URL) -> Void)?
-    var onRequestEdit: ((BookmarkEditorTarget) -> Void)?
-    var onNavigationStateChanged: (() -> Void)?
-    var onDidMutateBookmarks: (() -> Void)?
-    var tabGroupsProvider: (() -> [TabGroup])?
-    var onOpenURLsInBackground: (([URL]) -> Void)?
-    var onOpenURLsInTabGroup: (([URL], TabGroup) -> Void)?
-    var onOpenURLsInNewTabGroup: (([URL], String) -> Void)?
+    var onOpenURL: (@MainActor (URL) -> Void)?
+    var onOpenInNewTab: (@MainActor (URL) -> Void)?
+    var onRequestEdit: (@MainActor (BookmarkEditorTarget) -> Void)?
+    var onNavigationStateChanged: (@MainActor () -> Void)?
+    var onDidMutateBookmarks: (@MainActor () -> Void)?
+    var tabGroupsProvider: (@MainActor () -> [TabGroup])?
+    var onOpenURLsInBackground: (@MainActor ([URL]) -> Void)?
+    var onOpenURLsInTabGroup: (@MainActor ([URL], TabGroup) -> Void)?
+    var onOpenURLsInNewTabGroup: (@MainActor ([URL], String) -> Void)?
 
     let bookmarkStore: BookmarkStore
     let defaults: UserDefaults
@@ -50,8 +50,8 @@ final class BookmarksBrowserView: UIView {
     var selectedFolderIDs: Set<UUID> = []
 
     private let navBar = UIView()
-    private var navBarTopConstraint: NSLayoutConstraint!
-    private var navBarHeightConstraint: NSLayoutConstraint!
+    private var navBarTopConstraint: NSLayoutConstraint?
+    private var navBarHeightConstraint: NSLayoutConstraint?
     private let backButton = UIButton(type: .system)
     private let titleLabel = UILabel()
     let tableView = UITableView(frame: .zero, style: .insetGrouped)
@@ -121,8 +121,8 @@ final class BookmarksBrowserView: UIView {
             selectedFolderIDs.removeAll()
         }
         navBar.isHidden = hidden
-        navBarTopConstraint.constant = hidden ? 0 : 4
-        navBarHeightConstraint.constant = hidden ? 0 : 40
+        navBarTopConstraint?.constant = hidden ? 0 : 4
+        navBarHeightConstraint?.constant = hidden ? 0 : 40
         if changed {
             reload()
         } else {
@@ -330,14 +330,16 @@ final class BookmarksBrowserView: UIView {
             }
         )
 
-        navBarTopConstraint = navBar.topAnchor.constraint(equalTo: topAnchor, constant: 4)
-        navBarHeightConstraint = navBar.heightAnchor.constraint(equalToConstant: 40)
+        let navBarTop = navBar.topAnchor.constraint(equalTo: topAnchor, constant: 4)
+        let navBarHeight = navBar.heightAnchor.constraint(equalToConstant: 40)
+        navBarTopConstraint = navBarTop
+        navBarHeightConstraint = navBarHeight
 
         NSLayoutConstraint.activate([
             navBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             navBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            navBarTopConstraint,
-            navBarHeightConstraint,
+            navBarTop,
+            navBarHeight,
 
             backButton.leadingAnchor.constraint(equalTo: navBar.leadingAnchor),
             backButton.centerYAnchor.constraint(equalTo: navBar.centerYAnchor),
@@ -720,6 +722,8 @@ extension BookmarksBrowserView: UITableViewDataSource, UITableViewDelegate {
                 self.onDidMutateBookmarks?()
                 completion(true)
             } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "Bookmarks")
+                    .error("swipe delete bookmark failed: \(error.localizedDescription, privacy: .public)")
                 completion(false)
             }
         }

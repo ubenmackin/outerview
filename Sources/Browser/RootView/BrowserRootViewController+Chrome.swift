@@ -85,19 +85,19 @@ extension BrowserRootViewController {
     func updateRegularPillGeometry() {
         guard isViewLoaded, pillView.superview === topBarView.pillSlotView else { return }
         let isMinified = chromeController.state.pill == .minified
-        pillSlotLeadingConstraint.isActive = false
-        pillSlotTrailingConstraint.isActive = false
-        pillSlotMinLeadingConstraint.isActive = true
-        pillSlotMaxTrailingConstraint.isActive = true
-        pillSlotCenterXConstraint.isActive = true
-        pillSlotWidthConstraint.isActive = true
+        pillSlotLeadingConstraint?.isActive = false
+        pillSlotTrailingConstraint?.isActive = false
+        pillSlotMinLeadingConstraint?.isActive = true
+        pillSlotMaxTrailingConstraint?.isActive = true
+        pillSlotCenterXConstraint?.isActive = true
+        pillSlotWidthConstraint?.isActive = true
         let target = Self.regularPillTarget(
             slotWidth: topBarView.pillSlotView.bounds.width,
             isMinified: isMinified,
             preferredMinifiedWidth: pillView.preferredMinifiedWidth()
         )
-        if pillSlotWidthConstraint.constant != target {
-            pillSlotWidthConstraint.constant = target
+        if pillSlotWidthConstraint?.constant != target {
+            pillSlotWidthConstraint?.constant = target
         }
     }
 
@@ -291,8 +291,8 @@ extension BrowserRootViewController {
                 topBarTopConstraint = toSafe
             }
         }
-        if topBarTrailingConstraint.constant != 0 {
-            topBarTrailingConstraint.constant = 0
+        if topBarTrailingConstraint?.constant != 0 {
+            topBarTrailingConstraint?.constant = 0
         }
     }
 
@@ -380,9 +380,9 @@ extension BrowserRootViewController {
         if pillView.superview !== topBarView.pillSlotView {
             applyChromePlacement(for: .regular)
         }
-        let updateToolbarPill = { [weak self] in
+        let updateToolbarPill: @MainActor () -> Void = { [weak self] in
             guard let self else { return }
-            self.pillHeightConstraint.constant = AddressBarView.heightForState(state.pill)
+            self.pillHeightConstraint?.constant = AddressBarView.heightForState(state.pill)
             self.updateRegularPillGeometry()
             self.pillView.isHidden = self.isOverviewVisible || state.pill == .editing
             self.editorView.isHidden = state.pill != .editing
@@ -395,7 +395,7 @@ extension BrowserRootViewController {
         if pillView.superview !== view {
             applyChromePlacement(for: .compact)
         }
-        let updatePillGeometry = { [weak self] in
+        let updatePillGeometry: @MainActor () -> Void = { [weak self] in
             guard let self else { return }
             self.updateCompactPillGeometry(state: state)
             if self.view.window != nil {
@@ -405,7 +405,7 @@ extension BrowserRootViewController {
         runPillMorph(animated: animated, update: updatePillGeometry)
     }
 
-    private func runPillMorph(animated: Bool, update: @escaping () -> Void) {
+    private func runPillMorph(animated: Bool, update: @MainActor @escaping () -> Void) {
         if animated {
             pillAnimator?.stopAnimation(false)
             pillAnimator?.finishAnimation(at: .current)
@@ -425,26 +425,26 @@ extension BrowserRootViewController {
     }
 
     private func updateCompactPillGeometry(state: ChromeState) {
-        pillHeightConstraint.constant = AddressBarView.heightForState(state.pill)
+        pillHeightConstraint?.constant = AddressBarView.heightForState(state.pill)
         updatePillBottomOffset()
         let isMinified = state.pill == .minified
         let isNonDuo = interfaceMode == .nonDuoPhone
         let isPortrait = interfaceMode == .duoInnerOrPadPortrait
         if isNonDuo || isPortrait {
-            pillLeadingConstraint.isActive = false
-            pillTrailingConstraint.isActive = false
+            pillLeadingConstraint?.isActive = false
+            pillTrailingConstraint?.isActive = false
             pillBottomLeadingConstraint?.isActive = !isMinified
             pillBottomTrailingConstraint?.isActive = !isMinified
         } else {
             pillBottomLeadingConstraint?.isActive = false
             pillBottomTrailingConstraint?.isActive = false
-            pillLeadingConstraint.isActive = !isMinified
-            pillTrailingConstraint.isActive = !isMinified
+            pillLeadingConstraint?.isActive = !isMinified
+            pillTrailingConstraint?.isActive = !isMinified
         }
-        pillCenterXConstraint.isActive = isMinified
-        pillWidthConstraint.isActive = isMinified
+        pillCenterXConstraint?.isActive = isMinified
+        pillWidthConstraint?.isActive = isMinified
         if isMinified {
-            pillWidthConstraint.constant = AddressBarView.widthForBounds(pillReferenceWidth)
+            pillWidthConstraint?.constant = AddressBarView.widthForBounds(pillReferenceWidth)
         }
         editorView.isNonDuoPhone = (interfaceMode == .nonDuoPhone || interfaceMode == .duoInnerOrPadPortrait)
         editorView.isEditing = isEditingAddress
@@ -496,7 +496,7 @@ extension BrowserRootViewController {
             updateHeaderBackgrounds()
             updateStartPageTop()
             refreshStatusBarAppearanceIfNeeded()
-            let updateStacks: () -> Void = { [weak self] in
+            let updateStacks: @MainActor () -> Void = { [weak self] in
                 self?.applyNonDuoChromeVisibility()
             }
             if animated {
@@ -518,7 +518,7 @@ extension BrowserRootViewController {
             updateHeaderBackgrounds()
             updateStartPageTop()
             refreshStatusBarAppearanceIfNeeded()
-            let updatePortrait: () -> Void = { [weak self] in
+            let updatePortrait: @MainActor () -> Void = { [weak self] in
                 self?.applyPortraitChromeVisibility()
             }
             if animated {
@@ -891,16 +891,16 @@ extension BrowserRootViewController {
         guard chromeController.state.pill != .minified else { return }
         if hideLeading {
             pillBottomLeadingConstraint?.isActive = false
-            pillLeadingConstraint.isActive = true
+            pillLeadingConstraint?.isActive = true
         } else {
-            pillLeadingConstraint.isActive = false
+            pillLeadingConstraint?.isActive = false
             pillBottomLeadingConstraint?.isActive = true
         }
         if hideTrailing {
             pillBottomTrailingConstraint?.isActive = false
-            pillTrailingConstraint.isActive = true
+            pillTrailingConstraint?.isActive = true
         } else {
-            pillTrailingConstraint.isActive = false
+            pillTrailingConstraint?.isActive = false
             pillBottomTrailingConstraint?.isActive = true
         }
     }

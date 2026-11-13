@@ -93,7 +93,7 @@ final class TopBarView: UIView {
     let leadingStack = UIStackView()
     let trailingStack = UIStackView()
     let pillSlotView = UIView()
-    var onSlotWidthChanged: (() -> Void)?
+    var onSlotWidthChanged: (@MainActor () -> Void)?
     private let blurView = UIVisualEffectView(effect: RegularHeaderBackground.makeBlurEffect())
 
     var leadingButtons: [UIButton] {
@@ -107,13 +107,13 @@ final class TopBarView: UIView {
     var isNonDuoPhone: Bool = false {
         didSet {
             if oldValue != isNonDuoPhone {
-                barHeightConstraint.constant = isCollapsed
+                barHeightConstraint?.constant = isCollapsed
                     ? (isNonDuoPhone ? 0 : Self.remnantHeight)
                     : (isNonDuoPhone ? Self.mode3BarHeight : Self.barHeight)
                 let verticalOffset = isNonDuoPhone ? 0 : (isCollapsed ? 0 : Self.expandedControlVerticalOffset)
-                leadingCenterYConstraint.constant = verticalOffset
-                trailingCenterYConstraint.constant = verticalOffset
-                slotCenterYConstraint.constant = verticalOffset
+                leadingCenterYConstraint?.constant = verticalOffset
+                trailingCenterYConstraint?.constant = verticalOffset
+                slotCenterYConstraint?.constant = verticalOffset
                 updateHorizontalInsets()
                 setNeedsUpdateConstraints()
                 setNeedsLayout()
@@ -123,13 +123,13 @@ final class TopBarView: UIView {
 
     private(set) var isCollapsed = false
     private var lastNotifiedSlotWidth: CGFloat = -1
-    private var barHeightConstraint: NSLayoutConstraint!
-    private var leadingInsetConstraint: NSLayoutConstraint!
-    private var trailingInsetConstraint: NSLayoutConstraint!
-    private var leadingCenterYConstraint: NSLayoutConstraint!
-    private var trailingCenterYConstraint: NSLayoutConstraint!
-    private var slotCenterYConstraint: NSLayoutConstraint!
-    private var slotHeightConstraint: NSLayoutConstraint!
+    private var barHeightConstraint: NSLayoutConstraint?
+    private var leadingInsetConstraint: NSLayoutConstraint?
+    private var trailingInsetConstraint: NSLayoutConstraint?
+    private var leadingCenterYConstraint: NSLayoutConstraint?
+    private var trailingCenterYConstraint: NSLayoutConstraint?
+    private var slotCenterYConstraint: NSLayoutConstraint?
+    private var slotHeightConstraint: NSLayoutConstraint?
 
     var isBlurVisible: Bool {
         !blurView.isHidden
@@ -142,7 +142,7 @@ final class TopBarView: UIView {
     }
 
     var currentHeightConstant: CGFloat {
-        barHeightConstraint.constant
+        barHeightConstraint?.constant ?? Self.barHeight
     }
 
     func applyHeaderBackground() {
@@ -195,22 +195,22 @@ final class TopBarView: UIView {
         let targetAlpha: CGFloat = (isNonDuoPhone && collapsed) ? 0 : 1
 
         guard isCollapsed != collapsed
-            || barHeightConstraint.constant != targetHeight
-            || leadingCenterYConstraint.constant != verticalOffset
-            || slotHeightConstraint.constant != targetSlotHeight
+            || barHeightConstraint?.constant != targetHeight
+            || leadingCenterYConstraint?.constant != verticalOffset
+            || slotHeightConstraint?.constant != targetSlotHeight
             || leadingStack.alpha != targetAlpha
         else { return }
 
         isCollapsed = collapsed
-        barHeightConstraint.constant = targetHeight
+        barHeightConstraint?.constant = targetHeight
         if isNonDuoPhone {
             leadingStack.alpha = targetAlpha
             trailingStack.alpha = targetAlpha
         }
-        leadingCenterYConstraint.constant = verticalOffset
-        trailingCenterYConstraint.constant = verticalOffset
-        slotCenterYConstraint.constant = verticalOffset
-        slotHeightConstraint.constant = targetSlotHeight
+        leadingCenterYConstraint?.constant = verticalOffset
+        trailingCenterYConstraint?.constant = verticalOffset
+        slotCenterYConstraint?.constant = verticalOffset
+        slotHeightConstraint?.constant = targetSlotHeight
         updateHorizontalInsets()
         setNeedsUpdateConstraints()
     }
@@ -226,11 +226,11 @@ final class TopBarView: UIView {
 
     private func updateHorizontalInsets() {
         if isNonDuoPhone {
-            if leadingInsetConstraint.constant != Self.nonDuoHorizontalInset {
-                leadingInsetConstraint.constant = Self.nonDuoHorizontalInset
+            if leadingInsetConstraint?.constant != Self.nonDuoHorizontalInset {
+                leadingInsetConstraint?.constant = Self.nonDuoHorizontalInset
             }
-            if trailingInsetConstraint.constant != -Self.nonDuoHorizontalInset {
-                trailingInsetConstraint.constant = -Self.nonDuoHorizontalInset
+            if trailingInsetConstraint?.constant != -Self.nonDuoHorizontalInset {
+                trailingInsetConstraint?.constant = -Self.nonDuoHorizontalInset
             }
             return
         }
@@ -249,11 +249,11 @@ final class TopBarView: UIView {
             let maxTrailing = max(Self.trailingStatusInset, bounds.width - leading - Self.minimumSlotContentWidth)
             trailing = min(trailing, maxTrailing)
         }
-        if leadingInsetConstraint.constant != leading {
-            leadingInsetConstraint.constant = leading
+        if leadingInsetConstraint?.constant != leading {
+            leadingInsetConstraint?.constant = leading
         }
-        if trailingInsetConstraint.constant != -trailing {
-            trailingInsetConstraint.constant = -trailing
+        if trailingInsetConstraint?.constant != -trailing {
+            trailingInsetConstraint?.constant = -trailing
         }
     }
 
@@ -270,41 +270,49 @@ final class TopBarView: UIView {
         pillSlotView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(pillSlotView)
 
-        barHeightConstraint = heightAnchor.constraint(equalToConstant: Self.barHeight)
-        leadingInsetConstraint = leadingStack.leadingAnchor.constraint(
+        let barHeight = heightAnchor.constraint(equalToConstant: Self.barHeight)
+        let leadingInset = leadingStack.leadingAnchor.constraint(
             equalTo: leadingAnchor, constant: Self.horizontalInset
         )
-        leadingCenterYConstraint = leadingStack.centerYAnchor.constraint(
+        let leadingCenterY = leadingStack.centerYAnchor.constraint(
             equalTo: centerYAnchor, constant: Self.expandedControlVerticalOffset
         )
-        trailingInsetConstraint = trailingStack.trailingAnchor.constraint(
+        let trailingInset = trailingStack.trailingAnchor.constraint(
             equalTo: trailingAnchor, constant: -Self.trailingStatusInset
         )
-        trailingCenterYConstraint = trailingStack.centerYAnchor.constraint(
+        let trailingCenterY = trailingStack.centerYAnchor.constraint(
             equalTo: centerYAnchor, constant: Self.expandedControlVerticalOffset
         )
-        slotCenterYConstraint = pillSlotView.centerYAnchor.constraint(
+        let slotCenterY = pillSlotView.centerYAnchor.constraint(
             equalTo: centerYAnchor, constant: Self.expandedControlVerticalOffset
         )
-        slotHeightConstraint = pillSlotView.heightAnchor.constraint(
+        let slotHeight = pillSlotView.heightAnchor.constraint(
             equalToConstant: AddressBarView.expandedHeight
         )
-        slotHeightConstraint.priority = UILayoutPriority(999)
+        slotHeight.priority = UILayoutPriority(999)
+
+        barHeightConstraint = barHeight
+        leadingInsetConstraint = leadingInset
+        leadingCenterYConstraint = leadingCenterY
+        trailingInsetConstraint = trailingInset
+        trailingCenterYConstraint = trailingCenterY
+        slotCenterYConstraint = slotCenterY
+        slotHeightConstraint = slotHeight
 
         NSLayoutConstraint.activate([
-            barHeightConstraint,
-            leadingInsetConstraint,
-            leadingCenterYConstraint,
-            trailingInsetConstraint,
-            trailingCenterYConstraint,
+            barHeight,
+            leadingInset,
+            leadingCenterY,
+            trailingInset,
+            trailingCenterY,
             pillSlotView.leadingAnchor.constraint(
                 equalTo: leadingStack.trailingAnchor, constant: Self.clusterSpacing
             ),
             pillSlotView.trailingAnchor.constraint(
                 equalTo: trailingStack.leadingAnchor, constant: -Self.clusterSpacing
             ),
-            slotCenterYConstraint,
-            slotHeightConstraint
+            slotCenterY,
+            slotHeight
         ])
     }
 }

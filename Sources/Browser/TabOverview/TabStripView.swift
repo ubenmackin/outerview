@@ -11,10 +11,10 @@ final class TabStripView: UIView {
     nonisolated static let minCellWidth: CGFloat = 140
     nonisolated static let cellWidth: CGFloat = minCellWidth
 
-    var onSelectTab: ((UUID) -> Void)?
-    var onCloseTab: ((UUID) -> Void)?
-    var onNewTab: (() -> Void)?
-    var onReorderTabs: (([UUID]) -> Void)?
+    var onSelectTab: (@MainActor (UUID) -> Void)?
+    var onCloseTab: (@MainActor (UUID) -> Void)?
+    var onNewTab: (@MainActor () -> Void)?
+    var onReorderTabs: (@MainActor ([UUID]) -> Void)?
 
     private(set) var displayedTabs: [TabOverviewItem] = []
     private(set) var displayedSelectedID: UUID?
@@ -247,13 +247,13 @@ final class TabStripCell: UICollectionViewCell {
     nonisolated static let activeLeadingClearance: CGFloat = 34
     nonisolated static let inactiveHorizontalPadding: CGFloat = 14
 
-    var onClose: (() -> Void)?
+    var onClose: (@MainActor () -> Void)?
 
     private let closeButton = AccessibleButton(type: .system)
     private let titleGroupStack = UIStackView()
     private let faviconView = UIImageView()
     private let titleLabel = UILabel()
-    private var titleGroupMinLeadingConstraint: NSLayoutConstraint!
+    private var titleGroupMinLeadingConstraint: NSLayoutConstraint?
     private var currentID: UUID?
     private var isTabSelected = false
     private var faviconTask: Task<Void, Never>?
@@ -311,7 +311,7 @@ final class TabStripCell: UICollectionViewCell {
         titleLabel.textColor = isSelected ? .label : UIColor.label.withAlphaComponent(0.85)
 
         closeButton.isHidden = !isSelected
-        titleGroupMinLeadingConstraint.constant = isSelected
+        titleGroupMinLeadingConstraint?.constant = isSelected
             ? Self.activeLeadingClearance
             : Self.inactiveHorizontalPadding
 
@@ -384,11 +384,12 @@ final class TabStripCell: UICollectionViewCell {
         closeLeading.priority = UILayoutPriority(999)
         let centerGroup = titleGroupStack.centerXAnchor.constraint(equalTo: contentView.centerXAnchor)
         centerGroup.priority = .defaultHigh
-        titleGroupMinLeadingConstraint = titleGroupStack.leadingAnchor.constraint(
+        let titleGroupMinLeading = titleGroupStack.leadingAnchor.constraint(
             greaterThanOrEqualTo: contentView.leadingAnchor,
             constant: Self.inactiveHorizontalPadding
         )
-        titleGroupMinLeadingConstraint.priority = UILayoutPriority(999)
+        titleGroupMinLeading.priority = UILayoutPriority(999)
+        titleGroupMinLeadingConstraint = titleGroupMinLeading
         let maxTrailing = titleGroupStack.trailingAnchor.constraint(
             lessThanOrEqualTo: contentView.trailingAnchor,
             constant: -Self.inactiveHorizontalPadding
@@ -403,7 +404,7 @@ final class TabStripCell: UICollectionViewCell {
             faviconView.widthAnchor.constraint(equalToConstant: 16),
             faviconView.heightAnchor.constraint(equalToConstant: 16),
             centerGroup,
-            titleGroupMinLeadingConstraint,
+            titleGroupMinLeading,
             maxTrailing,
             titleGroupStack.centerYAnchor.constraint(equalTo: contentView.centerYAnchor)
         ])

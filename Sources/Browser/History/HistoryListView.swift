@@ -81,9 +81,9 @@ final class HistoryEntryCell: LibrarySubtitleCell {
 /// with clear-all, multi-select deletion, pull-down to reveal search, and swipe-to-delete capabilities.
 @MainActor
 final class HistoryListView: UIView {
-    var onOpenURL: ((URL) -> Void)?
-    var onStateChanged: (() -> Void)?
-    var onDidMutateHistory: (() -> Void)?
+    var onOpenURL: (@MainActor (URL) -> Void)?
+    var onStateChanged: (@MainActor () -> Void)?
+    var onDidMutateHistory: (@MainActor () -> Void)?
 
     private let historyStore: HistoryStore
     private var sections: [HistorySection] = []
@@ -101,8 +101,8 @@ final class HistoryListView: UIView {
     }
 
     private let headerBar = UIView()
-    private var headerTopConstraint: NSLayoutConstraint!
-    private var headerHeightConstraint: NSLayoutConstraint!
+    private var headerTopConstraint: NSLayoutConstraint?
+    private var headerHeightConstraint: NSLayoutConstraint?
     private var hidesInlineHeaderBar = false
     private let titleLabel = UILabel()
     let tableView = UITableView(frame: .zero, style: .insetGrouped)
@@ -120,8 +120,8 @@ final class HistoryListView: UIView {
             selectedEntryIDs.removeAll()
         }
         headerBar.isHidden = hidden
-        headerTopConstraint.constant = hidden ? 0 : 4
-        headerHeightConstraint.constant = hidden ? 0 : 40
+        headerTopConstraint?.constant = hidden ? 0 : 4
+        headerHeightConstraint?.constant = hidden ? 0 : 40
         tableView.reloadData()
     }
 
@@ -257,14 +257,16 @@ final class HistoryListView: UIView {
             }
         )
 
-        headerTopConstraint = headerBar.topAnchor.constraint(equalTo: topAnchor, constant: 4)
-        headerHeightConstraint = headerBar.heightAnchor.constraint(equalToConstant: 40)
+        let headerTop = headerBar.topAnchor.constraint(equalTo: topAnchor, constant: 4)
+        let headerHeight = headerBar.heightAnchor.constraint(equalToConstant: 40)
+        headerTopConstraint = headerTop
+        headerHeightConstraint = headerHeight
 
         NSLayoutConstraint.activate([
             headerBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             headerBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            headerTopConstraint,
-            headerHeightConstraint,
+            headerTop,
+            headerHeight,
 
             titleLabel.centerXAnchor.constraint(equalTo: headerBar.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
@@ -416,6 +418,8 @@ extension HistoryListView: UITableViewDataSource, UITableViewDelegate {
                 self.onStateChanged?()
                 completion(true)
             } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "History")
+                    .error("swipe delete history entry failed: \(error.localizedDescription, privacy: .public)")
                 completion(false)
             }
         }

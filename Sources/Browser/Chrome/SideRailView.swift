@@ -9,9 +9,9 @@ struct RailAction {
     let isProminent: Bool
     let isEnabled: Bool
     let menu: UIMenu?
-    let menuProvider: (@MainActor @Sendable () -> UIMenu?)?
+    let menuProvider: (@MainActor () -> UIMenu?)?
     let showsMenuAsPrimaryAction: Bool
-    let handler: @MainActor @Sendable () -> Void
+    let handler: @MainActor () -> Void
 
     init(
         systemImageName: String,
@@ -19,9 +19,9 @@ struct RailAction {
         isProminent: Bool = false,
         isEnabled: Bool = true,
         menu: UIMenu? = nil,
-        menuProvider: (@MainActor @Sendable () -> UIMenu?)? = nil,
+        menuProvider: (@MainActor () -> UIMenu?)? = nil,
         showsMenuAsPrimaryAction: Bool = true,
-        handler: @MainActor @Sendable @escaping () -> Void = {}
+        handler: @MainActor @escaping () -> Void = {}
     ) {
         self.systemImageName = systemImageName
         self.accessibilityLabel = accessibilityLabel
@@ -35,8 +35,8 @@ struct RailAction {
 
     static func back(
         isEnabled: Bool = true,
-        menuProvider: (@MainActor @Sendable () -> UIMenu?)? = nil,
-        handler: @MainActor @Sendable @escaping () -> Void
+        menuProvider: (@MainActor () -> UIMenu?)? = nil,
+        handler: @MainActor @escaping () -> Void
     ) -> RailAction {
         RailAction(
             systemImageName: "chevron.left",
@@ -49,9 +49,9 @@ struct RailAction {
     }
 
     static func bookmarks(
-        menuProvider: (@MainActor @Sendable () -> UIMenu?)? = nil,
+        menuProvider: (@MainActor () -> UIMenu?)? = nil,
         showsMenuAsPrimaryAction: Bool = false,
-        handler: @MainActor @Sendable @escaping () -> Void
+        handler: @MainActor @escaping () -> Void
     ) -> RailAction {
         RailAction(
             systemImageName: "book",
@@ -62,14 +62,14 @@ struct RailAction {
         )
     }
 
-    static func newTab(handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
+    static func newTab(handler: @MainActor @escaping () -> Void) -> RailAction {
         RailAction(systemImageName: "plus", accessibilityLabel: "New Tab", handler: handler)
     }
 
     static func tabs(
-        menuProvider: (@MainActor @Sendable () -> UIMenu?)? = nil,
+        menuProvider: (@MainActor () -> UIMenu?)? = nil,
         showsMenuAsPrimaryAction: Bool = false,
-        handler: @MainActor @Sendable @escaping () -> Void
+        handler: @MainActor @escaping () -> Void
     ) -> RailAction {
         RailAction(
             systemImageName: "square.on.square",
@@ -80,7 +80,7 @@ struct RailAction {
         )
     }
 
-    static func search(handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
+    static func search(handler: @MainActor @escaping () -> Void) -> RailAction {
         RailAction(systemImageName: "magnifyingglass", accessibilityLabel: "Search", handler: handler)
     }
 
@@ -92,7 +92,7 @@ struct RailAction {
         )
     }
 
-    static func done(handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
+    static func done(handler: @MainActor @escaping () -> Void) -> RailAction {
         RailAction(
             systemImageName: "checkmark",
             accessibilityLabel: "Done",
@@ -101,7 +101,7 @@ struct RailAction {
         )
     }
 
-    static func cancel(handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
+    static func cancel(handler: @MainActor @escaping () -> Void) -> RailAction {
         RailAction(
             systemImageName: "xmark",
             accessibilityLabel: "Cancel",
@@ -110,7 +110,7 @@ struct RailAction {
         )
     }
 
-    static func addFolder(handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
+    static func addFolder(handler: @MainActor @escaping () -> Void) -> RailAction {
         RailAction(
             systemImageName: "folder.badge.plus",
             accessibilityLabel: "New Folder",
@@ -118,7 +118,7 @@ struct RailAction {
         )
     }
 
-    static func edit(isEditing: Bool = false, handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
+    static func edit(isEditing: Bool = false, handler: @MainActor @escaping () -> Void) -> RailAction {
         RailAction(
             systemImageName: isEditing ? "checkmark" : "pencil",
             accessibilityLabel: isEditing ? "Done Editing" : "Edit Bookmarks",
@@ -126,7 +126,7 @@ struct RailAction {
         )
     }
 
-    static func files(handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
+    static func files(handler: @MainActor @escaping () -> Void) -> RailAction {
         RailAction(
             systemImageName: "folder",
             accessibilityLabel: "Files",
@@ -134,7 +134,7 @@ struct RailAction {
         )
     }
 
-    static func clear(label: String = "Clear History", isEnabled: Bool = true, handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
+    static func clear(label: String = "Clear History", isEnabled: Bool = true, handler: @MainActor @escaping () -> Void) -> RailAction {
         RailAction(
             systemImageName: "trash",
             accessibilityLabel: label,
@@ -151,7 +151,7 @@ struct RailAction {
         )
     }
 
-    static func deleteSelected(isEnabled: Bool = true, handler: @MainActor @Sendable @escaping () -> Void) -> RailAction {
+    static func deleteSelected(isEnabled: Bool = true, handler: @MainActor @escaping () -> Void) -> RailAction {
         RailAction(
             systemImageName: "trash",
             accessibilityLabel: "Delete Selected",

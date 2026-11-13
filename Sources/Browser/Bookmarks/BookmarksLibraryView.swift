@@ -18,51 +18,51 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         LibraryTabBar.persist(tab: tab, defaults: defaults)
     }
 
-    var onOpenURL: ((URL) -> Void)?
-    var onOpenInNewTab: ((URL) -> Void)? {
+    var onOpenURL: (@MainActor (URL) -> Void)?
+    var onOpenInNewTab: (@MainActor (URL) -> Void)? {
         didSet {
             bookmarksBrowserView?.onOpenInNewTab = onOpenInNewTab
             startPageView?.onOpenInNewTab = onOpenInNewTab
         }
     }
 
-    var onRequestEdit: ((BookmarkEditorTarget) -> Void)? {
+    var onRequestEdit: (@MainActor (BookmarkEditorTarget) -> Void)? {
         didSet {
             bookmarksBrowserView?.onRequestEdit = onRequestEdit
             startPageView?.onRequestEdit = onRequestEdit
         }
     }
 
-    var onDone: (() -> Void)?
-    var onTabChanged: ((LibraryTab) -> Void)?
-    var onInlineAddFolder: (() -> Void)?
-    var onInlineToggleEdit: (() -> Void)?
-    var onInlineClearHistory: (() -> Void)?
-    var onInlineDelete: (() -> Void)?
+    var onDone: (@MainActor () -> Void)?
+    var onTabChanged: (@MainActor (LibraryTab) -> Void)?
+    var onInlineAddFolder: (@MainActor () -> Void)?
+    var onInlineToggleEdit: (@MainActor () -> Void)?
+    var onInlineClearHistory: (@MainActor () -> Void)?
+    var onInlineDelete: (@MainActor () -> Void)?
     var inlineMenu: UIMenu?
-    var onInlineDone: (() -> Void)?
-    var tabGroupsProvider: (() -> [TabGroup])? {
+    var onInlineDone: (@MainActor () -> Void)?
+    var tabGroupsProvider: (@MainActor () -> [TabGroup])? {
         didSet {
             bookmarksBrowserView?.tabGroupsProvider = tabGroupsProvider
             startPageView?.tabGroupsProvider = tabGroupsProvider
         }
     }
 
-    var onOpenURLsInBackground: (([URL]) -> Void)? {
+    var onOpenURLsInBackground: (@MainActor ([URL]) -> Void)? {
         didSet {
             bookmarksBrowserView?.onOpenURLsInBackground = onOpenURLsInBackground
             startPageView?.onOpenURLsInBackground = onOpenURLsInBackground
         }
     }
 
-    var onOpenURLsInTabGroup: (([URL], TabGroup) -> Void)? {
+    var onOpenURLsInTabGroup: (@MainActor ([URL], TabGroup) -> Void)? {
         didSet {
             bookmarksBrowserView?.onOpenURLsInTabGroup = onOpenURLsInTabGroup
             startPageView?.onOpenURLsInTabGroup = onOpenURLsInTabGroup
         }
     }
 
-    var onOpenURLsInNewTabGroup: (([URL], String) -> Void)? {
+    var onOpenURLsInNewTabGroup: (@MainActor ([URL], String) -> Void)? {
         didSet {
             bookmarksBrowserView?.onOpenURLsInNewTabGroup = onOpenURLsInNewTabGroup
             startPageView?.onOpenURLsInNewTabGroup = onOpenURLsInNewTabGroup
@@ -101,8 +101,8 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
     private let sectionTitleLabel = UILabel()
     private let trailingStack = UIStackView()
     private let trailingToolbar = SystemToolbarMapper.toolbar(items: [])
-    private var trailingToolbarWidthConstraint: NSLayoutConstraint!
-    private var contentBottomConstraint: NSLayoutConstraint!
+    private var trailingToolbarWidthConstraint: NSLayoutConstraint?
+    private var contentBottomConstraint: NSLayoutConstraint?
 
     private var compactHeaderConstraints: [NSLayoutConstraint] = []
     private var regularHeaderConstraints: [NSLayoutConstraint] = []
@@ -236,9 +236,9 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
         historyListView?.canClearHistory ?? false
     }
 
-    var onReadingListStateChanged: (() -> Void)?
-    var onDidMutateLibraryData: (() -> Void)?
-    var onSelectSearchQuery: ((String) -> Void)?
+    var onReadingListStateChanged: (@MainActor () -> Void)?
+    var onDidMutateLibraryData: (@MainActor () -> Void)?
+    var onSelectSearchQuery: (@MainActor (String) -> Void)?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -695,8 +695,9 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
 
         let regHeaderHeight = regularHeaderRow.heightAnchor.constraint(equalToConstant: 44)
         regHeaderHeight.priority = UILayoutPriority(999)
-        trailingToolbarWidthConstraint = trailingToolbar.widthAnchor.constraint(equalToConstant: 0)
-        trailingToolbarWidthConstraint.priority = UILayoutPriority(999)
+        let trailingToolbarWidth = trailingToolbar.widthAnchor.constraint(equalToConstant: 0)
+        trailingToolbarWidth.priority = UILayoutPriority(999)
+        trailingToolbarWidthConstraint = trailingToolbarWidth
         let regTabRowHeight = headerContainer.heightAnchor.constraint(equalToConstant: 44)
         regTabRowHeight.priority = UILayoutPriority(999)
         let titleSpacing = leadingTitleStack.trailingAnchor.constraint(
@@ -716,7 +717,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
             trailingStack.heightAnchor.constraint(equalToConstant: 44),
             trailingToolbar.trailingAnchor.constraint(equalTo: regularHeaderRow.trailingAnchor),
             trailingToolbar.centerYAnchor.constraint(equalTo: regularHeaderRow.centerYAnchor),
-            trailingToolbarWidthConstraint,
+            trailingToolbarWidth,
             titleSpacing,
             headerContainer.topAnchor.constraint(equalTo: regularHeaderRow.bottomAnchor, constant: 8),
             regTabRowHeight,
@@ -750,12 +751,13 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
             trailingStack.heightAnchor.constraint(equalToConstant: 44),
             trailingToolbar.trailingAnchor.constraint(equalTo: regularHeaderRow.trailingAnchor),
             trailingToolbar.centerYAnchor.constraint(equalTo: regularHeaderRow.centerYAnchor),
-            trailingToolbarWidthConstraint,
+            trailingToolbarWidth,
             titleSpacing,
             contentContainer.topAnchor.constraint(equalTo: regularHeaderRow.bottomAnchor, constant: 4)
         ]
 
-        contentBottomConstraint = contentContainer.bottomAnchor.constraint(equalTo: bottomAnchor)
+        let contentBottom = contentContainer.bottomAnchor.constraint(equalTo: bottomAnchor)
+        contentBottomConstraint = contentBottom
         NSLayoutConstraint.activate([
             headerContainer.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor),
             headerContainer.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor),
@@ -764,7 +766,7 @@ final class BookmarksLibraryView: UIView, ChromePlacementDriven {
 
             contentContainer.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor),
             contentContainer.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor),
-            contentBottomConstraint
+            contentBottom
         ])
     }
 

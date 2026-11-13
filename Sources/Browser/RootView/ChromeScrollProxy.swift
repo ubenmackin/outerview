@@ -33,17 +33,17 @@ final class ChromeScrollProxy: NSObject, UIScrollViewDelegate {
     }
 
     /// Called once per user-driven `scrollViewDidScroll` with the net change.
-    var onScrollDelta: ((CGFloat) -> Void)?
+    var onScrollDelta: (@MainActor (CGFloat) -> Void)?
 
     /// Called when the user's finger starts dragging the page.
-    var onDragBegan: (() -> Void)?
+    var onDragBegan: (@MainActor () -> Void)?
 
     /// Called when scrolling finishes settling (dragging ended without deceleration or deceleration finished).
-    var onScrollSettled: (() -> Void)?
+    var onScrollSettled: (@MainActor () -> Void)?
 
     /// Returns the active top chrome obstruction inset (e.g. 84 or 128 pt on
     /// regular width) so top-of-content boundary checks match resting scroll.
-    var topInsetProvider: (() -> CGFloat)?
+    var topInsetProvider: (@MainActor () -> CGFloat)?
 
     /// Previous delegate kept for pass-through of the scroll callbacks.
     weak var forwardedDelegate: any UIScrollViewDelegate?

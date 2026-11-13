@@ -190,9 +190,9 @@ final class ReadingListItemCell: LibrarySubtitleCell {
 /// pull-down to reveal search, and batch selection deletion.
 @MainActor
 final class ReadingListView: UIView {
-    var onOpenURL: ((URL) -> Void)?
-    var onStateChanged: (() -> Void)?
-    var onSelectionModeChanged: ((Bool) -> Void)?
+    var onOpenURL: (@MainActor (URL) -> Void)?
+    var onStateChanged: (@MainActor () -> Void)?
+    var onSelectionModeChanged: (@MainActor (Bool) -> Void)?
 
     private let store: ReadingListStore
     private let defaults: UserDefaults
@@ -209,8 +209,8 @@ final class ReadingListView: UIView {
     }
 
     private let headerBar = UIView()
-    private var headerTopConstraint: NSLayoutConstraint!
-    private var headerHeightConstraint: NSLayoutConstraint!
+    private var headerTopConstraint: NSLayoutConstraint?
+    private var headerHeightConstraint: NSLayoutConstraint?
     private let titleLabel = UILabel()
     private let tableView = UITableView(frame: .zero, style: .insetGrouped)
     private let emptyLabel = UILabel()
@@ -222,8 +222,8 @@ final class ReadingListView: UIView {
 
     func setHeaderBarHidden(_ hidden: Bool) {
         headerBar.isHidden = hidden
-        headerTopConstraint.constant = hidden ? 0 : 4
-        headerHeightConstraint.constant = hidden ? 0 : 40
+        headerTopConstraint?.constant = hidden ? 0 : 4
+        headerHeightConstraint?.constant = hidden ? 0 : 40
     }
 
     nonisolated static let displayModeDefaultsKey = "readingList.displayMode"
@@ -471,14 +471,16 @@ final class ReadingListView: UIView {
             }
         )
 
-        headerTopConstraint = headerBar.topAnchor.constraint(equalTo: topAnchor, constant: 4)
-        headerHeightConstraint = headerBar.heightAnchor.constraint(equalToConstant: 40)
+        let headerTop = headerBar.topAnchor.constraint(equalTo: topAnchor, constant: 4)
+        let headerHeight = headerBar.heightAnchor.constraint(equalToConstant: 40)
+        headerTopConstraint = headerTop
+        headerHeightConstraint = headerHeight
 
         NSLayoutConstraint.activate([
             headerBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             headerBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            headerTopConstraint,
-            headerHeightConstraint,
+            headerTop,
+            headerHeight,
 
             titleLabel.centerXAnchor.constraint(equalTo: headerBar.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
@@ -563,6 +565,8 @@ extension ReadingListView: UITableViewDataSource, UITableViewDelegate {
                 self.onStateChanged?()
                 completion(true)
             } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "ReadingList")
+                    .error("swipe delete reading list item failed: \(error.localizedDescription, privacy: .public)")
                 completion(false)
             }
         }

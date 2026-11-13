@@ -28,7 +28,7 @@ final class OuterViewDatabase {
                 // fall back to a local-only store with identical schema.
                 Logger(subsystem: "com.volcrypt.OuterView", category: "Persistence")
                     .error("CloudKit container setup failed, falling back to local store: \(error.localizedDescription, privacy: .public)")
-                iCloudSyncMonitor.shared.reportSetupFailure(error)
+                CloudSyncMonitor.shared.reportSetupFailure(error)
                 container = try Self.makeContainer(configuration: Self.localConfiguration())
             }
         }

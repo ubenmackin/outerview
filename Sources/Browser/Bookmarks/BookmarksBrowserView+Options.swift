@@ -247,12 +247,12 @@ extension BookmarksBrowserView {
         var hasSelectableItems: Bool
         var canCreateFolder: Bool
         var isSearching: Bool = false
-        var onSelectDisplayMode: (BookmarksDisplayMode) -> Void
-        var onSelectSortMode: (BookmarksSortMode) -> Void
-        var onToggleFoldersOnTop: () -> Void
-        var onSelectBookmarks: () -> Void
-        var onEditBookmarks: () -> Void
-        var onNewFolder: () -> Void
+        var onSelectDisplayMode: @MainActor (BookmarksDisplayMode) -> Void
+        var onSelectSortMode: @MainActor (BookmarksSortMode) -> Void
+        var onToggleFoldersOnTop: @MainActor () -> Void
+        var onSelectBookmarks: @MainActor () -> Void
+        var onEditBookmarks: @MainActor () -> Void
+        var onNewFolder: @MainActor () -> Void
     }
 
     static func buildOptionsMenu(_ config: MenuConfiguration) -> UIMenu {

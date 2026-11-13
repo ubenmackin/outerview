@@ -12,10 +12,10 @@ struct SettingsView: View {
     let historyStore: HistoryStore
     let tabStore: TabStore
     let siteZoomStore: SiteZoomStore
-    var onDidClearHistory: (() -> Void)?
-    var onDidClearTabs: (() -> Void)?
+    var onDidClearHistory: (@MainActor () -> Void)?
+    var onDidClearTabs: (@MainActor () -> Void)?
     var inlineCommands = false
-    var onDone: (() -> Void)?
+    var onDone: (@MainActor () -> Void)?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -39,7 +39,7 @@ struct SettingsView: View {
         tabStore: TabStore,
         siteZoomStore: SiteZoomStore = SiteZoomStore(),
         inlineCommands: Bool = false,
-        onDone: (() -> Void)? = nil
+        onDone: (@MainActor () -> Void)? = nil
     ) {
         self.viewModel = viewModel
         self.bookmarkStore = bookmarkStore
@@ -55,7 +55,7 @@ struct SettingsView: View {
         viewModel: SettingsViewModel = SettingsViewModel(),
         siteZoomStore: SiteZoomStore = SiteZoomStore(),
         inlineCommands: Bool = false,
-        onDone: (() -> Void)? = nil
+        onDone: (@MainActor () -> Void)? = nil
     ) {
         self.viewModel = viewModel
         self.bookmarkStore = BookmarkStore(database: database)
@@ -374,7 +374,7 @@ struct SettingsView: View {
     }
 
     private func confirmClearHistory() {
-        Task { @MainActor in
+        Task {
             do {
                 try await viewModel.clearHistoryAndWebsiteData(historyStore: historyStore)
                 onDidClearHistory?()
@@ -395,7 +395,7 @@ struct SettingsView: View {
 
     private func handlePickedURL(_ url: URL) {
         showingImporter = false
-        Task { @MainActor in
+        Task {
             guard let data = await BookmarkImportWorker.shared.readFile(at: url) else {
                 actionError = "Couldn’t read the exported bookmarks file."
                 return
@@ -407,8 +407,8 @@ struct SettingsView: View {
 }
 
 private struct BookmarksDocumentPicker: UIViewControllerRepresentable {
-    var onPick: (URL) -> Void
-    var onCancel: () -> Void
+    var onPick: @MainActor (URL) -> Void
+    var onCancel: @MainActor () -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onPick: onPick, onCancel: onCancel)
@@ -424,11 +424,12 @@ private struct BookmarksDocumentPicker: UIViewControllerRepresentable {
 
     func updateUIViewController(_: UIDocumentPickerViewController, context _: Context) {}
 
+    @MainActor
     final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let onPick: (URL) -> Void
-        let onCancel: () -> Void
+        let onPick: @MainActor (URL) -> Void
+        let onCancel: @MainActor () -> Void
 
-        init(onPick: @escaping (URL) -> Void, onCancel: @escaping () -> Void) {
+        init(onPick: @MainActor @escaping (URL) -> Void, onCancel: @MainActor @escaping () -> Void) {
             self.onPick = onPick
             self.onCancel = onCancel
         }

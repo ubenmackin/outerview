@@ -138,8 +138,8 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
         return result
     }
 
-    var onPageMenu: (() -> Void)?
-    var pageMenuProvider: (() -> UIMenu)? {
+    var onPageMenu: (@MainActor () -> Void)?
+    var pageMenuProvider: (@MainActor () -> UIMenu)? {
         didSet {
             if let provider = pageMenuProvider {
                 pageMenuButton.showsMenuAsPrimaryAction = true
@@ -161,12 +161,12 @@ final class AddressBarView: UIView, UIGestureRecognizerDelegate {
         }
     }
 
-    var onReload: (() -> Void)?
-    var onStop: (() -> Void)?
-    var onPillTap: (() -> Void)?
-    var onDownloadsTap: (() -> Void)?
-    var onHorizontalPan: ((PillPanEvent) -> Void)?
-    var onVerticalPan: ((PillPanEvent) -> Void)?
+    var onReload: (@MainActor () -> Void)?
+    var onStop: (@MainActor () -> Void)?
+    var onPillTap: (@MainActor () -> Void)?
+    var onDownloadsTap: (@MainActor () -> Void)?
+    var onHorizontalPan: (@MainActor (PillPanEvent) -> Void)?
+    var onVerticalPan: (@MainActor (PillPanEvent) -> Void)?
 
     /// Mode 2 (`duoInnerOrPadLandscape`) disables every pill swipe; taps still route.
     var isSwipeEnabled = true {
@@ -575,7 +575,7 @@ final class AccessibleButton: UIButton {
 
 @MainActor
 final class DomainPillView: UIButton {
-    var onActivate: (() -> Void)?
+    var onActivate: (@MainActor () -> Void)?
 
     override func accessibilityActivate() -> Bool {
         onActivate?()

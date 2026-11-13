@@ -23,9 +23,9 @@ enum PickerSelection: Equatable, Sendable {
 /// - Drag / Pan: Smoothly slides the pill horizontally between segments with haptics, snapping on release.
 @MainActor
 final class TabGroupPickerBar: UIView, UIGestureRecognizerDelegate {
-    var onTap: (() -> Void)?
-    var onScrubSelect: ((PickerSelection) -> Void)?
-    var onScrubEnd: ((PickerSelection) -> Void)?
+    var onTap: (@MainActor () -> Void)?
+    var onScrubSelect: (@MainActor (PickerSelection) -> Void)?
+    var onScrubEnd: (@MainActor (PickerSelection) -> Void)?
 
     // MARK: - Pure Derivation Helpers
 
