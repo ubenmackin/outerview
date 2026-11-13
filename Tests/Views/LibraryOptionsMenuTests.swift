@@ -291,4 +291,91 @@ final class LibraryOptionsMenuTests: XCTestCase {
         XCTAssertTrue(library.isOptionsMenuVisible)
         root.closeBookmarksLibrary()
     }
+
+    func testCompactHistoryAndBookmarkCellsLayOutWithoutZeroHeightContentConstraints() throws {
+        let database = try OuterViewDatabase(inMemory: true)
+        let historyStore = HistoryStore(database: database)
+        let bookmarkStore = BookmarkStore(database: database)
+        try historyStore.record(visit: PageVisit(
+            url: XCTUnwrap(URL(string: "https://news.google.com")),
+            title: "Google News"
+        ))
+        try bookmarkStore.add(
+            title: "Apple News",
+            url: XCTUnwrap(URL(string: "https://apple.com"))
+        )
+
+        let frame = CGRect(x: 0, y: 0, width: 402, height: 800)
+        let historyView = HistoryListView(historyStore: historyStore)
+        historyView.frame = frame
+        TestWindow.attach(historyView, frame: frame)
+        historyView.tableView.layoutIfNeeded()
+
+        let historyCell = try XCTUnwrap(
+            historyView.tableView.cellForRow(at: IndexPath(row: 0, section: 0)) as? HistoryEntryCell
+        )
+        XCTAssertNil(historyCell.contentConfiguration)
+        XCTAssertEqual(historyCell.textLabel?.text, "Google News")
+        XCTAssertGreaterThanOrEqual(historyCell.bounds.height, 44)
+        XCTAssertGreaterThanOrEqual(historyCell.contentView.bounds.height, 44)
+        XCTAssertTrue(historyCell.contentView.constraints.isEmpty)
+
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let bookmarksView = BookmarksBrowserView(bookmarkStore: bookmarkStore, defaults: defaults)
+        bookmarksView.frame = frame
+        TestWindow.attach(bookmarksView, frame: frame)
+        bookmarksView.tableView.layoutIfNeeded()
+
+        let bookmarkCell = try XCTUnwrap(
+            bookmarksView.tableView.cellForRow(at: IndexPath(row: 0, section: 2)) as? BookmarkRowCell
+        )
+        XCTAssertNil(bookmarkCell.contentConfiguration)
+        XCTAssertEqual(bookmarkCell.textLabel?.text, "Apple News")
+        XCTAssertGreaterThanOrEqual(bookmarkCell.bounds.height, 44)
+        XCTAssertGreaterThanOrEqual(bookmarkCell.contentView.bounds.height, 44)
+        XCTAssertTrue(bookmarkCell.contentView.constraints.isEmpty)
+    }
+
+    func testSelectionIndicatorFramesInsideContentViewAndDetachesOnExit() throws {
+        let fixture = try makeRegularRoot()
+        let root = fixture.root
+        let historyStore = try XCTUnwrap(root.historyStore)
+        try historyStore.record(visit: PageVisit(
+            url: XCTUnwrap(URL(string: "https://news.google.com")),
+            title: "Google News"
+        ))
+
+        root.openBookmarksLibrary(tab: .history)
+        root.view.layoutIfNeeded()
+        let library = root.bookmarksLibraryView
+        let historyView = try XCTUnwrap(library.historyListView)
+
+        library.enterHistorySelectionMode()
+        historyView.tableView.layoutIfNeeded()
+
+        let firstRow = IndexPath(row: 0, section: 0)
+        let selectedCell = try XCTUnwrap(historyView.tableView.cellForRow(at: firstRow) as? HistoryEntryCell)
+        selectedCell.layoutIfNeeded()
+        XCTAssertTrue(selectedCell.isShowingSelectionIndicator)
+        let indicator = try XCTUnwrap(
+            selectedCell.contentView.subviews.first {
+                $0.accessibilityIdentifier == "LibrarySubtitleCell.SelectionIndicator"
+            } as? UIImageView
+        )
+        XCTAssertFalse(indicator.isHidden)
+        XCTAssertEqual(indicator.frame.size, CGSize(width: 22, height: 22))
+        XCTAssertEqual(indicator.frame.minX, 16)
+        XCTAssertGreaterThan(indicator.frame.minY, 0)
+
+        library.performDone()
+        historyView.tableView.layoutIfNeeded()
+        let exitedCell = try XCTUnwrap(historyView.tableView.cellForRow(at: firstRow) as? HistoryEntryCell)
+        XCTAssertFalse(exitedCell.isShowingSelectionIndicator)
+        XCTAssertNil(
+            exitedCell.contentView.subviews.first {
+                $0.accessibilityIdentifier == "LibrarySubtitleCell.SelectionIndicator"
+            }
+        )
+        root.closeBookmarksLibrary()
+    }
 }

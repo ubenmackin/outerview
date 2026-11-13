@@ -270,14 +270,14 @@ final class SideRailView: UIView {
     }
 
     private func updateStack(_ stack: UIStackView, with items: [RailAction]) {
-        let targetHeight = Self.expectedStackHeight(itemCount: items.count)
-        if targetHeight > stack.bounds.height {
-            stack.frame.size = CGSize(width: Self.columnWidth, height: targetHeight)
-        }
+        // Clear old buttons before resizing so shrink and grow transitions both match
+        // expectedStackHeight before populateStack calls layoutIfNeeded().
+        SystemToolbarMapper.clearStack(stack)
+        stack.bounds.size = CGSize(
+            width: Self.columnWidth,
+            height: Self.expectedStackHeight(itemCount: items.count)
+        )
         SystemToolbarMapper.populateStack(stack, with: items, axis: .vertical, spacing: Self.spacing)
-        if targetHeight < stack.bounds.height {
-            stack.frame.size = CGSize(width: Self.columnWidth, height: targetHeight)
-        }
     }
 
     func setItems(prefix: [RailAction], suffix: [RailAction]) {
