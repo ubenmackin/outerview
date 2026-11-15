@@ -17,9 +17,9 @@ final class TabPool {
     static let livePageLimit = 30
 
     /// nonPersistent() vends a fresh instance per call (unlike the default()
-    /// singleton), so share one static store to keep every private tab in the
-    /// same ephemeral session.
-    private static let sharedPrivateStore = WKWebsiteDataStore.nonPersistent()
+    /// singleton), so share one store per active private session and rotate it
+    /// when all private tabs close or website data clears.
+    private static var sharedPrivateStore = WKWebsiteDataStore.nonPersistent()
 
     private struct Entry {
         var id: UUID
@@ -30,22 +30,33 @@ final class TabPool {
 
     private var entries: [Entry] = []
     private let defaults: UserDefaults
+    private var privateStore: WKWebsiteDataStore
     private let normalConfiguration: WKWebViewConfiguration
-    private let privateConfiguration: WKWebViewConfiguration
+    private var privateConfiguration: WKWebViewConfiguration
 
     init(defaults: UserDefaults = .standard) {
+        let store = Self.sharedPrivateStore
         self.defaults = defaults
-        self.normalConfiguration = Self.makeConfiguration(isPrivate: false, defaults: defaults)
-        self.privateConfiguration = Self.makeConfiguration(isPrivate: true, defaults: defaults)
+        self.privateStore = store
+        self.normalConfiguration = Self.makeConfiguration(isPrivate: false, privateStore: store, defaults: defaults)
+        self.privateConfiguration = Self.makeConfiguration(isPrivate: true, privateStore: store, defaults: defaults)
     }
 
-    static func makeConfiguration(isPrivate: Bool, defaults _: UserDefaults = .standard) -> WKWebViewConfiguration {
+    static func makeConfiguration(isPrivate: Bool, defaults: UserDefaults = .standard) -> WKWebViewConfiguration {
+        makeConfiguration(isPrivate: isPrivate, privateStore: sharedPrivateStore, defaults: defaults)
+    }
+
+    private static func makeConfiguration(
+        isPrivate: Bool,
+        privateStore: WKWebsiteDataStore,
+        defaults _: UserDefaults = .standard
+    ) -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
         // One data store per mode: normal tabs share the persistent default
-        // store, private tabs share the static non-persistent store so nothing
+        // store, private tabs share the active non-persistent store so nothing
         // (cookies, cache, offline data) survives the session.
         configuration.websiteDataStore = isPrivate
-            ? sharedPrivateStore
+            ? privateStore
             : WKWebsiteDataStore.default()
         configuration.allowsInlineMediaPlayback = true
         configuration.allowsPictureInPictureMediaPlayback = true
@@ -54,6 +65,18 @@ final class TabPool {
         // drives a live view; each page installs rules into its own controller
         // below, reading the persisted flag at creation time.
         return configuration
+    }
+
+    /// Wipes the outgoing ephemeral store and rotates to a fresh non-persistent store
+    /// so closing a private session clears cookies and web storage immediately.
+    func resetPrivateSessionStore() async {
+        let oldStore = privateStore
+        let fresh = WKWebsiteDataStore.nonPersistent()
+        privateStore = fresh
+        Self.sharedPrivateStore = fresh
+        privateConfiguration = Self.makeConfiguration(isPrivate: true, privateStore: fresh, defaults: defaults)
+        let types = WKWebsiteDataStore.allWebsiteDataTypes()
+        await oldStore.removeData(ofTypes: types, modifiedSince: .distantPast)
     }
 
     /// In-order pages for the tab overview.
@@ -150,15 +173,15 @@ final class TabPool {
     }
 
     /// Copies of the shared configuration miss later rule installs, so each
-    /// new page installs directly into its own controller. Install races the
-    /// first navigation by design; the list lands shortly after with no restart.
+    /// new page installs directly into its own controller serialized alongside
+    /// user blocker toggles.
     private func installBlocking(for page: WebPageController) {
-        let enabled = defaults.object(forKey: SettingsViewModel.blockTrackersDefaultsKey) as? Bool ?? true
-        guard enabled else { return }
         let controller = page.webView.configuration.userContentController
-        ContentBlockerService.shared.track(controller)
-        Task {
-            await ContentBlockerService.shared.applyRules(to: controller, enabled: true)
+        Task { @MainActor [weak self] in
+            await ContentBlockerService.shared.registerAndSyncController(controller) { [weak self] in
+                guard let self else { return false }
+                return self.defaults.object(forKey: SettingsViewModel.blockTrackersDefaultsKey) as? Bool ?? true
+            }
         }
     }
 

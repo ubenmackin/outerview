@@ -29,28 +29,34 @@ extension BrowserRootViewController {
     /// refreshes pool recency. Chrome state is intentionally untouched.
     func handleScenePhase(_ phase: ScenePhase) {
         restoreCoordinator?.handleScenePhase(phase)
+        isPrivacyBackgrounded = phase != .active
         if phase == .background {
             // Suspend fail-closed: private work fails, daemon tasks survive.
             downloadsManager.suspendForegroundDownloads()
+            // Rendered PDFs hold page content; a suspended app cannot finish a
+            // share cleanup, so every export is discarded.
+            removeExportedPDFs()
             // Any private tab locks, even when standard is frontmost.
             if isBiometricAuthEnabled, tabs.contains(where: \.isPrivate) {
                 isPrivateSessionLocked = true
             }
         }
+        updatePrivacyShieldVisibility()
         if phase == .active {
-            let selectedIsPrivate = tabs.first(where: { $0.id == selectedTabID })?.isPrivate ?? false
-            let isPrivateVisible = overviewMode.isPrivate || selectedIsPrivate
+            let isPrivateVisible = isPrivateScopeVisible()
             if isPrivateSessionLocked, isPrivateVisible, shouldRequireBiometricsForPrivateMode {
                 Task { [weak self] in
                     guard let self else { return }
                     let authenticated = await self.biometricAuthService.authenticate(reason: "Unlock Private Browsing")
                     if authenticated {
                         self.isPrivateSessionLocked = false
+                        self.updatePrivacyShieldVisibility()
                         self.markActivePageActivated()
                     } else {
                         // Fail-closed to standard; clear lock so standard never re-prompts.
                         self.isPrivateSessionLocked = false
                         self.switchToStandardMode()
+                        self.updatePrivacyShieldVisibility()
                     }
                 }
                 return
@@ -59,8 +65,29 @@ extension BrowserRootViewController {
             if !isPrivateVisible || !shouldRequireBiometricsForPrivateMode {
                 isPrivateSessionLocked = false
             }
+            updatePrivacyShieldVisibility()
             markActivePageActivated()
         }
+    }
+
+    /// Shows the privacy blur above all chrome while Private Browsing is backgrounded or locked.
+    func updatePrivacyShieldVisibility() {
+        let isPrivateVisible = isPrivateScopeVisible()
+        let shouldShow = shouldRequireBiometricsForPrivateMode
+            && isPrivateVisible
+            && (isPrivacyBackgrounded || isPrivateSessionLocked)
+        privacyShieldView.isHidden = !shouldShow
+        if isViewLoaded, shouldShow {
+            view.bringSubviewToFront(privacyShieldView)
+        }
+    }
+
+    /// Shield scope predicate: true when the private overview is showing or the
+    /// selected tab is private. Single owner so lock and shield policy never
+    /// drift apart.
+    private func isPrivateScopeVisible() -> Bool {
+        let selectedIsPrivate = tabs.first(where: { $0.id == selectedTabID })?.isPrivate ?? false
+        return overviewMode.isPrivate || selectedIsPrivate
     }
 
     func logPersistenceError(_ error: Error, operation: String) {

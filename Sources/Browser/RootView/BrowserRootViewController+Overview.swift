@@ -49,6 +49,7 @@ extension BrowserRootViewController {
         } else {
             overviewView.isHidden = true
             overviewView.alpha = 1
+            overviewController.trimHiddenPreviews()
             if chromePlacement == .regular {
                 updateToolbarVisibility(for: chromeController.state)
             }
@@ -176,6 +177,9 @@ extension BrowserRootViewController {
         // Deterministic close order follows strip order, not Set iteration.
         let order: [UUID: Int] = Dictionary(uniqueKeysWithValues: tabs.enumerated().map { ($1.id, $0) })
         let orderedIDs = ids.sorted { (order[$0] ?? Int.max) < (order[$1] ?? Int.max) }
+        let removedPrivateTab = orderedIDs.contains { id in
+            tabs.first(where: { $0.id == id })?.isPrivate == true
+        }
         for id in orderedIDs {
             if let tab = tabs.first(where: { $0.id == id && !$0.isPrivate }), tab.url != nil || tab.title != nil {
                 recentlyClosedTabs.insert(tab, at: 0)
@@ -192,6 +196,9 @@ extension BrowserRootViewController {
             recentlyClosedTabs = Array(recentlyClosedTabs.prefix(15))
         }
         tabs.removeAll { ids.contains($0.id) }
+        if removedPrivateTab {
+            resetPrivateSessionIfNeeded()
+        }
     }
 
     /// Single write path for the strip snapshot: order plus selection stay

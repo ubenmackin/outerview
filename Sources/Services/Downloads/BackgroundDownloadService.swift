@@ -72,6 +72,7 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
     }
 
     private let logger = Logger(subsystem: "com.volcrypt.OuterView", category: "Downloads")
+    private let delegateTracker = BackgroundEventTracker()
     @MainActor private var tasks: [UUID: URLSessionDownloadTask] = [:]
     @MainActor private var taskIDs: [ObjectIdentifier: UUID] = [:]
     @MainActor private var names: [UUID: String] = [:]
@@ -91,7 +92,9 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
         // The manager-issued row id is the mapping key so callbacks hit the live row.
         guard let manager = effectiveManager else {
             // Fail-closed without a row owner: never schedule an orphan task.
-            assertionFailure("BackgroundDownloadService manager unwired")
+            if !AppEnvironment.isTestHost {
+                assertionFailure("BackgroundDownloadService manager unwired")
+            }
             return nil
         }
         guard request.url.map(URLNormalizer.isLoadable) ?? false else {
@@ -183,9 +186,24 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
         }
     }
 
+    /// Awaits any delegate tasks already scheduled before invoking the launch completion handler.
     @MainActor
-    private func handleSessionDidFinishEvents(identifier: String) {
+    func handleSessionDidFinishEvents(identifier: String) async {
+        await delegateTracker.waitForIdle()
         launchHandlerStore?.popLaunchHandler(for: identifier)?()
+    }
+
+    /// Tracks async delegate post-processing across `begin()` -> `Task` so finish-events waits cleanly.
+    private nonisolated func scheduleDelegateWork(
+        _ work: @escaping @Sendable @MainActor (BackgroundDownloadService) async -> Void
+    ) {
+        let tracker = delegateTracker
+        tracker.begin()
+        Task { [weak self, tracker] in
+            defer { tracker.end() }
+            guard let self else { return }
+            await work(self)
+        }
     }
 
     // MARK: - URLSessionDownloadDelegate
@@ -203,8 +221,8 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
         else { return }
         let key = ObjectIdentifier(downloadTask)
         let fraction = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-        Task { [weak self] in
-            await self?.handleDownloadProgress(taskKey: key, fraction: fraction)
+        scheduleDelegateWork { service in
+            service.handleDownloadProgress(taskKey: key, fraction: fraction)
         }
     }
 
@@ -224,8 +242,8 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
         if let reason = DownloadsManager.httpErrorReason(for: downloadTask.response) {
             // Drop non-2xx error bodies before staging so HTTP failures never save as files.
             cleanupItem(at: location)
-            Task { [weak self] in
-                await self?.failHTTPResponse(taskKey: key, fallbackName: fallback, reason: reason)
+            scheduleDelegateWork { service in
+                service.failHTTPResponse(taskKey: key, fallbackName: fallback, reason: reason)
             }
             return
         }
@@ -238,13 +256,13 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
             // System reclaims location after return; never hand it to async work.
             cleanupItem(at: location)
             let message = error.localizedDescription
-            Task { [weak self] in
-                await self?.handleStagingFailure(taskKey: key, message: message)
+            scheduleDelegateWork { service in
+                service.handleStagingFailure(taskKey: key, message: message)
             }
             return
         }
-        Task { [weak self] in
-            await self?.finalizeDownload(taskKey: key, fallbackName: fallback, stagedURL: staging)
+        scheduleDelegateWork { service in
+            await service.finalizeDownload(taskKey: key, fallbackName: fallback, stagedURL: staging)
         }
     }
 
@@ -269,8 +287,8 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
         let nsError = error as NSError
         let isCancelled = nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
         let message = isCancelled ? "Cancelled" : error.localizedDescription
-        Task { [weak self] in
-            await self?.handleTaskCompletion(taskKey: key, message: message)
+        scheduleDelegateWork { service in
+            service.handleTaskCompletion(taskKey: key, message: message)
         }
     }
 
@@ -279,7 +297,10 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
         // Success without error is owned by finalize; leave mapping for it.
         guard let rowID = taskIDs[taskKey] else { return }
         clearMapping(taskKey: taskKey, rowID: rowID)
-        guard let manager = effectiveManager else { return }
+        guard let manager = effectiveManager,
+              let index = manager.rows.firstIndex(where: { $0.id == rowID }),
+              manager.rows[index].state == .inProgress
+        else { return }
         manager.failDownload(id: rowID, reason: message)
     }
 
@@ -474,6 +495,51 @@ final class BackgroundDownloadService: NSObject, URLSessionDownloadDelegate {
             return true
         }
         return false
+    }
+}
+
+/// Tracks synchronously-dispatched URLSession delegate tasks until every post-processing step completes.
+private final class BackgroundEventTracker: Sendable {
+    private struct State: Sendable {
+        var activeCount = 0
+        var waiters: [CheckedContinuation<Void, Never>] = []
+    }
+
+    private let lock = OSAllocatedUnfairLock(initialState: State())
+
+    func begin() {
+        lock.withLock { state in
+            state.activeCount += 1
+        }
+    }
+
+    func end() {
+        let continuations: [CheckedContinuation<Void, Never>] = lock.withLock { state in
+            guard state.activeCount > 0 else { return [] }
+            state.activeCount -= 1
+            guard state.activeCount == 0 else { return [] }
+            let pending = state.waiters
+            state.waiters.removeAll()
+            return pending
+        }
+        for continuation in continuations {
+            continuation.resume()
+        }
+    }
+
+    func waitForIdle() async {
+        await withCheckedContinuation { continuation in
+            let resumeImmediately = lock.withLock { state -> Bool in
+                if state.activeCount == 0 {
+                    return true
+                }
+                state.waiters.append(continuation)
+                return false
+            }
+            if resumeImmediately {
+                continuation.resume()
+            }
+        }
     }
 }
 

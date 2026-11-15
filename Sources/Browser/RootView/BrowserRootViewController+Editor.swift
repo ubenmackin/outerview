@@ -267,6 +267,8 @@ extension BrowserRootViewController {
         if url.scheme?.lowercased() == "outerview" {
             let host = url.host?.lowercased() ?? ""
             if host == "newtab" {
+                // Standard deep links never land in private scope.
+                exitPrivateScopeForExternalStandardOpen()
                 handleQuickAction(.newTab)
                 return
             } else if host == "newprivatetab" {
@@ -278,6 +280,8 @@ extension BrowserRootViewController {
                 // input never reaches the search engine.
                 let rawQuery = components?.queryItems?.first(where: { $0.name == "q" })?.value
                 let query = rawQuery.map { String($0.prefix(2048)) }
+                // Standard deep links never land in private scope.
+                exitPrivateScopeForExternalStandardOpen()
                 handleQuickAction(.search(query))
                 return
             }
@@ -302,8 +306,22 @@ extension BrowserRootViewController {
                 }
             }
         }
+        exitPrivateScopeForExternalStandardOpen()
         clearForcedStartPageForSelectedTab()
         loadActivePage(targetURL)
+    }
+
+    /// External standard-tab deep links always land outside private scope:
+    /// clears the biometric lock, restores standard mode, and drops the shield
+    /// so the new tab never prompts for Private Browsing again.
+    func exitPrivateScopeForExternalStandardOpen() {
+        guard isPrivateSessionLocked || resolvedScopeIsPrivate() else { return }
+        switchToStandardMode()
+        if isOverviewVisible {
+            setOverviewVisible(false)
+        }
+        isPrivateSessionLocked = false
+        updatePrivacyShieldVisibility()
     }
 
     func cancelPendingSuggestions() {

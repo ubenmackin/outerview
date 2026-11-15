@@ -320,7 +320,13 @@ final class TabOverviewViewController: UIViewController {
     private(set) var allGroups: [TabGroup] = []
     private(set) var selectedGroupID: UUID?
     var selectedID: UUID?
-    var previews: [UUID: UIImage] = [:]
+    private let previewCache: NSCache<NSUUID, UIImage> = {
+        let cache = NSCache<NSUUID, UIImage>()
+        cache.totalCostLimit = 32 * 1024 * 1024
+        return cache
+    }()
+
+    private var previewIDs = Set<UUID>()
     var filterQuery = ""
     private var isFilterVisible = false
     var isDragReordering = false
@@ -415,6 +421,10 @@ final class TabOverviewViewController: UIViewController {
         self.init(nibName: nil, bundle: nil)
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
     @available(*, unavailable)
     required init?(coder _: NSCoder) {
         fatalError("init(coder:) has not been implemented")
@@ -422,6 +432,12 @@ final class TabOverviewViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleMemoryWarning),
+            name: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil
+        )
         setupHierarchy()
         applyInlineCommandsVisibility()
         updateAppearance()
@@ -704,11 +720,13 @@ final class TabOverviewViewController: UIViewController {
         if tabs.isEmpty {
             allTabs = [Self.fallbackTab(mode: mode)]
             selectedID = allTabs.first?.id
+            clearPreviews()
         } else {
             allTabs = tabs
-            let stale = Set(previews.keys).subtracting(tabs.map(\.id))
+            let validIDs = Set(tabs.map(\.id))
+            let stale = previewIDs.subtracting(validIDs)
             for id in stale {
-                previews[id] = nil
+                removePreview(for: id)
             }
         }
         updatePickerBar()
@@ -798,13 +816,94 @@ final class TabOverviewViewController: UIViewController {
         emptyLabel.isHidden = !visibleItems.isEmpty
     }
 
+    func previewImage(for id: UUID) -> UIImage? {
+        previewCache.object(forKey: id as NSUUID)
+    }
+
+    func setPreview(_ image: UIImage?, for id: UUID) {
+        guard let image else {
+            removePreview(for: id)
+            return
+        }
+        let prepared = downsampledPreview(image)
+        let cost = Self.pixelCost(for: prepared)
+        previewCache.setObject(prepared, forKey: id as NSUUID, cost: cost)
+        previewIDs.insert(id)
+    }
+
+    func removePreview(for id: UUID) {
+        previewCache.removeObject(forKey: id as NSUUID)
+        previewIDs.remove(id)
+    }
+
+    func clearPreviews() {
+        previewCache.removeAllObjects()
+        previewIDs.removeAll()
+    }
+
+    /// Drops closed tabs' thumbnails and reconciles tracked IDs when the overview closes.
+    func trimHiddenPreviews() {
+        let liveIDs = Set(allTabs.map(\.id))
+        for id in Array(previewIDs) {
+            if !liveIDs.contains(id) {
+                previewCache.removeObject(forKey: id as NSUUID)
+                previewIDs.remove(id)
+            } else if previewCache.object(forKey: id as NSUUID) == nil {
+                previewIDs.remove(id)
+            }
+        }
+    }
+
+    @objc
+    private func handleMemoryWarning() {
+        clearPreviews()
+    }
+
+    private func downsampledPreview(_ image: UIImage) -> UIImage {
+        let targetPoints: CGSize = if flowLayout.itemSize.width > 60, flowLayout.itemSize.height > 60 {
+            flowLayout.itemSize
+        } else {
+            CGSize(width: 180, height: 240)
+        }
+        let scale = min(max(traitCollection.displayScale, 1), 2)
+        guard image.size.width > 0, image.size.height > 0 else { return image }
+        let currentPixelWidth = image.size.width * image.scale
+        let currentPixelHeight = image.size.height * image.scale
+        let maxPixelWidth = targetPoints.width * scale
+        let maxPixelHeight = targetPoints.height * scale
+        guard currentPixelWidth > maxPixelWidth || currentPixelHeight > maxPixelHeight else {
+            return image
+        }
+        let ratio = min(maxPixelWidth / currentPixelWidth, maxPixelHeight / currentPixelHeight)
+        let renderSize = CGSize(
+            width: max(1, floor(currentPixelWidth * ratio / scale)),
+            height: max(1, floor(currentPixelHeight * ratio / scale))
+        )
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        format.opaque = false
+        let renderer = UIGraphicsImageRenderer(size: renderSize, format: format)
+        return renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: renderSize))
+        }
+    }
+
+    private static func pixelCost(for image: UIImage) -> Int {
+        if let cgImage = image.cgImage {
+            return max(1, cgImage.bytesPerRow * cgImage.height)
+        }
+        let width = max(1, Int(ceil(image.size.width * image.scale)))
+        let height = max(1, Int(ceil(image.size.height * image.scale)))
+        return width * height * 4
+    }
+
     private func requestPreviews() {
         guard let provider = previewProvider else { return }
-        for tab in allTabs where previews[tab.id] == nil {
+        for tab in allTabs where previewImage(for: tab.id) == nil {
             let id = tab.id
             provider(id) { [weak self] image in
                 guard let self, self.allTabs.contains(where: { $0.id == id }) else { return }
-                self.previews[id] = image
+                self.setPreview(image, for: id)
                 if self.isDragReordering || self.collectionView.hasActiveDrag || self.collectionView.hasActiveDrop {
                     self.pendingPreviewIDs.insert(id)
                     return
@@ -831,7 +930,7 @@ final class TabOverviewViewController: UIViewController {
     func closeTab(id: UUID) {
         guard let index = allTabs.firstIndex(where: { $0.id == id }) else { return }
         allTabs.remove(at: index)
-        previews[id] = nil
+        removePreview(for: id)
         if allTabs.isEmpty {
             let replacement = Self.fallbackTab(mode: mode)
             allTabs.append(replacement)

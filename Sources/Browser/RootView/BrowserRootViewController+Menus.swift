@@ -49,7 +49,9 @@ extension BrowserRootViewController {
         let snapshot = activePage()?.snapshot
         let hasPage = snapshot?.url.map(URLNormalizer.isLoadable) ?? false
         let isForcedStart = selectedTabID.map { forcedStartPageTabs.contains($0) } ?? false
-        let canBookmarkActive = hasPage && !isForcedStart
+        // Private scope never persists, so every save row disables even when a
+        // loadable page is frontmost and the scope is not the selected tab's.
+        let canBookmarkActive = hasPage && !isForcedStart && !isPrivateScopeActive(page: activePage())
 
         let readingListAction = UIAction(
             title: "Add to Reading List",
@@ -94,7 +96,9 @@ extension BrowserRootViewController {
             $0.isPrivate == isPrivate && (isPrivate || $0.groupId == activeGroupID)
         }
         let loadableTabs: [(title: String, url: URL)] = scopeTabs.compactMap { record in
-            guard let url = record.url, URLNormalizer.isLoadable(url) else { return nil }
+            // Private tab URLs never leave the session, so the bulk save row
+            // cannot even collect them from the scoped tab list.
+            guard !record.isPrivate, let url = record.url, URLNormalizer.isLoadable(url) else { return nil }
             let title = HostFormatter.displayTitle(url: url, title: record.title)
             return (title, url)
         }
@@ -113,6 +117,9 @@ extension BrowserRootViewController {
     }
 
     func presentAddBookmarksForTabsSheet(tabs: [(title: String, url: URL)]) {
+        // Bulk saves write every URL into the bookmark store, so a private
+        // scope fails closed even for a direct caller.
+        guard !isPrivateScopeActive(page: activePage()) else { return }
         let target = BookmarkEditorTarget.addFolderForTabs(defaultTitle: "Saved Tabs", tabs: tabs)
         presentBookmarkEditor(for: target)
     }
@@ -160,11 +167,13 @@ extension BrowserRootViewController {
             self?.closeCurrentTab()
         }
         let moveMenu = makeMoveToGroupSubmenu(groups: groups)
+        // Menu-created private tabs share the single authenticated private gate,
+        // so a locked session cannot reach private scope without unlocking.
         let newPrivateAction = UIAction(
             title: "New Private Tab",
             image: UIImage(systemName: "square.badge.plus")
         ) { [weak self] _ in
-            self?.createNewTab(isPrivate: true)
+            self?.requestNewPrivateTab()
         }
         let newTabAction = UIAction(
             title: "New Tab",
@@ -315,6 +324,17 @@ extension BrowserRootViewController {
         requestPrivateMode { [weak self] in self?.performSwitchToPrivateMode() }
     }
 
+    /// Authenticated creation of a private tab: the shield is re-asserted here
+    /// because `createNewTab` selects the private tab without touching it, so a
+    /// locked or backgrounded session would otherwise show content unshielded.
+    func requestNewPrivateTab() {
+        requestPrivateMode { [weak self] in
+            guard let self else { return }
+            createNewTab(isPrivate: true)
+            updatePrivacyShieldVisibility()
+        }
+    }
+
     func performSwitchToPrivateMode() {
         setOverviewMode(.privateMode)
         overviewController.setGroupFilter(nil)
@@ -367,9 +387,9 @@ extension BrowserRootViewController {
             field.autocapitalizationType = .words
         }
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Create", style: .default) { [weak self] _ in
+        alert.addAction(UIAlertAction(title: "Create", style: .default) { [weak self, weak alert] _ in
             guard let self,
-                  let name = alert.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  let name = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !name.isEmpty
             else { return }
             do {
@@ -388,15 +408,44 @@ extension BrowserRootViewController {
 
     func saveImageToPhotos(from url: URL) {
         guard URLNormalizer.isLoadable(url) else { return }
-        Task { [weak self] in
+        let page = peekActivePage()
+        let isPrivate = page?.isPrivateTab ?? resolvedScopeIsPrivate()
+        Task { [weak self, weak page] in
             guard let self else { return }
             do {
-                let (data, _) = try await URLSession.shared.data(from: url)
+                let data = try await self.fetchImageData(from: url, isPrivate: isPrivate, privatePage: page)
                 try await self.saveImageDataToPhotos(data)
             } catch {
                 self.processPhotoSaveFailure(error)
             }
         }
+    }
+
+    /// Routes private image fetches through an isolated ephemeral session seeded with the page's
+    /// non-persistent cookies so Private Browsing never leaks requests or cookies into `URLSession.shared`.
+    private func fetchImageData(
+        from url: URL,
+        isPrivate: Bool,
+        privatePage: WebPageController?
+    ) async throws -> Data {
+        guard isPrivate else {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            return data
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        let cookieStorage = HTTPCookieStorage()
+        if let privatePage {
+            let cookies = await privatePage.webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+            for cookie in cookies {
+                cookieStorage.setCookie(cookie)
+            }
+        }
+        configuration.httpCookieStorage = cookieStorage
+        let session = URLSession(configuration: configuration)
+        defer { session.finishTasksAndInvalidate() }
+        let (data, _) = try await session.data(from: url)
+        return data
     }
 
     private func saveImageDataToPhotos(_ data: Data) async throws {
@@ -440,7 +489,7 @@ extension BrowserRootViewController {
         ElementContextActions(
             openLink: { [weak self] url in self?.loadActivePage(url) },
             openInNewTab: { [weak self] url in self?.openInNewTab(url: url, background: true, isPrivate: nil) },
-            tabGroups: overviewGroups(),
+            tabGroupsProvider: { [weak self] in self?.overviewGroups() ?? [] },
             openInTabGroup: { [weak self] url, group in self?.openURLsInGroup([url], groupId: group.id) },
             openInNewTabGroup: { [weak self] url, name in self?.openURLsInNewGroup([url], name: name) },
             downloadLinkedFile: { [weak self] url in self?.downloadLinkedFile(url: url) },
@@ -455,11 +504,27 @@ extension BrowserRootViewController {
     func downloadLinkedFile(url: URL) {
         guard URLNormalizer.isLoadable(url) else { return }
         let fallback = url.lastPathComponent.isEmpty ? "download" : url.lastPathComponent
+        let request = URLRequest(url: url)
+        if resolvedScopeIsPrivate() {
+            guard let page = activePage(), page.isPrivateTab else {
+                let rowID = downloadsManager.registerRow(
+                    name: DownloadsManager.sanitizedFileName(fallback),
+                    fileURL: nil
+                )
+                downloadsManager.failDownload(id: rowID, reason: "Download unavailable")
+                return
+            }
+            Task { @MainActor [weak self, weak page] in
+                guard let self, let page else { return }
+                let download = await page.webView.startDownload(using: request)
+                _ = self.downloadsManager.begin(download: download, suggestedName: fallback)
+            }
+            return
+        }
         let rowID = downloadsManager.registerRow(
             name: DownloadsManager.sanitizedFileName(fallback),
             fileURL: nil
         )
-        let request = URLRequest(url: url)
         if BackgroundDownloadService.shared.start(request: request, suggestedName: fallback, reusing: rowID) == nil {
             downloadsManager.failDownload(id: rowID, reason: "Download service unavailable")
         }
@@ -467,6 +532,9 @@ extension BrowserRootViewController {
 
     private func addReadingListEntry(url: URL) {
         guard URLNormalizer.isLoadable(url) else { return }
+        // A link opened from a private page is private content, so it never
+        // reaches the reading list even though it is not the active page's URL.
+        guard !resolvedScopeIsPrivate() else { return }
         let title = HostFormatter.displayTitle(url: url, title: nil)
         do {
             try readingListStore?.add(title: title, url: url)

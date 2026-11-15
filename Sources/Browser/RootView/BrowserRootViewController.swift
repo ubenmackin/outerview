@@ -616,6 +616,8 @@ final class BrowserRootViewController: UIViewController {
 
     var biometricAuthService: BiometricAuthenticating = BiometricAuthService.shared
     var isPrivateSessionLocked = false
+    var isPrivacyBackgrounded = false
+    private(set) lazy var privacyShieldView: UIView = makePrivacyShieldView()
     var recentlyClosedTabs: [TabRecord] = []
     // Observer tokens are touched and released on the main actor;
     // the isolated deinit removes them.
@@ -908,10 +910,67 @@ extension BrowserRootViewController {
         return UIHostingController(rootView: settingsView)
     }
 
+    /// Rotates the private store once no private tab remains
+    /// so closed private cookies never linger in memory.
+    /// Skips while any private tab is still live.
+    func resetPrivateSessionIfNeeded() {
+        guard !tabs.contains(where: \.isPrivate) else { return }
+        let pool = tabPool
+        Task { [weak self] in
+            // Re-check on the task hop: a private tab may appear between the
+            // synchronous guard and this body, so its live store must survive.
+            guard let self, !self.tabs.contains(where: \.isPrivate) else { return }
+            await pool.resetPrivateSessionStore()
+        }
+    }
+
     /// Re-reads history-backed start page content after Settings clears the
     /// store so the recents list empties immediately.
     func refreshStartPageAfterHistoryClear() {
         updateStartPageContent()
+        resetPrivateSessionIfNeeded()
+    }
+
+    private func makePrivacyShieldView() -> UIView {
+        let container = UIView()
+        container.accessibilityIdentifier = "privateBrowsingShield"
+        container.isHidden = true
+
+        let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+        blur.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(blur)
+        NSLayoutConstraint.activate([
+            blur.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            blur.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            blur.topAnchor.constraint(equalTo: container.topAnchor),
+            blur.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ])
+
+        let symbolConfig = UIImage.SymbolConfiguration(pointSize: 36, weight: .medium)
+        let lockView = UIImageView(image: UIImage(systemName: "lock.fill", withConfiguration: symbolConfig))
+        lockView.tintColor = .secondaryLabel
+        lockView.contentMode = .scaleAspectFit
+
+        let titleLabel = UILabel()
+        titleLabel.text = "Private Browsing Locked"
+        titleLabel.font = .preferredFont(forTextStyle: .headline)
+        titleLabel.textColor = .secondaryLabel
+        titleLabel.textAlignment = .center
+
+        let stack = UIStackView(arrangedSubviews: [lockView, titleLabel])
+        stack.axis = .vertical
+        stack.alignment = .center
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        blur.contentView.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: blur.contentView.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: blur.contentView.centerYAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: blur.contentView.leadingAnchor, constant: 24),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: blur.contentView.trailingAnchor, constant: -24)
+        ])
+        return container
     }
 
     /// Presents an action sheet or share sheet anchored to the pill so callers

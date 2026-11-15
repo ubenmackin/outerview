@@ -36,8 +36,16 @@ extension BrowserRootViewController {
             isDesktopMode: isDesktop,
             canToggleDesktopMode: hasPage,
             canPrint: hasPage,
+            isPrivateScope: isPrivateScopeActive(page: page),
             canEditWebsiteSettings: hasPage
         )
+    }
+
+    /// Fail-closed private-scope gate for save and export rows. A missing page
+    /// counts as private, and a private overview selection gates even while a
+    /// standard page is frontmost so nothing reaches a store.
+    func isPrivateScopeActive(page: WebPageController?) -> Bool {
+        (page?.isPrivateTab ?? true) || overviewMode.isPrivate
     }
 
     func makePageMenu() -> UIMenu {
@@ -203,7 +211,7 @@ extension BrowserRootViewController {
         let pdfAction = UIAction(
             title: "Save as PDF",
             image: UIImage(systemName: "doc.richtext"),
-            attributes: model.canPrint ? [] : .disabled
+            attributes: model.canSavePDF ? [] : .disabled
         ) { [weak self] _ in
             self?.saveActivePageAsPDF()
         }
@@ -330,9 +338,9 @@ extension BrowserRootViewController {
     }
 
     func presentAddBookmarkSheet() {
-        guard let snapshot = activePage()?.snapshot,
-              let url = snapshot.url,
-              URLNormalizer.isLoadable(url) else { return }
+        guard let page = activePage(), !isPrivateScopeActive(page: page) else { return }
+        let snapshot = page.snapshot
+        guard let url = snapshot.url, URLNormalizer.isLoadable(url) else { return }
 
         let title = HostFormatter.displayTitle(url: url, title: snapshot.title)
         presentBookmarkEditor(for: .addBookmark(title: title, url: url))
@@ -364,8 +372,49 @@ extension BrowserRootViewController {
         }
     }
 
+    /// Every rendered PDF lands in one temporary subdirectory so a background
+    /// transition can purge all exports without tracking individual URLs.
+    static var pdfExportDirectory: URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("PagePDFExports", isDirectory: true)
+    }
+
+    static func makePDFExportURL(baseName: String) throws -> URL {
+        let directory = pdfExportDirectory
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent(baseName + "-" + UUID().uuidString + ".pdf")
+    }
+
+    /// Fail-closed cleanup: page content must not survive suspension, so exports
+    /// are discarded when the scene leaves the foreground. A share handler that
+    /// fires afterwards tolerates the already-missing file.
+    func removeExportedPDFs() {
+        let directory = Self.pdfExportDirectory
+        let urls: [URL]
+        do {
+            // A missing export directory is the normal pre-export state, so a
+            // listing failure simply means there is nothing to purge.
+            urls = try FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil
+            )
+        } catch {
+            return
+        }
+        for url in urls {
+            do {
+                try FileManager.default.removeItem(at: url)
+            } catch {
+                Logger(subsystem: "com.volcrypt.OuterView", category: "PageMenu")
+                    .debug("Removing temp PDF failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
     func saveActivePageAsPDF() {
-        guard let page = activePage(), let url = page.snapshot.url, URLNormalizer.isLoadable(url) else { return }
+        // Private pages never reach disk, so the export row is unavailable and
+        // the action re-checks the same gate for direct callers.
+        guard let page = activePage(), !isPrivateScopeActive(page: page), let url = page.snapshot.url, URLNormalizer.isLoadable(url) else { return }
         Task { [weak self] in
             do {
                 let pdfData = try await page.webView.pdf(configuration: WKPDFConfiguration())
@@ -376,7 +425,7 @@ extension BrowserRootViewController {
                 let sanitized = rawBase.addingPercentEncoding(withAllowedCharacters: allowed) ?? "Page"
                 let truncated = String(sanitized.prefix(48))
                 let baseName = truncated.isEmpty ? "Page" : truncated
-                let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(baseName + "-" + UUID().uuidString + ".pdf")
+                let tempURL = try Self.makePDFExportURL(baseName: baseName)
                 try pdfData.write(to: tempURL, options: .atomic)
                 let activity = UIActivityViewController(activityItems: [tempURL], applicationActivities: nil)
                 // Temp PDF holds page content; remove after the share dismisses.
@@ -397,7 +446,9 @@ extension BrowserRootViewController {
     }
 
     func addActivePageToFavorites() {
-        guard let snapshot = activePage()?.snapshot, let url = snapshot.url, URLNormalizer.isLoadable(url) else { return }
+        guard let page = activePage(), !isPrivateScopeActive(page: page) else { return }
+        let snapshot = page.snapshot
+        guard let url = snapshot.url, URLNormalizer.isLoadable(url) else { return }
         let title = HostFormatter.displayTitle(url: url, title: snapshot.title)
         saveFavorite(url: url, title: title)
         updateStartPageContent()
@@ -405,7 +456,9 @@ extension BrowserRootViewController {
     }
 
     func removeActivePageFromFavorites() {
-        guard let snapshot = activePage()?.snapshot, let url = snapshot.url, let bookmarkStore else { return }
+        // Removing mutates a persisted, CloudKit-synced row, so the private
+        // scope gate applies here just like the add path.
+        guard let page = activePage(), !isPrivateScopeActive(page: page), let url = page.snapshot.url, let bookmarkStore else { return }
         do {
             try bookmarkStore.removeFavorite(url: url)
             updateStartPageContent()
@@ -425,7 +478,9 @@ extension BrowserRootViewController {
     }
 
     func addActivePageToReadingList() {
-        guard let page = activePage(), let url = page.snapshot.url, URLNormalizer.isLoadable(url) else { return }
+        // Private URLs carry session tokens and one-time links, so they never
+        // reach a store even when the row is invoked directly.
+        guard let page = activePage(), !isPrivateScopeActive(page: page), let url = page.snapshot.url, URLNormalizer.isLoadable(url) else { return }
         let snapshot = page.snapshot
         let title = HostFormatter.displayTitle(url: url, title: snapshot.title)
         do {
@@ -435,7 +490,9 @@ extension BrowserRootViewController {
             logPersistenceError(error, operation: "addToReadingList")
         }
         Task { [weak self, weak page] in
-            guard let self, let page else { return }
+            // The scope can flip before this runs, so re-check: a private page
+            // persists neither a snippet nor archive data.
+            guard let self, let page, !self.isPrivateScopeActive(page: page) else { return }
             let snippet = await page.extractPreviewSnippet()
             if let snippet, !snippet.isEmpty {
                 do {
@@ -446,8 +503,6 @@ extension BrowserRootViewController {
                 }
             }
             if let item = self.readingListStore?.fetchAll().first(where: { $0.url == url }) {
-                // Private pages never persist archive data to disk.
-                guard !page.isPrivateTab, !self.overviewMode.isPrivate else { return }
                 do {
                     let archiveData: Data = try await withCheckedThrowingContinuation { continuation in
                         page.webView.createWebArchiveData { result in
@@ -464,8 +519,10 @@ extension BrowserRootViewController {
     }
 
     func removeActivePageFromReadingList() {
-        guard let snapshot = activePage()?.snapshot,
-              let url = snapshot.url,
+        // Deleting a synced row is a store mutation too, so private scope
+        // cannot reach it from either menu surface.
+        guard let page = activePage(), !isPrivateScopeActive(page: page),
+              let url = page.snapshot.url,
               let id = readingListStore?.fetchAll().first(where: { $0.url == url })?.id
         else { return }
         do {

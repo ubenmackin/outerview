@@ -1,7 +1,4 @@
-//
-//  ElementContextMenu.swift
-//  OuterView
-//
+// WebPage — Canonical element context-menu kinds, action set, and UIMenu builder.
 
 import UIKit
 
@@ -18,6 +15,7 @@ struct ElementContextActions {
     let openLink: @MainActor (URL) -> Void
     let openInNewTab: @MainActor (URL) -> Void
     let tabGroups: [TabGroup]
+    let tabGroupsProvider: (@MainActor () -> [TabGroup])?
     let openInTabGroup: @MainActor (URL, TabGroup) -> Void
     let openInNewTabGroup: @MainActor (URL, String) -> Void
     let downloadLinkedFile: @MainActor (URL) -> Void
@@ -31,6 +29,7 @@ struct ElementContextActions {
         openLink: @MainActor @escaping (URL) -> Void = { _ in },
         openInNewTab: @MainActor @escaping (URL) -> Void,
         tabGroups: [TabGroup] = [],
+        tabGroupsProvider: (@MainActor () -> [TabGroup])? = nil,
         openInTabGroup: @MainActor @escaping (URL, TabGroup) -> Void = { _, _ in },
         openInNewTabGroup: @MainActor @escaping (URL, String) -> Void = { _, _ in },
         downloadLinkedFile: @MainActor @escaping (URL) -> Void = { _ in },
@@ -43,6 +42,7 @@ struct ElementContextActions {
         self.openLink = openLink
         self.openInNewTab = openInNewTab
         self.tabGroups = tabGroups
+        self.tabGroupsProvider = tabGroupsProvider
         self.openInTabGroup = openInTabGroup
         self.openInNewTabGroup = openInNewTabGroup
         self.downloadLinkedFile = downloadLinkedFile
@@ -151,7 +151,8 @@ enum ElementContextMenu {
             actions.openInNewTabGroup(url, "New Tab Group")
         }
         children.append(newGroupAction)
-        for group in actions.tabGroups {
+        let groups = actions.tabGroupsProvider?() ?? actions.tabGroups
+        for group in groups {
             let groupAction = UIAction(
                 title: group.name,
                 image: UIImage(systemName: "square.on.square")
