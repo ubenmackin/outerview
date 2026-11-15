@@ -170,6 +170,13 @@ final class WebPageController: NSObject {
     /// Scoped by generation so a failed POST never bleeds into later responses.
     private var pendingActionRequest: URLRequest?
     private var pendingActionGeneration = 0
+    /// Host of the active main-frame navigation so third-party subresource TLS
+    /// challenges never mark the committed top-level page untrusted or display errors.
+    private var pendingMainNavigationHost: String?
+    /// Timestamp of last WebContent termination to prevent infinite crash-reload loops.
+    private var lastTerminationTimestamp: Date?
+    /// Consecutive crash budget; reset on successful commit.
+    private var terminationRetryCount = 0
     /// Title of the current document, cleared on navigation so previous
     /// page titles never bleed into newly committed URLs.
     private var currentDocumentTitle: String?
@@ -222,6 +229,8 @@ final class WebPageController: NSObject {
         {
             hasPerTabDesktopOverride = false
         }
+        pendingMainNavigationHost = url.host?.lowercased()
+        terminationRetryCount = 0
         applyWebsiteSettings(for: url)
         webView.load(URLRequest(url: url))
     }
@@ -461,22 +470,29 @@ extension WebPageController: WKNavigationDelegate {
         // In-page navigations (links, redirects, window.location,
         // meta-refresh) bypass the address-bar normalizer, so every action
         // re-checks the allowlist before the web view commits.
+        let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
         guard URLNormalizer.isLoadable(navigationAction.request.url) else {
-            clearPendingAction()
-            rejectUnsupportedScheme(navigationAction.request.url)
+            if isMainFrame {
+                clearPendingAction()
+                rejectUnsupportedScheme(navigationAction.request.url)
+            }
             decisionHandler(.cancel)
             return
         }
-        if let targetURL = navigationAction.request.url,
+        if isMainFrame,
+           let targetURL = navigationAction.request.url,
            let targetHost = targetURL.host,
            targetHost != webView.url?.host
         {
             hasPerTabDesktopOverride = false
             applyWebsiteSettings(for: targetURL)
         }
-        // Remember the original request so the response path keeps method/body.
-        pendingActionRequest = navigationAction.request
-        pendingActionGeneration = documentGeneration + 1
+        if isMainFrame {
+            // Remember the original request so the response path keeps method/body.
+            pendingActionRequest = navigationAction.request
+            pendingActionGeneration = documentGeneration + 1
+            pendingMainNavigationHost = navigationAction.request.url?.host?.lowercased()
+        }
         decisionHandler(.allow)
     }
 
@@ -485,20 +501,25 @@ extension WebPageController: WKNavigationDelegate {
         decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void
     ) {
+        let isMainFrame = navigationResponse.isForMainFrame
         // Screenshot mode keeps inline fixture only; every network
         // response cancels before commit.
         if BrowserRootViewController.isScreenshotRun {
             let target = navigationResponse.response.url?.absoluteString.lowercased()
             let isAllowed = target == nil || target == "about:blank" || (target?.contains("wikipedia.org") == true)
             if !isAllowed {
-                clearPendingAction()
+                if isMainFrame {
+                    clearPendingAction()
+                }
                 decisionHandler(.cancel)
                 return
             }
         }
         guard let responseURL = navigationResponse.response.url, URLNormalizer.isLoadable(responseURL) else {
-            clearPendingAction()
-            rejectUnsupportedScheme(navigationResponse.response.url)
+            if isMainFrame {
+                clearPendingAction()
+                rejectUnsupportedScheme(navigationResponse.response.url)
+            }
             decisionHandler(.cancel)
             return
         }
@@ -542,12 +563,16 @@ extension WebPageController: WKNavigationDelegate {
                     decisionHandler(.cancel)
                 }
             } else {
-                clearPendingAction()
+                if isMainFrame {
+                    clearPendingAction()
+                }
                 decisionHandler(.download)
             }
             return
         }
-        clearPendingAction()
+        if isMainFrame {
+            clearPendingAction()
+        }
         decisionHandler(.allow)
     }
 
@@ -594,6 +619,8 @@ extension WebPageController: WKNavigationDelegate {
     func webView(_: WKWebView, didFinish _: WKNavigation?) {
         lastError = nil
         lastErrorCode = nil
+        pendingMainNavigationHost = nil
+        terminationRetryCount = 0
         if let title = webView.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
             currentDocumentTitle = title
         }
@@ -606,6 +633,7 @@ extension WebPageController: WKNavigationDelegate {
     func webView(_: WKWebView, didFail _: WKNavigation?, withError error: Error) {
         // Failed method/body never bleeds into the next response.
         clearPendingAction()
+        pendingMainNavigationHost = nil
         recordNavigationFailure(error)
     }
 
@@ -616,6 +644,7 @@ extension WebPageController: WKNavigationDelegate {
     ) {
         // Failed method/body never bleeds into the next response.
         clearPendingAction()
+        pendingMainNavigationHost = nil
         recordNavigationFailure(error)
     }
 
@@ -637,17 +666,39 @@ extension WebPageController: WKNavigationDelegate {
         if isTrusted {
             completionHandler(.performDefaultHandling, nil)
         } else {
-            hasFailedServerTrustChallenge = true
-            let nsFallback = NSError(
-                domain: NSURLErrorDomain,
-                code: NSURLErrorServerCertificateUntrusted
-            )
-            lastErrorCode = (error as Error? as NSError?)?.code ?? nsFallback.code
-            lastError = (error as Error?)?.localizedDescription ?? nsFallback.localizedDescription
-            finishRefreshing()
-            refreshSnapshot()
+            let expectedHost = (pendingMainNavigationHost ?? webView.url?.host)?.lowercased()
+            let challengeHost = challenge.protectionSpace.host.lowercased()
+            // Unknown main host never marks trust; challenge still cancelled.
+            let affectsMainDocument = expectedHost.map { $0 == challengeHost } ?? false
+            if affectsMainDocument {
+                hasFailedServerTrustChallenge = true
+                let nsFallback = NSError(
+                    domain: NSURLErrorDomain,
+                    code: NSURLErrorServerCertificateUntrusted
+                )
+                lastErrorCode = (error as Error? as NSError?)?.code ?? nsFallback.code
+                lastError = (error as Error?)?.localizedDescription ?? nsFallback.localizedDescription
+                finishRefreshing()
+                refreshSnapshot()
+            }
             completionHandler(.cancelAuthenticationChallenge, nil)
         }
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        let now = Date()
+        let isRapidRepeat = lastTerminationTimestamp.map { now.timeIntervalSince($0) < 5 } ?? false
+        lastTerminationTimestamp = now
+        terminationRetryCount += 1
+        // Cap slow-loop reloads; rapid repeats fail at once.
+        if !isRapidRepeat, terminationRetryCount <= 3, webView.url != nil {
+            webView.reload()
+            return
+        }
+        lastError = "The webpage encountered an unexpected error and had to stop."
+        lastErrorCode = nil
+        finishRefreshing()
+        refreshSnapshot()
     }
 
     private func recordNavigationFailure(_ error: Error) {
@@ -687,7 +738,7 @@ extension WebPageController: WKNavigationDelegate {
 
     /// Hands a standard-tab transfer to the service: method/body/headers
     /// survive from the navigation request; cookies ride from the web view store.
-    private func startStandardTransfer(
+    func startStandardTransfer(
         to service: BackgroundDownloadService,
         request base: URLRequest,
         suggestedName: String?
@@ -706,7 +757,7 @@ extension WebPageController: WKNavigationDelegate {
         let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
         let agent = webView.customUserAgent
         let pageURL = webView.url
-        Task { [weak self] in
+        Task { [weak self, weak manager] in
             // Tests skip the store callback so the handoff never waits forever.
             let all: [HTTPCookie] =
                 if AppEnvironment.isTestHost {
@@ -721,7 +772,11 @@ extension WebPageController: WKNavigationDelegate {
                 cookies: all
             )
             guard service.start(request: request, suggestedName: fallback, reusing: rowID) != nil else {
-                self?.failClosedStandardDownload(suggestedName: fallback, reusing: rowID)
+                if let self {
+                    self.failClosedStandardDownload(suggestedName: fallback, reusing: rowID)
+                } else {
+                    manager?.failDownload(id: rowID, reason: "Download service unavailable")
+                }
                 return
             }
         }

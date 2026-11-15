@@ -47,11 +47,9 @@ struct BrowserContainerView: UIViewControllerRepresentable {
             context.coordinator.lastPhase = scenePhase
             controller.handleScenePhase(scenePhase)
         }
-        if let url = pendingURL {
-            controller.openExternalURL(url)
-            // Consuming clears the binding so repeated deep links reload.
-            let binding = _pendingURL
-            Task {
+        let binding = _pendingURL
+        context.coordinator.dispatchPendingURL(pendingURL, into: controller) { url in
+            if binding.wrappedValue == url {
                 binding.wrappedValue = nil
             }
         }
@@ -61,6 +59,27 @@ struct BrowserContainerView: UIViewControllerRepresentable {
     final class Coordinator {
         weak var controller: BrowserRootViewController?
         var lastPhase: ScenePhase
+        var pendingDispatchedURL: URL?
+
+        func dispatchPendingURL(
+            _ pendingURL: URL?,
+            into controller: BrowserRootViewController,
+            clearBinding: @escaping @MainActor (URL) -> Void
+        ) {
+            guard let url = pendingURL else {
+                pendingDispatchedURL = nil
+                return
+            }
+            guard pendingDispatchedURL != url else { return }
+            pendingDispatchedURL = url
+            controller.openExternalURL(url)
+            Task { @MainActor in
+                clearBinding(url)
+                if self.pendingDispatchedURL == url {
+                    self.pendingDispatchedURL = nil
+                }
+            }
+        }
 
         init(scenePhase: ScenePhase) {
             self.lastPhase = scenePhase

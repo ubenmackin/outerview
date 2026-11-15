@@ -43,7 +43,19 @@ extension BrowserRootViewController {
         setupBookmarkEditor()
         setupOverlays()
         setupOverview()
+        setupPrivacyShield()
         bringChromeToFront()
+    }
+
+    func setupPrivacyShield() {
+        privacyShieldView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(privacyShieldView)
+        NSLayoutConstraint.activate([
+            privacyShieldView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            privacyShieldView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            privacyShieldView.topAnchor.constraint(equalTo: view.topAnchor),
+            privacyShieldView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
     }
 
     func setupOverlays() {
@@ -105,6 +117,9 @@ extension BrowserRootViewController {
         }
         view.bringSubviewToFront(verticalTabBarView)
         view.bringSubviewToFront(railView)
+        if !privacyShieldView.isHidden {
+            view.bringSubviewToFront(privacyShieldView)
+        }
     }
 
     func setupBookmarkEditor() {
@@ -661,6 +676,12 @@ extension BrowserRootViewController {
             model.errorMessage = "Please enter a valid title and URL."
             return
         }
+        // Private pages never reach the store: the presentation gate blocks
+        // them, so this closes direct callers, including bulk folder saves.
+        if bookmarkEditorTargetBelongsToPrivateScope(model) {
+            dismissBookmarkEditor()
+            return
+        }
         do {
             try model.save(bookmarkStore: bookmarkStore)
             dismissBookmarkEditor()
@@ -670,6 +691,39 @@ extension BrowserRootViewController {
             Logger(subsystem: "com.volcrypt.OuterView", category: "BookmarkEditor")
                 .error("Failed to save bookmark/folder: \(error.localizedDescription, privacy: .public)")
             model.errorMessage = error.localizedDescription
+        }
+    }
+
+    /// URLs a private tab is showing or has committed, covering both the live
+    /// page and the tab record so evicted pages cannot launder a private URL.
+    private func privateScopeURLs() -> Set<URL> {
+        var urls: Set<URL> = []
+        for record in tabs where record.isPrivate {
+            if let url = record.url {
+                urls.insert(url)
+            }
+            if let page = tabPool.pages.first(where: { $0.id == record.id })?.page,
+               let url = page.snapshot.url
+            {
+                urls.insert(url)
+            }
+        }
+        return urls
+    }
+
+    /// True when the editor's target would persist a URL a private tab is
+    /// showing. Bulk folder saves check every URL; folder edits and
+    /// library-authored bookmarks stay unaffected.
+    private func bookmarkEditorTargetBelongsToPrivateScope(_ model: BookmarkEditorModel) -> Bool {
+        let privateURLs = privateScopeURLs()
+        guard !privateURLs.isEmpty else { return false }
+        switch model.target {
+        case let .addBookmark(_, url):
+            return privateURLs.contains(url)
+        case let .addFolderForTabs(_, tabs):
+            return tabs.contains { privateURLs.contains($0.url) }
+        case .editBookmark, .editFolder:
+            return false
         }
     }
 

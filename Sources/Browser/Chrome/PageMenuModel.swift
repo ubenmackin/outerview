@@ -20,6 +20,9 @@ struct PageMenuModel: Equatable, Sendable {
     let isDesktopMode: Bool
     let canToggleDesktopMode: Bool
     let canPrint: Bool
+    /// PDF export writes page content to a file, so private scope disables it
+    /// even though printing (which keeps content in the print pipeline) remains.
+    let canSavePDF: Bool
     let canEditWebsiteSettings: Bool
 
     init(
@@ -36,6 +39,7 @@ struct PageMenuModel: Equatable, Sendable {
         isDesktopMode: Bool = false,
         canToggleDesktopMode: Bool = false,
         canPrint: Bool = true,
+        isPrivateScope: Bool = false,
         canEditWebsiteSettings: Bool = false
     ) {
         let hasLoadableURL: Bool = if let url {
@@ -47,10 +51,12 @@ struct PageMenuModel: Equatable, Sendable {
         self.canGoForward = canGoForward
         self.canReload = hasLoadableURL
         self.canShare = hasLoadableURL
-        self.canSave = hasLoadableURL
+        // Private scope never persists: save rows stay disabled even with a
+        // loadable page, so no store write is reachable from the menu.
+        self.canSave = hasLoadableURL && !isPrivateScope
         self.canFind = hasLoadableURL
         self.isFavorite = isFavorite
-        self.canAddToReadingList = canAddToReadingList
+        self.canAddToReadingList = canAddToReadingList && !isPrivateScope
         self.isInReadingList = isInReadingList
         self.isReaderActive = isReaderActive
         self.isReaderAvailable = isReaderAvailable
@@ -59,7 +65,9 @@ struct PageMenuModel: Equatable, Sendable {
         self.isDesktopMode = isDesktopMode
         self.canToggleDesktopMode = canToggleDesktopMode && hasLoadableURL
         // Print stays disabled without a loadable URL even if requested.
-        self.canPrint = canPrint && hasLoadableURL
+        let printable = canPrint && hasLoadableURL
+        self.canPrint = printable
+        self.canSavePDF = printable && !isPrivateScope
         self.canEditWebsiteSettings = canEditWebsiteSettings && hasLoadableURL
     }
 

@@ -175,11 +175,27 @@ final class ContentBlockerService {
         trackedControllers.append(WeakController(value: controller))
     }
 
+    /// Registers a controller and applies the current toggle state on the same
+    /// serialized queue as user toggles so creation never overrides a recent flip.
+    func registerAndSyncController(
+        _ controller: WKUserContentController,
+        isEnabled: @escaping @MainActor () -> Bool
+    ) async {
+        track(controller)
+        let previous = lastToggle
+        let current = Task { @MainActor in
+            await previous?.value
+            await applyRules(to: controller, enabled: isEnabled())
+        }
+        lastToggle = current
+        await current.value
+    }
+
     /// Single toggle owner: fans the flag out to every live controller.
     /// Toggles serialize through a chain so rapid flips apply in order.
     func setEnabled(_ enabled: Bool, controllers: [WKUserContentController]) async {
         let previous = lastToggle
-        let current = Task {
+        let current = Task { @MainActor in
             await previous?.value
             for controller in controllers {
                 await applyRules(to: controller, enabled: enabled)
@@ -193,7 +209,7 @@ final class ContentBlockerService {
     /// Toggles serialize through a chain so rapid flips apply in order.
     func setEnabled(_ enabled: Bool) async {
         let previous = lastToggle
-        let current = Task {
+        let current = Task { @MainActor in
             await previous?.value
             trackedControllers.removeAll { $0.value == nil }
             for entry in trackedControllers {

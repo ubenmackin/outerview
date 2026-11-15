@@ -73,6 +73,12 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
     var onClose: (@MainActor () -> Void)?
 
+    /// Reports whether a close sequence is still in flight, so reuse mid-close can
+    /// be asserted without exposing the button itself.
+    var isCloseButtonAnimating: Bool {
+        closeSequenceID != nil
+    }
+
     /// Internal container holding all card content. Transforming this view ensures
     /// UICollectionViewCell layout passes do not reset or conflict with swipe animations.
     private let cardContainer = UIView()
@@ -87,6 +93,10 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private let swipePanRecognizer = CardSwipePanGestureRecognizer()
     private var faviconTask: Task<Void, Never>?
     private var currentID: UUID?
+    /// Identifies the in-flight close sequence; reuse or a second close retires it so
+    /// a stale completion can never dismiss the row that replaced the closing one.
+    private var closeSequenceID: UUID?
+    private var closeSequenceTask: Task<Void, Never>?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -100,10 +110,16 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        isUserInteractionEnabled = true
         onClose = nil
         faviconTask?.cancel()
         faviconTask = nil
         currentID = nil
+        // Invalidate the in-flight close before rebinding: the old row's completion must
+        // never reach the callback that now belongs to a different row.
+        closeSequenceTask?.cancel()
+        closeSequenceTask = nil
+        closeSequenceID = nil
         faviconView.image = UIImage(systemName: "globe")
         previewImageView.image = nil
         previewImageView.isHidden = true
@@ -114,6 +130,9 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         cardContainer.alpha = 1
         contentView.layer.borderWidth = 0
         contentView.layer.borderColor = nil
+        // Reuse can land mid close animation: cancel the in-flight layer animation
+        // before resetting model values, else CoreAnimation keeps driving the button out.
+        closeButton.layer.removeAllAnimations()
         closeButton.transform = .identity
         closeButton.alpha = 1
     }
@@ -359,29 +378,49 @@ final class TabCardCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
         let direction: CGFloat = (tx != 0 ? tx : vx) > 0 ? 1 : -1
         let exitDistance = cardWidth + 120
-        UIView.animate(
-            withDuration: 0.2,
-            delay: 0,
-            options: [.curveEaseOut],
-            animations: {
-                self.cardContainer.transform = CGAffineTransform(translationX: exitDistance * direction, y: 0)
-                self.cardContainer.alpha = 0
-            },
-            completion: { _ in
-                self.onClose?()
-            }
-        )
+        animateClose(duration: 0.2, options: [.curveEaseOut]) {
+            self.cardContainer.transform = CGAffineTransform(translationX: exitDistance * direction, y: 0)
+            self.cardContainer.alpha = 0
+        }
     }
 
-    private func handleCloseTap() {
-        UIView.animate(
-            withDuration: 0.15,
-            animations: {
-                self.closeButton.transform = CGAffineTransform(scaleX: 0.85, y: 0.85)
-                self.closeButton.alpha = 0
-            },
-            completion: { _ in self.onClose?() }
-        )
+    func handleCloseTap() {
+        animateClose(duration: 0.15) {
+            self.closeButton.transform = CGAffineTransform(scaleX: 0.85, y: 0.85)
+            self.closeButton.alpha = 0
+        }
+    }
+
+    /// Snapshots `currentID` plus `onClose` and stamps a sequence token so reuse mid-animation
+    /// cannot close another tab. The cell owns the completion timeline: a card whose window is
+    /// not rendering settles its layers without completing them, which would dismiss too early.
+    private func animateClose(
+        duration: TimeInterval,
+        options: UIView.AnimationOptions = [],
+        animations: @escaping () -> Void
+    ) {
+        let closingID = currentID
+        let closeAction = onClose
+        closeSequenceTask?.cancel()
+        let sequenceID = UUID()
+        closeSequenceID = sequenceID
+        isUserInteractionEnabled = false
+        UIView.animate(withDuration: duration, delay: 0, options: options, animations: animations)
+        closeSequenceTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            } catch is CancellationError {
+                // Cancellation is the normal path here: reuse or a second close retires this sequence.
+                return
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, let self, self.closeSequenceID == sequenceID else { return }
+            self.closeSequenceTask = nil
+            self.closeSequenceID = nil
+            guard self.currentID == closingID else { return }
+            closeAction?()
+        }
     }
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {

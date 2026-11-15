@@ -92,7 +92,7 @@ extension BrowserRootViewController {
     }
 
     /// Same-scope privacy: selected tab wins, overview mode is the fallback.
-    private func resolvedScopeIsPrivate() -> Bool {
+    func resolvedScopeIsPrivate() -> Bool {
         tabs.first(where: { $0.id == selectedTabID })?.isPrivate ?? overviewMode.isPrivate
     }
 
@@ -583,11 +583,15 @@ extension BrowserRootViewController {
         if isFindActive {
             endFind()
         }
+        let hadPrivateTabs = tabs.contains(where: \.isPrivate)
         for id in tabs.map(\.id) {
             prunePerTabState(id: id)
             tabPool.delete(id: id)
         }
         tabs.removeAll()
+        if hadPrivateTabs {
+            resetPrivateSessionIfNeeded()
+        }
         forcedStartPageTabs.removeAll()
         let session = tabStore?.loadSession() ?? (tabs: [], selected: nil)
         if !session.tabs.isEmpty {

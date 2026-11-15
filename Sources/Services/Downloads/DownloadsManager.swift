@@ -380,14 +380,21 @@ final class DownloadsManager: NSObject {
         }
     }
 
+    #if DEBUG
+        /// Live foreground download count; tables must stay in sync.
+        var trackedDownloadCount: Int {
+            assert(downloads.count == downloadIDs.count)
+            return downloads.count
+        }
+    #endif
+
     func cancel(id: UUID) {
         if let download = downloads[id] {
             download.cancel { _ in }
         }
         // Forward to the daemon so UI cancel leaves no orphan task.
         backgroundService?.cancel(id: id)
-        observations[id]?.invalidate()
-        observations[id] = nil
+        clearTracking(for: id)
         if let index = rows.firstIndex(where: { $0.id == id }),
            rows[index].state == .inProgress
         {
@@ -404,14 +411,22 @@ final class DownloadsManager: NSObject {
                   rows[index].state == .inProgress
             else { continue }
             download.cancel { _ in }
-            observations[id]?.invalidate()
-            observations[id] = nil
             rows[index].state = .failed("Cancelled")
             releaseReservationAndCleanup(id: id)
-            downloads[id] = nil
-            for (key, value) in downloadIDs where value == id {
-                downloadIDs.removeValue(forKey: key)
-            }
+            clearTracking(for: id, download: download)
+        }
+    }
+
+    private func clearTracking(for id: UUID, download: WKDownload? = nil) {
+        observations[id]?.invalidate()
+        observations[id] = nil
+        downloads[id] = nil
+        if let download {
+            downloadIDs[ObjectIdentifier(download)] = nil
+        }
+        let stale = downloadIDs.filter { $0.value == id }.map(\.key)
+        for key in stale {
+            downloadIDs.removeValue(forKey: key)
         }
     }
 
@@ -433,14 +448,13 @@ final class DownloadsManager: NSObject {
     }
 
     func delete(id: UUID) {
-        observations[id]?.invalidate()
-        observations[id] = nil
-        if let download = downloads[id] {
-            download.cancel { _ in }
+        let activeDownload = downloads[id]
+        if let activeDownload {
+            activeDownload.cancel { _ in }
         }
         // Forward to the daemon so delete leaves no orphan row.
         backgroundService?.cancel(id: id)
-        downloads[id] = nil
+        clearTracking(for: id, download: activeDownload)
         let fileURL = destinations[id] ?? rows.first(where: { $0.id == id })?.fileURL
         if let fileURL {
             do {
@@ -451,9 +465,6 @@ final class DownloadsManager: NSObject {
             }
         }
         destinations[id] = nil
-        for (key, value) in downloadIDs where value == id {
-            downloadIDs.removeValue(forKey: key)
-        }
         rows.removeAll(where: { $0.id == id })
     }
 
@@ -486,10 +497,7 @@ extension DownloadsManager: WKDownloadDelegate {
             // Reject HTTP error responses so WKDownload never writes an error page to disk.
             if let id = downloadIDs[key] {
                 failDownload(id: id, reason: reason)
-                observations[id]?.invalidate()
-                observations[id] = nil
-                downloads[id] = nil
-                downloadIDs[key] = nil
+                clearTracking(for: id, download: download)
             } else {
                 let id = registerRow(name: clean, fileURL: nil)
                 failDownload(id: id, reason: reason)
@@ -531,9 +539,7 @@ extension DownloadsManager: WKDownloadDelegate {
     func downloadDidFinish(_ download: WKDownload) {
         guard let id = downloadIDs[ObjectIdentifier(download)] else { return }
         completeDownload(id: id)
-        observations[id]?.invalidate()
-        observations[id] = nil
-        downloads[id] = nil
+        clearTracking(for: id, download: download)
     }
 
     func download(
@@ -542,9 +548,11 @@ extension DownloadsManager: WKDownloadDelegate {
         resumeData _: Data?
     ) {
         guard let id = downloadIDs[ObjectIdentifier(download)] else { return }
-        failDownload(id: id, reason: error.localizedDescription)
-        observations[id]?.invalidate()
-        observations[id] = nil
-        downloads[id] = nil
+        if let index = rows.firstIndex(where: { $0.id == id }),
+           rows[index].state == .inProgress
+        {
+            failDownload(id: id, reason: error.localizedDescription)
+        }
+        clearTracking(for: id, download: download)
     }
 }

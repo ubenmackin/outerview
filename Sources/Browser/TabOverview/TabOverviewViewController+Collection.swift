@@ -1,7 +1,4 @@
-//
-//  TabOverviewViewController+Collection.swift
-//  OuterView
-//
+// TabOverview — Collection data source, drag-reorder, and card context menu.
 
 import UIKit
 
@@ -24,7 +21,7 @@ extension TabOverviewViewController: UICollectionViewDataSource, UICollectionVie
             return UICollectionViewCell()
         }
         let item = visibleItems[indexPath.item]
-        cell.configure(with: item, preview: previews[item.id], isSelected: item.id == selectedID)
+        cell.configure(with: item, preview: previewImage(for: item.id), isSelected: item.id == selectedID)
         cell.onClose = { [weak self] in self?.closeTab(id: item.id) }
         return cell
     }
@@ -72,7 +69,7 @@ extension TabOverviewViewController: UICollectionViewDataSource, UICollectionVie
         let confirmedSet = Set(confirmed)
         allTabs.removeAll(where: { confirmedSet.contains($0.id) })
         for id in confirmed {
-            previews[id] = nil
+            removePreview(for: id)
         }
         if let current = selectedID, confirmedSet.contains(current) {
             selectedID = keepID
