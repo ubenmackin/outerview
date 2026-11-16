@@ -113,9 +113,9 @@ final class BookmarkImporterTests: XCTestCase {
         XCTAssertEqual(all.filter { $0.folderId == nil }.count, 1)
     }
 
-    func testUserSafariBookmarksImportsAllExpectedCountsAndOrder() async throws {
+    func testSyntheticSafariBookmarksImportsAllExpectedCountsAndOrder() async throws {
         let store = try makeStore()
-        let data = try ImportFixtures.userSafariExport()
+        let data = try ImportFixtures.syntheticSafariExport()
         let summary = await BookmarkImporter().importFromData(data, bookmarkStore: store)
 
         // All valid bookmarks from file are added
@@ -128,37 +128,37 @@ final class BookmarkImporterTests: XCTestCase {
 
         let openAll = try XCTUnwrap(favFolders.first { $0.title == "Open All" })
         let openAllBookmarks = store.fetchBookmarks(folderId: openAll.id)
-        XCTAssertEqual(openAllBookmarks.map(\.title), ["Google News", "AppleInsider", "Slashdot", "Ars Technica"])
+        XCTAssertEqual(openAllBookmarks.map(\.title), ["Daily Press", "Orbital Times", "Signal Post", "Harbor Ledger"])
 
         let pools = try XCTUnwrap(favFolders.first { $0.title == "Pools" })
         let poolsBookmarks = store.fetchBookmarks(folderId: pools.id)
         XCTAssertEqual(poolsBookmarks.count, 6)
-        XCTAssertEqual(poolsBookmarks[0].title, "Ethereum Account")
+        XCTAssertEqual(poolsBookmarks[0].title, "Ledger Account")
 
         // Root favorite bookmarks
         let rootFavBookmarks = store.fetchFavorites(rootOnly: true)
         XCTAssertEqual(rootFavBookmarks.count, 13)
-        XCTAssertEqual(rootFavBookmarks.first?.title, "Google News")
-        XCTAssertEqual(rootFavBookmarks.last?.title, "Xbox")
+        XCTAssertEqual(rootFavBookmarks.first?.title, "Daily Press")
+        XCTAssertEqual(rootFavBookmarks.last?.title, "Arcade Loft")
 
         // StartPageViewModel combined favorites has 15 items in forward order
         let historyStore = HistoryStore(database: store.database)
         let vm = StartPageViewModel(bookmarkStore: store, historyStore: historyStore)
         XCTAssertEqual(vm.favoriteItems.count, 15)
         XCTAssertEqual(vm.favoriteItems.first?.title, "Open All")
-        XCTAssertEqual(vm.favoriteItems.last?.title, "Xbox")
+        XCTAssertEqual(vm.favoriteItems.last?.title, "Arcade Loft")
 
-        // Root bookmarks outside folders (including Plex/Web, rTorrent, MDM)
+        // Root bookmarks outside folders (including Media Core, Torrent Deck, Device Manager)
         let rootBookmarks = store.fetchBookmarks(folderId: nil)
-        XCTAssertTrue(rootBookmarks.contains { $0.title == "Plex/Web" })
-        XCTAssertTrue(rootBookmarks.contains { $0.title == "rTorrent" })
-        XCTAssertTrue(rootBookmarks.contains { $0.title == "MDM" })
+        XCTAssertTrue(rootBookmarks.contains { $0.title == "Media Core" })
+        XCTAssertTrue(rootBookmarks.contains { $0.title == "Torrent Deck" })
+        XCTAssertTrue(rootBookmarks.contains { $0.title == "Device Manager" })
         XCTAssertEqual(rootBookmarks.count, 17)
     }
 
     func testFolderDrillDownOnStartPageViewModel() async throws {
         let store = try makeStore()
-        let data = try ImportFixtures.userSafariExport()
+        let data = try ImportFixtures.syntheticSafariExport()
         _ = await BookmarkImporter().importFromData(data, bookmarkStore: store)
 
         let historyStore = HistoryStore(database: store.database)
@@ -177,7 +177,7 @@ final class BookmarkImporterTests: XCTestCase {
         XCTAssertFalse(vm.isAtRoot)
         XCTAssertEqual(vm.currentTitle, "Open All")
         XCTAssertEqual(vm.favoriteItems.count, 4)
-        XCTAssertEqual(vm.favoriteItems.map(\.title), ["Google News", "AppleInsider", "Slashdot", "Ars Technica"])
+        XCTAssertEqual(vm.favoriteItems.map(\.title), ["Daily Press", "Orbital Times", "Signal Post", "Harbor Ledger"])
 
         vm.popFolder()
         XCTAssertTrue(vm.isAtRoot)
