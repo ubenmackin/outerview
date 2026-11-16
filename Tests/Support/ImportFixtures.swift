@@ -20,10 +20,11 @@ enum ImportFixtures {
         return try Data(contentsOf: url)
     }
 
-    static func userSafariExport() throws -> Data {
+    /// Synthetic Safari-style export: fully fictional data only.
+    static func syntheticSafariExport() throws -> Data {
         let bundle = Bundle(for: FixtureAnchor.self)
-        guard let url = bundle.url(forResource: "user_safari_bookmarks", withExtension: "html") else {
-            throw FixtureError.missingResource("user_safari_bookmarks.html")
+        guard let url = bundle.url(forResource: "safari_bookmarks_synthetic", withExtension: "html") else {
+            throw FixtureError.missingResource("safari_bookmarks_synthetic.html")
         }
         return try Data(contentsOf: url)
     }
